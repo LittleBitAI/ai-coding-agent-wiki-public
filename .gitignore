@@ -9,8 +9,11 @@ __pycache__/
 .env.*
 .claude/
 .codex/
-.wiki/
-raw/
+.wiki/*
+!.wiki/.gitignore
+!.wiki/decisions/
+raw/*
+!raw/.gitkeep
 artifacts/
 .tmp/
 graph.json

@@ -64,7 +64,6 @@ def install(agents, workspace):
                    cwd=ROOT, check=True)
     print("2/3: 화면 패키지를 설치하고 빌드합니다. 처음에는 몇 분 걸릴 수 있습니다.", flush=True)
     npm = cli_command("npm")
-    subprocess.run([str(python), str(ROOT / "tool/graph.py")], cwd=ROOT, check=True)
     subprocess.run([*npm, "ci"], cwd=ROOT / "web", check=True)
     subprocess.run([*npm, "run", "build"], cwd=ROOT / "web", check=True)
     print("3/3: 선택한 CLI에서 이 PC 사용자의 로그인을 확인합니다.", flush=True)

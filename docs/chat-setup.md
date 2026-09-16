@@ -60,6 +60,15 @@ python tool/setup_chat.py install --agent codex --workspace "D:/팀 작업/프�
 
 ## 3. 실행하기
 
+처음 실행하기 전과 규칙을 고친 뒤에는 지도 파일을 생성한다. 개인 기록은 필요 없다.
+
+```powershell
+# Windows
+.venv/Scripts/python tool/graph.py
+```
+
+macOS·Linux에서는 `.venv/bin/python tool/graph.py`를 쓴다.
+
 Windows:
 
 ```powershell

@@ -1,26 +1,50 @@
 ---
 scope: operator
-triggers:
-- 머지
-- merge
-- 브랜치.*정리
-- 정리.*브랜치
-slots:
-- server_stop
-- scratch_dirs
-links:
-- do-the-whole-instruction
-- run-inside-this-session
 severity: contract
+triggers: ["머지", "merge", "브랜치.*정리", "정리.*브랜치"]
+slots: [server_stop, scratch_dirs]
 sources: []
+sources_withheld: true
+links: [do-the-whole-instruction, run-inside-this-session]
 ---
 
 # 머지 후 정리 — 시키기 전에 한다
 
-규칙. 머지 완료를 확인한 뒤, 요청 범위의 임시 파일과 작업 브랜치를 정리한다. 미커밋 변경과 사용자가 실행한 프로세스를 보존한다.
+규칙. 머지 요청에는 머지 완료 후 정리까지 포함된다. 실제 머지를 확인한 뒤 다음 작업에
+들어가기 전에 아래를 전부 한다. 정리만 따로 승인받거나 다음 턴으로 미루지 않는다.
 
-서버 종료 방법: {server_stop}
+1. `git fetch origin --prune`
+2. 깨끗하고 사용 중이 아닌 작업 폴더라면 `main` 으로 복귀하고 `git pull --ff-only`.
+   미커밋 변경이나 별도 리뷰 세션이 있는 폴더는 전환하지 않는다.
+3. 머지된 로컬 브랜치를 지운다. squash 머지면 `-d` 가 거절한다 —
+   지우기 전에 해당 PR의 머지 커밋과 내용 포함 여부를 확인한다. 미머지 변경은 보존한다
+4. 원격 브랜치를 확인한다(대개 머지가 이미 지운다)
+5. 서버가 떠 있으면 끈다: `{server_stop}` — **이 세션이 띄운 것만이다.**
+   같은 기계의 다른 프로젝트 서버가 같은 이름·같은 시각으로 보인다.
+   명령줄로 가른다 → [[run-inside-this-session]]
+6. 머지된 작업 트리의 미커밋 변경·음성 자산·런타임 데이터·검증 기록과 공유 의존성을
+   먼저 확인하고 필요한 것은 작업 트리 밖에 보존한다. junction은 대상이 아니라 링크만
+   제거한다. Orca 작업 트리는 Orca로 정리하고, 사용자가 연 독립 리뷰 세션은 유지한다.
+   스크래치를 치운다: `{scratch_dirs}`
+7. 로컬·원격 브랜치와 작업 트리를 다시 조회해 삭제한 것과 남긴 이유를 보고한다.
 
-임시 작업 위치: {scratch_dirs}
+페이지 존재만으로
+완료하지 말고 실제 머지 요청을 주입기에 넣어 본문에 이 규칙이 실리는지 확인한다.
 
-브랜치 삭제는 포함된 커밋과 사용자 허가를 확인한 뒤 수행한다.
+어겼을 때. 죽은 브랜치가 쌓이고, 서버가 GPU 를 잡은 채 남고, 다음 세션이
+낡은 스크래치를 증거로 읽는다.
+
+## 지우기 전에 확인한다
+
+squash 머지된 브랜치는 tip 이 `main` 의 조상이 아니라 `git branch -d` 가 거절한다.
+`-D` 로 밀기 전에 내용이 실제로 들어갔는지 본다.
+
+```bash
+git rev-parse <branch>^{tree}
+git rev-parse <해당-PR-머지-커밋>^{tree}
+git diff --stat <branch> <해당-PR-머지-커밋>
+```
+
+두 트리가 같으면 내용 포함을 확인할 수 있다. 다르면 충돌 해결이나 후속 커밋을 검토하고
+원래 브랜치를 bundle 등으로 보존한 뒤 판단한다. 최신 main과 다르다는 사실만으로는
+미머지라고 단정할 수 없다. 삭제 전에 절대경로와 실제 링크 대상을 확인한다.

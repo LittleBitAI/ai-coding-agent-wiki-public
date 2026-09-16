@@ -1,11 +1,92 @@
 ---
 name: retrospect
-description: Review authorized local work records and suggest reusable lessons without publishing private content.
+description: >-
+  Reflect on the session's work and turn what went wrong into wiki changes.
+  Reads the day's commits and the session transcript, counts corrections and
+  redos with evidence, and proposes page edits. Use when the user says "회고",
+  "오늘 뭐 했", "돌아보자", "retrospective", "정리해줘" about a day's work, or at
+  the end of a working session.
 ---
 
-# 회고
+# 회고 — 오늘 무엇이 어긋났고 그것이 위키의 무엇이 되는가
 
-사용자가 지정한 범위의 기록을 읽고 확인된 실패와 가설을 구분한다.
-`craft/diagnose-from-what-ran`과 `craft/verify-narrow-then-wide`를 따른다.
-반복되는 문제의 조건과 재발 방지 방법을 제안한다. 실제 대화·개인 경로·내부 코드를 공개 규칙으로 복사하지 않는다.
-검토할 후보는 로컬에 남기고 외부 전송은 명시적으로 허용된 범위에서만 한다.
+이 스킬이 있는 이유는 census 가 못 하는 것을 하기 때문이다. census 는 세션이
+수십 개 쌓여야 뭔가를 말한다. 오늘 난 사고는 오늘 잡아야 하고, 그러지 않으면
+다음 census 까지 같은 사고가 반복된다.
+
+회고의 산출물은 감상이 아니라 **위키 갱신 후보**다. 무엇을 느꼈는지가 아니라
+무엇이 페이지가 되어야 하는지를 낸다.
+
+## 걸음
+
+### 1. 오늘 무엇을 했나 — 지어내지 말고 읽어라
+
+```bash
+git log --oneline --since=midnight
+git diff --shortstat <오늘 첫 커밋>^..HEAD
+```
+
+기억으로 쓰지 마라. 긴 세션의 앞쪽은 이미 요약으로 접혀 있고, 요약은 무엇을
+했는지는 남겨도 무엇이 어긋났는지는 잘 지운다.
+
+### 2. 어긋난 자리를 센다 — 네 부류
+
+| 부류 | 어떻게 찾나 |
+| --- | --- |
+| 교정 | 사용자가 "아니", "틀렸다", "다시" 라고 한 자리 |
+| 재입력 | 이미 말한 규칙을 다시 친 자리 |
+| 부분 수행 | 시킨 것 중 일부만 하고 나머지를 다시 시킨 자리 |
+| 되돌림 | 내가 세운 가설이 반증돼 되돌린 자리 |
+
+세션 기록은 `~/.claude/projects/<플랫된 경로>/<세션>.jsonl` 에 있다.
+`type=user` 이면서 도구 결과가 아닌 블록이 사람이 직접 친 말이다.
+
+**횟수를 대라.** "몇 번 그랬던 것 같다" 는 회고가 아니다. `raw/` 에 들어갈 수
+있는 형태여야 한다.
+
+### 3. 각각이 이미 페이지인지 본다
+
+```bash
+python tool/lint.py --repo <저장소>
+```
+
+| 이미 페이지인가 | 뜻 | 할 일 |
+| --- | --- | --- |
+| 있다 | 그 페이지가 작동하지 않는다 | 산문을 고쳐 쓰지 말고 사다리를 올려라 |
+| 없다 | 새 후보다 | 아래 문턱을 본다 |
+
+첫 줄이 이 스킬에서 가장 중요하다. 이미 적혀 있는데 또 어겼다면 문장이 약해서가
+아니다. 문장이라서다.
+
+### 4. 문턱을 적용한다 — 아무거나 페이지로 만들지 않는다
+
+| 어디로 | 조건 |
+| --- | --- |
+| 그 저장소의 `CLAUDE.md` | 한 저장소에서만 나는 것. 대부분 여기다 |
+| 위키 페이지 | 둘 이상에서 났거나, 이미 검사·차단으로 서 있고 옮길 수 있다 |
+| 아무 데도 | 한 번 났고 원인을 모른다. 다음에 또 나면 그때 |
+
+페이지를 늘리는 것 자체가 비용이다. 주입량이 늘고, 그것이 처음에 이 위키를
+만들게 한 문제다.
+
+### 5. 선택지로 물어라
+
+무엇을 페이지로 올릴지는 사용자 판단이다. 산문으로 묻지 말고 방향키 선택지로
+낸다. 각 선택지에 라벨이 아니라 결과를 적는다 — 이 규칙을 올리면 주입이 몇 자
+늘고 어느 발화에 걸리는지.
+
+### 6. 고쳤으면 검진한다
+
+```bash
+python tool/lint.py --repo <저장소>
+python tool/trigger_audit.py raw/census-*.jsonl
+```
+
+트리거를 새로 쓴 뒤에는 감사를 돌려라. 헐거운 트리거 하나가 모든 턴에 규칙을
+싣고, 그러면 아무것도 안 읽힌다.
+
+## 안 하는 것
+
+- 잘한 일을 나열하지 않는다. 회고의 값어치는 어긋난 자리에 있다
+- 사고 하나에 페이지 하나를 만들지 않는다. 4번 문턱을 먼저 본다
+- 횟수 없이 "자주 그랬다" 라고 적지 않는다. 근거 없는 `landmine` 은 lint 가 짚는다

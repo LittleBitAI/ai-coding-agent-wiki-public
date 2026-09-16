@@ -40,7 +40,12 @@ Explain in Korean with this meaning: "Eight of the 10 checks passed. The remaini
 two have not been checked yet."
 Never say: "All checks passed" or "Two checks failed."
 
-Source: "Configuration checks passed; automatic delivery has not been observed."
-Explain in Korean with this meaning: "The settings were checked. Whether the app
-runs the action automatically has not yet been confirmed."
-Never say: "It runs automatically."
+Source: "Checks passed locally; automatic delivery has not been observed."
+Explain: "The checks on this computer passed. Whether the app automatically
+carries out the intended action has not yet been confirmed."
+Never say: "It works automatically" or "automatic operation is impossible."
+
+Source: "Three tasks appear open based on filenames; their behavior is undefined."
+Explain: "Three tasks appear unfinished, judging only by the names of their records.
+The answer does not explain what those tasks do, and their status is not confirmed."
+Never invent meanings for the task names.

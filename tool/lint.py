@@ -64,7 +64,8 @@ def check(
     # --- 3. 낡은 서술 (기계가 확실히 아는 것만)
     for name, (meta, body, _path) in loaded.items():
         severity = str(meta.get("severity") or "")
-        if severity == "landmine" and not (meta.get("sources") or []):
+        # Public exports retain severity while withholding the private source records.
+        if severity == "landmine" and not (meta.get("sources") or []) and meta.get("sources_withheld") is not True:
             findings.append((
                 "근거 없는 landmine",
                 f"`{name}` 이 `landmine` 인데 `sources` 가 비었다. "

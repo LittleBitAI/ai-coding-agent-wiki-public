@@ -1,24 +1,72 @@
 ---
 scope: operator
-triggers:
-- 방향키
-- 선택지로
-- 선택지를
-- 골라\s*줘
-- 어느\s*쪽으로
+severity: contract
+triggers: ["방향키", "선택지로", "선택지를", "골라\\s*줘", "어느\\s*쪽으로"]
 slots: []
 enforce:
-  deny:
-  - request_user_input_async
-  - functions.request_user_input_async
-links:
-- korean-progress
-severity: contract
+  deny: ["request_user_input_async", "functions.request_user_input_async"]
 sources: []
+sources_withheld: true
+links: [korean-progress]
 ---
 
 # 판단이 필요하면 산문으로 묻지 말고 선택지로
 
-규칙. 사용자의 선택이 필요한 질문은 현재 호스트가 제공하는 선택형 질문 도구로 묻는다. Claude Code는 AskUserQuestion, Codex는 해당 세션에서 허용된 request_user_input을 사용한다.
+규칙. 사용자의 판단이 필요한 자리에서는 방향키·엔터로 고르는 선택지로 묻는다. Claude Code는 `AskUserQuestion`, Codex는 현재 세션에서 제공되고 해당 용도로 허용된 `request_user_input`을 쓴다. **Codex의 `request_user_input_async` 호출은 전면 금지다. 선택지가 없는 호출도 예외가 아니다.** 재발 중요도는 사용자 지정 P0다. 페이지의 `enforce.deny`가 도구 이름 자체를 차단한다.
 
-이 규칙 묶음은 request_user_input_async를 차단한다. 도구가 없거나 호출이 거부되면 그 사실을 알리고 가능한 질문 방식으로 진행한다. 상위 지시와 도구의 허용 범위를 따른다.
+## 질문을 보내기 전에 — 실행 환경의 도구를 고른다
+
+| 환경 | 도구 | 호출할 때 확인할 것 |
+| --- | --- | --- |
+| Claude Code | `AskUserQuestion` | 현재 도구 명세의 질문·선택지 구조 |
+| Codex | `request_user_input` (이 세션에서는 `functions.request_user_input`) | `questions`의 `header`·`id`·`question`, 각 `options`의 `label`·`description` |
+| Codex의 비동기 질문 | `request_user_input_async` | 사용 금지. `functions.request_user_input_async`도 같은 차단 대상이다 |
+
+1. 현재 세션의 도구 목록과 모드·용도 제한을 먼저 확인한다. Claude의 도구 이름을 Codex에 그대로 적용하지 않는다.
+2. 방향키·엔터 요청에는 허용된 `request_user_input`을 고른다. 독립 작업을 계속할 수 있다는 이유로 비동기 질문으로 바꾸지 않는다.
+3. 도구가 없거나 해당 용도가 금지돼 있으면 그 제한을 밝히고 상위 지침이 허용하는 방식으로 묻는다. 산문이나 비동기 질문을 같은 UI라고 설명하지 않는다.
+4. 잘못 보냈으면 같은 판단을 올바른 도구로 다시 묻는다. 접수 응답 `accepted: true`나 미리 선택된 항목은 사용자의 답이 아니다. 실제로 제출된 답을 반영한다.
+
+계획 승인 때만이 아니라 판단이 필요한 모든 자리에서 이 입력 형식을 적용하되, 승인 요청 등에 대한 상위 도구 제한을 우회하지 않는다.
+
+- 권장안을 첫 선택지에 두고 권장이라고 밝힌다.
+- 각 선택지에 라벨이 아니라 결과를 적는다 — 무엇을 치르고 무엇이 안 되는가.
+- 구체적으로 다른 것(diff 모양·수치·절차)이 있으면 미리보기를 붙인다.
+- 정말 사용자 것만 묻는다. 명백한 기본값이 있는 선택은 정하고 알린다.
+- 답이 안 막는 일은 먼저 다 해 둔다. 질문이 끝난 작업을 멈추지 않게.
+
+산문 질문은 사용자에게 대안을 머릿속에 들고 답을 글로 쓰라고 요구한다.
+선택지는 대안을 나란히 놓고, 각각이 무엇을 치르는지 보여 주고, 한 번의 키로
+끝난다.
+
+어겼을 때. 사용자가 질문을 다시 제시하라고 시킨다. 즉 한 번 더 왕복한다.
+
+기존 `enforce.deny`에 `request_user_input_async`와 현재 명세의 전체 이름 `functions.request_user_input_async`를 선언했다. 기존 `tool/codex_pretool.py`가 Bash 인자 패턴과 함께 도구 이름의 정확 일치를 검사한다. 별도 판정기나 새 훅 명령은 없다. 질문의 내용·선택지 유무를 추론하지 않는다.
+
+설치된 명령의 실행 시험은 두 이름 각각에 선택지 있음·없음 호출을 넣어 모두 거부되는지 확인한다. 정상 `request_user_input`과 도구 이름을 검색하는 Bash 명령은 허용한다. 차단 적용 범위는 이 Codex 훅이 설치되고 신뢰된 세션이다. 훅을 거치지 않는 환경이나 도구 목록에서의 제거까지 검증했다고 쓰지 않는다.
+
+여전히 반쪽이다. 진짜 실패는 사용자가 그 말을 안 했는데 내가 산문으로 묻는
+자리인데, 그건 발화로는 안 보인다. 그 절반은 스킬이 각자의 판단 자리에서
+든다 — `retrospect` 와 `review-loop` 이 그렇게 적고 있다.
+
+**낱말을 더 넣는 것은 답이 아니다.** 판단이 생겼다는 사실은
+사용자의 발화에 없다 — 내 출력에서 생긴다.
+
+그래서 이것은 `ENFORCEMENT.md` 가 이미 이름 붙인 부류다 —
+*"트리거로 잡을 수 없는 것은 트리거로 잡으려 하지 않는다"*.
+그 문서가 든 예 둘("무엇을 하던 중이었나", "왜 그렇게 골랐나") 옆에 **"판단이 생겼다"** 가 셋째로 붙는다. 이 규칙은 2층에
+얹혀 있고 2층이 볼 수 없는 것을 본다고 되어 있었다.
+
+**이 그래프에서 그것이 보이는 자리는 `Stop` 이다.** `PreToolUse` 로는 안 보인다 —
+산문으로 묻는 것은 도구를 *안* 쓰는 것이라 거기서는 아무 일도 안 일어난다.
+`Stop` 은 내 마지막 발화 전체를 보고, `declared_continuation.py` 가 이미 정확히 같은
+모양의 검사다("이어서 한다고 적었나"). 사후 지적이지만 `ENFORCEMENT.md` 의 측정표가
+가르는 것은 시점이 아니라 빨개지느냐 산문이냐이고, `Stop` 은 작업을 안 멈추므로
+오탐 비용이 가장 싼 자리이기도 하다.
+
+## 안 묻는 것
+
+선택지가 좋다고 아무거나 물으면 안 된다. 기본값이 명백한 것은 정하고 한 줄로
+알린다. 물어야 하는 것은 *다르게 읽으면 결과물이 실질적으로 달라지는* 자리뿐이다.
+
+선택지의 라벨과 설명도 사용자 화면에 뜨는 말이다 — [[korean-progress]].
