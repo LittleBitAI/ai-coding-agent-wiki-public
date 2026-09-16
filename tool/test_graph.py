@@ -46,6 +46,8 @@ def test_아티팩트가_축을_선언한다():
     )
     assert done.returncode == 0, done.stderr
 
+    assert b"\r\n" not in artifact.read_bytes()
+    assert not artifact.read_bytes().startswith(b"\xef\xbb\xbf")
     data = json.loads(artifact.read_text(encoding="utf-8"))
     assert data["ns"] == "rule"
     assert [n["id"] for n in data["nodes"]] == ["craft/a"]

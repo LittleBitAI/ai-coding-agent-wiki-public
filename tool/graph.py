@@ -356,7 +356,7 @@ def main() -> int:
     data = build(pages, projects)
     data["ns"] = NS
     args.json.write_text(
-        json.dumps(data, ensure_ascii=False, indent=1) + "\n", encoding="utf-8"
+        json.dumps(data, ensure_ascii=False, indent=1) + "\n", encoding="utf-8", newline="\n"
     )
 
     co = [x for x in data["links"] if x["kind"] == "co"]
