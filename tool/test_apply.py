@@ -1,0 +1,157 @@
+"""apply 의 병합이 기존 설정을 지우지 않는지 증명한다."""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+
+from apply import (  # noqa: E402
+    continuation_entry,
+    hook_entry,
+    merge,
+    script_entry,
+    sync_entry,
+)
+
+PY = "C:/py.exe"
+OTHER_HOOK = {
+    "hooks": [{"type": "command", "command": "echo 남의-훅"}],
+}
+OTHER_PRE = {
+    "matcher": "Bash",
+    "hooks": [{"type": "command", "command": "echo 남의-사전훅"}],
+}
+OTHER_STOP = {
+    "hooks": [{"type": "command", "command": "echo 남의-정지훅"}],
+}
+LIVED_IN = {
+    "permissions": {
+        "deny": ["Read(./secrets/**)", "Edit(./protected-data/**)"],
+        "allow": ["Bash(npm *)"],
+    },
+    "hooks": {
+        "UserPromptSubmit": [OTHER_HOOK],
+        "PreToolUse": [OTHER_PRE],
+        "PostToolUse": [{"matcher": "Edit", "hooks": [{"type": "command", "command": "fmt"}]}],
+    },
+    "model": "opus",
+}
+SCRIPTS = {"korean_progress.py": script_entry(PY, "korean_progress.py", "확인")}
+
+
+def check(label: str, ok: bool, detail: str = "") -> bool:
+    print(f"  {'통과' if ok else '실패'}  {label}{'  ← ' + detail if detail and not ok else ''}")
+    return ok
+
+
+def main() -> int:
+    # 출력이 파이프로 가면 기본이 cp949 다. 인코딩을 환경에 안 맡긴다.
+    sys.stdout.reconfigure(encoding="utf-8")
+
+    denies = ["Bash(sed -i*)", "Bash(git reset --hard*)"]
+    hook = hook_entry(PY, "proj")
+    results: list[bool] = []
+
+    print("빈 설정에서\n")
+    fresh: dict = {}
+    changes = merge(fresh, denies, hook, SCRIPTS)
+    results.append(check(
+        "deny 두 개가 생긴다",
+        fresh["permissions"]["deny"] == denies,
+    ))
+    results.append(check(
+        "훅이 하나 생긴다",
+        len(fresh["hooks"]["UserPromptSubmit"]) == 1,
+    ))
+    results.append(check(
+        "PreToolUse 훅이 생긴다",
+        len(fresh["hooks"]["PreToolUse"]) == 1,
+    ))
+    results.append(check("바뀐 것을 보고한다", len(changes) == 4, str(changes)))
+
+    print("\n이미 살던 설정에서\n")
+    lived = json.loads(json.dumps(LIVED_IN))
+    merge(lived, denies, hook, SCRIPTS)
+    deny = lived["permissions"]["deny"]
+    results.append(check(
+        "기존 deny 가 남는다",
+        deny[:2] == LIVED_IN["permissions"]["deny"],
+        str(deny),
+    ))
+    results.append(check("새 deny 가 뒤에 붙는다", deny[2:] == denies, str(deny)))
+    results.append(check(
+        "allow 를 안 건드린다",
+        lived["permissions"]["allow"] == ["Bash(npm *)"],
+    ))
+    results.append(check(
+        "남의 UserPromptSubmit 훅이 남는다",
+        OTHER_HOOK in lived["hooks"]["UserPromptSubmit"],
+    ))
+    results.append(check(
+        "남의 PreToolUse 훅이 남는다",
+        OTHER_PRE in lived["hooks"]["PreToolUse"],
+    ))
+    results.append(check(
+        "다른 이벤트 훅을 안 건드린다",
+        lived["hooks"]["PostToolUse"] == LIVED_IN["hooks"]["PostToolUse"],
+    ))
+    results.append(check("모르는 키를 안 건드린다", lived["model"] == "opus"))
+
+    print("\n두 번 돌려도\n")
+    again = merge(lived, denies, hook, SCRIPTS)
+    results.append(check("바뀌는 것이 없다", again == [], str(again)))
+    results.append(check(
+        "훅이 안 늘어난다",
+        len(lived["hooks"]["UserPromptSubmit"]) == 2
+        and len(lived["hooks"]["PreToolUse"]) == 2,
+    ))
+
+    print("\nStop 이 둘일 때\n")
+    # 한 이벤트에 이 위키의 훅이 둘 걸리는 유일한 자리다. `put_hook` 이 이름이
+    # 아니라 명령 안의 스크립트 경로로 자기 것을 알아보므로 둘이 서로를 덮으면
+    # 안 되고, 남의 Stop 훅도 그대로 남아야 한다.
+    both: dict = {"hooks": {"Stop": [OTHER_STOP]}}
+    merge(both, [], hook, SCRIPTS, None, sync_entry(PY, "proj"), continuation_entry(PY))
+    stop = [e["command"] for g in both["hooks"]["Stop"] for e in g["hooks"]]
+    results.append(check("sync 가 선다", any("sync.py" in c for c in stop), str(stop)))
+    results.append(check(
+        "되돌림 훅이 선다",
+        any("declared_continuation.py" in c for c in stop),
+        str(stop),
+    ))
+    results.append(check("남의 Stop 훅이 남는다", OTHER_STOP in both["hooks"]["Stop"]))
+    twice = merge(
+        both, [], hook, SCRIPTS, None, sync_entry(PY, "proj"), continuation_entry(PY)
+    )
+    results.append(check("두 번 돌려도 안 늘어난다", twice == [], str(twice)))
+
+    print("\n어댑터가 바뀌면\n")
+    moved = merge(lived, denies, hook_entry(PY, "다른프로젝트"), SCRIPTS)
+    commands = [
+        e["command"]
+        for g in lived["hooks"]["UserPromptSubmit"]
+        for e in g["hooks"]
+        if "inject.py" in e["command"]
+    ]
+    results.append(check(
+        "명령을 갱신한다",
+        moved == ["UserPromptSubmit 훅 명령 갱신: tool/inject.py"],
+        str(moved),
+    ))
+    results.append(check("훅을 새로 안 만든다", len(commands) == 1, str(commands)))
+    results.append(check("새 어댑터를 쓴다", "다른프로젝트" in commands[0], commands[0]))
+
+    print()
+    if all(results):
+        print(f"{len(results)}건 전부 통과. 병합이 기존 설정을 안 지운다.")
+        return 0
+    print(f"{results.count(False)}건 실패.")
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

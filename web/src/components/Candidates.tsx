@@ -1,0 +1,82 @@
+import { useState } from 'react'
+
+type Target = 'wiki' | 'claude_md' | 'drop'
+type Props = {
+  raw: string
+  onDecide: (candidate: string, target: Target) => Promise<string>
+}
+
+type State = { busy?: Target; result?: string; done?: Target }
+
+/** 회고가 낸 후보 한 줄에 버튼 셋.
+ *
+ *  `retrospect` 스킬 5번 걸음은 "선택지로 물어라" 인데 헤드리스는 못 묻는다.
+ *  여기가 그 자리다. 눌러야만 파일이 바뀐다 — 버튼이 곧 허가다. */
+export function Candidates({ raw, onDecide }: Props) {
+  const lines = raw
+    .split('\n')
+    .map((l) => l.replace(/^[-*]\s*/, '').trim())
+    .filter(Boolean)
+  const [state, setState] = useState<Record<number, State>>({})
+
+  if (lines.length === 0) {
+    return <p className="text-[12.5px] text-faint">위키 갱신 후보 없음.</p>
+  }
+
+  async function act(i: number, target: Target) {
+    setState((s) => ({ ...s, [i]: { ...s[i], busy: target } }))
+    try {
+      const text = await onDecide(lines[i], target)
+      setState((s) => ({ ...s, [i]: { result: text, done: target } }))
+    } catch (err) {
+      setState((s) => ({ ...s, [i]: { result: String(err) } }))
+    }
+  }
+
+  const label: Record<Target, string> = {
+    wiki: '위키로',
+    claude_md: 'CLAUDE.md 로',
+    drop: '버린다',
+  }
+  const doing: Record<Target, string> = {
+    wiki: '페이지를 쓰는 중…',
+    claude_md: '한 줄 더하는 중…',
+    drop: '…',
+  }
+
+  return (
+    <div className="not-prose my-2 space-y-2 rounded-md border border-border bg-card p-3">
+      <div className="font-heading text-[11px] text-faint">위키 갱신 후보 — 무엇이 될지는 네가 정한다</div>
+      {lines.map((line, i) => {
+        const s = state[i] ?? {}
+        return (
+          <div key={i} className="space-y-1.5">
+            <div className="text-[13px] leading-snug">{line}</div>
+            {s.done ? (
+              <div className="text-[11.5px] text-primary">→ {label[s.done]}</div>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {(['wiki', 'claude_md', 'drop'] as Target[]).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    disabled={!!s.busy}
+                    onClick={() => act(i, t)}
+                    className="rounded border border-border bg-background px-2 py-0.5 text-[11.5px] hover:bg-secondary disabled:opacity-40"
+                  >
+                    {s.busy === t ? doing[t] : label[t]}
+                  </button>
+                ))}
+              </div>
+            )}
+            {s.result && (
+              <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded bg-secondary p-2 text-[11.5px] leading-snug">
+                {s.result}
+              </pre>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}

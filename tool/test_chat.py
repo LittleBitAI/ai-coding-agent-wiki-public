@@ -1,0 +1,183 @@
+"""두 단계의 데이터 경계·오류 보존과 실제 자식 프로세스의 Codex 이벤트를 검사한다."""
+
+import json
+from pathlib import Path
+import subprocess
+import sys
+from unittest.mock import patch
+
+from fastapi.testclient import TestClient
+import pytest
+
+import chat
+import chat_channels
+import chat_session
+from chat_session import ChatSession, Event
+
+
+@pytest.fixture(autouse=True)
+def no_machine_settings():
+    with patch.object(chat_channels, "LOCAL", {}):
+        yield
+
+
+def test_explanation_isolated(tmp_path):
+    calls = []
+    source = '설치 13건 통과. 자동 실행은 미확인. `docs/setup.md:8`'
+
+    class Rewrite:
+        def __init__(self, repo, **kwargs):
+            calls.append((Path(repo), kwargs))
+
+        def say(self, text):
+            assert json.loads(text) == {"source_answer": source}
+            yield Event("done", "설정 검사 13개는 통과했습니다. 자동으로 실행되는지는 아직 모릅니다.")
+
+        def close(self):
+            calls.append("closed")
+
+    with patch.object(chat_session, "ChatSession", Rewrite):
+        assert list(chat_session.explain(source, "codex:test-model", "low"))[-1].kind == "done"
+    repo, kwargs = calls[0]
+    assert kwargs["isolated"] and kwargs["tools"] == ""
+    assert kwargs["model"] == "codex:test-model" and kwargs["effort"] == "low"
+    assert not repo.exists() and calls[-1] == "closed"
+    assert "Task: faithfully explain" in kwargs["system"]
+    assert "Task: answer from verifiable" not in kwargs["system"]
+    assert all(c.preamble not in kwargs["system"] for c in chat_channels.CHANNELS)
+    assert kwargs["system"].isascii() and chat_channels.ANSWER_PROMPT.isascii()
+    assert all(c.preamble.isascii() for c in chat_channels.CHANNELS)
+
+
+def test_stream_persists_both_and_keeps_original_on_rewrite_failure(tmp_path):
+    class Original:
+        def say(self, text):
+            # Codex는 문자 delta 없이 완성 응답을 보낼 수도 있다.
+            yield Event("done", "정확한 원문 13건", {"session_id": "answer-session", "error": False})
+
+    def rewrite(source, model, effort):
+        assert source == "정확한 원문 13건"
+        yield Event("delta", "쉬운 ")
+        yield Event("done", "쉬운 설명 13건")
+
+    with patch.object(chat, "LOGS", tmp_path), patch.object(chat, "session", return_value=Original()), \
+         patch.object(chat, "hits_for", return_value=[]), patch.object(chat, "explain", rewrite):
+        client = TestClient(chat.app)
+        response = client.post("/api/say/wiki", json={"text": "검사 결과?"})
+        events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+        assert [e["kind"] for e in events] == ["done", "simple_start", "simple_delta", "simple_done"]
+        saved = client.get("/api/log/wiki").json()[-1]
+        assert saved["text"] == "정확한 원문 13건" and saved["simple_text"] == "쉬운 설명 13건"
+        assert saved["session_id"] == "answer-session"
+        assert "wiki" not in chat._busy
+        with patch.object(chat, "explain", return_value=iter([Event("error", "설명 호출 실패")])):
+            response = client.post("/api/say/wiki", json={"text": "다시?"})
+            assert '"kind": "simple_error"' in response.text
+            saved = client.get("/api/log/wiki").json()[-1]
+            assert saved["text"] == "정확한 원문 13건" and not saved["simple_text"]
+            assert "설명 호출 실패" in saved["simple_error"]
+            assert not saved.get("error")
+        assert "wiki" not in chat._busy
+
+
+def test_failed_original_never_rewritten(tmp_path):
+    class Failed:
+        def say(self, text):
+            yield Event("delta", "미완성")
+            yield Event("done", "모델 오류", {"error": True})
+
+    with patch.object(chat, "LOGS", tmp_path), patch.object(chat, "session", return_value=Failed()), \
+         patch.object(chat, "hits_for", return_value=[]), patch.object(chat, "explain") as rewrite:
+        response = TestClient(chat.app).post("/api/say/wiki", json={"text": "질문"})
+        assert '"kind": "error"' in response.text
+        rewrite.assert_not_called()
+        assert chat.recall("wiki")[-1]["error"] == "모델 오류"
+
+
+def test_codex_process_resume_and_isolated_command(tmp_path):
+    commands = []
+    real_popen = subprocess.Popen
+    fixture = '''import json,sys
+text = sys.stdin.read()
+for event in [
+    {"type":"thread.started","thread_id":"owned-session"},
+    {"type":"item.completed","item":{"type":"agent_message","text":"중간 설명"}},
+    {"type":"item.completed","item":{"type":"agent_message","text":"최종 답변"}},
+    {"type":"turn.completed","usage":{"input_tokens":12,"output_tokens":7}}
+]: print(json.dumps(event), flush=True)
+'''
+
+    def spawn(command, **kwargs):
+        commands.append(command)
+        return real_popen([sys.executable, "-X", "utf8", "-c", fixture], **kwargs)
+
+    with patch.object(chat_session.subprocess, "Popen", spawn), \
+         patch.object(chat_session, "cli_command", side_effect=lambda name: [name]):
+        session = ChatSession(tmp_path, model="codex:test-model", system="Find evidence.", effort="low")
+        for _ in range(2):
+            events = list(session.say("질문"))
+            assert events[-1].text == "최종 답변" and events[-1].meta["tokens"]["in"] == 12
+            assert not session.alive
+        assert "resume" not in commands[0]
+        assert commands[1][-3:] == ["resume", "owned-session", "-"]
+        assert commands[0][commands[0].index("--sandbox") + 1] == "read-only"
+        list(chat_session.explain("설치 성공, 자동 실행 미확인.", "codex:test-model", "low"))
+        isolated = commands[-1]
+        assert "--ignore-user-config" in isolated and "--ephemeral" in isolated
+        assert "resume" not in isolated and "shell_tool" in isolated
+        assert "Task: answer from verifiable" not in " ".join(isolated)
+        assert all(c[c.index("--model") + 1] == "test-model" for c in commands)
+
+
+def test_provider_switch_and_config_validation(tmp_path):
+    client = TestClient(chat.app)
+    models = [{"id": "codex:test-model", "default_effort": "low",
+               "efforts": [{"id": e} for e in ("", "low", "high", "max")]},
+              {"id": "codex:another-model", "default_effort": "high",
+               "efforts": [{"id": e} for e in ("", "low", "high")]}]
+    with patch.object(chat_channels, "repo_for", return_value=tmp_path), \
+         patch.object(chat_channels, "codex_models", return_value=models), \
+         patch.object(chat, "_config", {}), patch.object(chat, "_sessions", {}):
+        assert client.post("/api/config/wiki", json={"repo": "sample", "model": "codex"}).status_code == 400
+        assert client.post("/api/config/wiki", json={"repo": "sample", "model": "codex:missing"}).status_code == 400
+        assert client.post("/api/config/wiki", json={"repo": "sample", "model": "codex:another-model", "effort": "max"}).status_code == 400
+        response = client.post("/api/config/wiki", json={"repo": "sample", "model": "codex:test-model", "effort": "max"})
+        assert response.status_code == 200 and not response.json()["kept"]
+        response = client.post("/api/config/wiki", json={"repo": "sample", "model": "codex:another-model"})
+        assert response.json()["kept"] and response.json()["effort"] == "high"
+        with patch.object(chat, "_busy", {"wiki"}):
+            assert client.post("/api/reset/wiki").status_code == 409
+
+
+def test_model_discovery_and_failure_reporting():
+    real_popen = subprocess.Popen
+    fixture = '''import json,sys
+for line in sys.stdin:
+    req = json.loads(line)
+    if req.get("method") == "initialize":
+        print(json.dumps({"id":req["id"],"result":{}}), flush=True)
+    elif req.get("method") == "model/list":
+        cursor = req["params"].get("cursor")
+        model = {"model":"second" if cursor else "first", "displayName":"Example model",
+                 "defaultReasoningEffort":"medium",
+                 "supportedReasoningEfforts":[{"reasoningEffort":"medium"},{"reasoningEffort":"ultra"}]}
+        print(json.dumps({"method":"notice"}), flush=True)
+        print(json.dumps({"id":req["id"],"result":{"data":[model],"nextCursor":None if cursor else "page2"}}), flush=True)
+'''
+
+    def spawn(command, **kwargs):
+        assert command == ["codex", "app-server"]
+        return real_popen([sys.executable, "-X", "utf8", "-c", fixture], **kwargs)
+
+    chat_channels.codex_models.cache_clear()
+    try:
+        with patch.object(chat_channels.subprocess, "Popen", spawn), \
+             patch.object(chat_channels, "cli_command", side_effect=lambda name: [name]):
+            models = chat_channels.codex_models()
+            assert [m["id"] for m in models] == ["codex:first", "codex:second"]
+            assert models[0]["efforts"][-1]["id"] == "ultra"
+    finally:
+        chat_channels.codex_models.cache_clear()
+    with patch.object(chat_channels, "codex_models", side_effect=RuntimeError("offline")):
+        response = TestClient(chat.app).get("/api/options").json()
+        assert response["models"] == chat_channels.MODELS and "offline" in response["codex_error"]

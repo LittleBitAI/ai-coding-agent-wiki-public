@@ -1,0 +1,135 @@
+"""설치된 Codex 명령을 실제 프로세스로 호출해 위키 연결을 검증한다."""
+
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import time
+
+import pytest
+
+TOOL = Path(__file__).resolve().parent
+
+
+def install(project, *extra):
+    return subprocess.run(
+        [sys.executable, str(TOOL / "apply.py"), "--agent", "codex",
+         "--project", str(project), "--adapter", "example", *extra],
+        capture_output=True, text=True, encoding="utf-8", timeout=20,
+    )
+
+
+@pytest.fixture
+def connected(tmp_path):
+    project = tmp_path / "한글 project"
+    project.mkdir()
+    subprocess.run(["git", "init", "-q", str(project)], check=True)
+    (project / "README.md").write_text("# 시험 문서\n", encoding="utf-8")
+    (project / ".wiki").mkdir()
+    (project / ".wiki" / ".sync").write_text(str(time.time()), encoding="utf-8")
+    (project / ".claude").mkdir()
+    (project / ".claude" / "settings.json").write_text('{"model":"keep"}', encoding="utf-8")
+    (project / ".codex").mkdir()
+    other = {"hooks": {"SessionEnd": [{"hooks": [{"type": "command", "command": "echo keep"}]}]}}
+    target = project / ".codex" / "hooks.json"
+    target.write_text(json.dumps(other), encoding="utf-8")
+    preview = install(project)
+    assert preview.returncode == 0, preview.stderr
+    assert json.loads(target.read_text(encoding="utf-8")) == other
+    applied = install(project, "--write")
+    assert applied.returncode == 0, applied.stderr
+    assert (project / ".claude" / "settings.json").read_text(encoding="utf-8") == '{"model":"keep"}'
+    before = target.read_bytes()
+    assert not before.startswith(b"\xef\xbb\xbf")
+    again = install(project, "--write")
+    assert again.returncode == 0, again.stderr
+    assert target.read_bytes() == before
+    settings = json.loads(before)
+    assert settings["hooks"]["SessionEnd"] == other["hooks"]["SessionEnd"]
+    return project, settings
+
+
+def run_hook(connected, event, payload, script=""):
+    project, settings = connected
+    commands = [h for group in settings["hooks"][event] for h in group["hooks"]
+                if script in h["command"]]
+    assert len(commands) == 1
+    payload = {"cwd": str(project), "hook_event_name": event, "session_id": "test", **payload}
+    command = commands[0]["command"]
+    if os.name == "nt":
+        # shell=True는 cmd.exe를 골라 Codex의 PowerShell 파싱 오류를 놓친다.
+        command = [shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-Command", command]
+    result = subprocess.run(
+        command, shell=os.name != "nt", cwd=project,
+        input=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        capture_output=True, timeout=20,
+        env={**os.environ, "PYTHONIOENCODING": "cp949", "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    assert result.returncode == 0, result.stderr
+    assert not result.stderr, result.stderr
+    return json.loads(result.stdout.decode("utf-8") or "{}")
+
+
+def test_installed_context_and_sync(connected):
+    prompt = run_hook(connected, "UserPromptSubmit", {"prompt": "PR 리뷰 루프를 돌려라"})
+    assert "operator/codex-review-loop" in prompt["hookSpecificOutput"]["additionalContext"]
+    project, _ = connected
+    row = json.loads((project / ".wiki" / "trajectory.jsonl").read_text(encoding="utf-8"))
+    assert "operator/codex-review-loop" in row["injected"]
+    run_hook(connected, "Stop", {}, "sync.py")
+    catalog = json.loads((project / ".wiki" / "corpus.json").read_text(encoding="utf-8"))
+    assert any(d["path"] == "README.md" for d in catalog["docs"])
+    start = run_hook(connected, "SessionStart", {"source": "startup"})
+    assert "README.md" in start["hookSpecificOutput"]["additionalContext"]
+
+
+@pytest.mark.parametrize("command,description,blocked", [
+    ("git status --short", "", False),
+    ("git reset --hard", "", True),
+    ("sed -i 's/a/b/' README.md", "", True),
+    ("cat > README.md", "", True),
+    ("git status", "Check status", True),
+    ("git status", "상태 확인", False),
+])
+def test_installed_pretool(connected, command, description, blocked):
+    answer = run_hook(connected, "PreToolUse", {
+        "tool_name": "Bash", "tool_input": {"command": command, "description": description},
+    })
+    assert (answer.get("hookSpecificOutput", {}).get("permissionDecision") == "deny") == blocked
+    assert (connected[0] / "README.md").read_text(encoding="utf-8") == "# 시험 문서\n"
+
+
+def test_installed_pretool_denies_the_async_tool_itself(connected):
+    for tool in ("request_user_input_async", "functions.request_user_input_async"):
+        for given in ({"questions": [{"title": "위치?"}]},
+                      {"questions": [{"title": "위치?", "options": ["현재", "다른 곳"]}]}):
+            answer = run_hook(connected, "PreToolUse", {
+                "tool_name": tool, "tool_input": given,
+            })
+            output = answer.get("hookSpecificOutput", {})
+            assert output.get("permissionDecision") == "deny"
+            assert tool in output["permissionDecisionReason"]
+    for tool, given in (
+        ("request_user_input", {"questions": []}),
+        ("Bash", {"command": "rg request_user_input_async tool"}),
+    ):
+        assert run_hook(connected, "PreToolUse", {
+            "tool_name": tool, "tool_input": given,
+        }) == {}
+
+
+@pytest.mark.parametrize("message,active,blocked", [
+    ("지금 이어서 하겠습니다.", False, True),
+    ("지금 이어서 하겠습니다.", True, False),
+    ("검증을 마쳤습니다.", False, False),
+    ("결과가 나오면 이어서 하겠습니다.", False, False),
+    (None, False, False),
+])
+def test_installed_stop(connected, message, active, blocked):
+    answer = run_hook(connected, "Stop", {
+        "last_assistant_message": message, "stop_hook_active": active,
+        "transcript_path": None,
+    }, "declared_continuation.py")
+    assert (answer.get("decision") == "block") == blocked

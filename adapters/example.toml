@@ -1,0 +1,8 @@
+# Synthetic compatibility fixture. Real projects use their own .wiki/adapter.toml.
+agents = ["claude", "codex"]
+[slots]
+review_dir = "artifacts/review"
+gate_cmd = "python -m pytest tool"
+live_cmd = "새 호스트 세션에서 이벤트 전달을 확인한다"
+server_stop = "직접 실행한 터미널에서 Ctrl+C"
+scratch_dirs = "artifacts/"
