@@ -76,10 +76,10 @@ Windows:
 .\tool\chat.cmd
 ```
 
-macOS·Linux:
+macOS·Linux (Finder에서 더블클릭해도 된다):
 
 ```bash
-.venv/bin/python tool/chat.py
+tool/chat.command
 ```
 
 브라우저에서 `http://127.0.0.1:8787`을 연다. 종료는 실행한 터미널에서 `Ctrl+C`다.
@@ -90,6 +90,10 @@ Codex만 설치한 경우 설치 시 조회한 실제 모델이 기본 선택된
 
 ```powershell
 .\tool\chat.cmd --workspace "D:/다른 프로젝트들" --port 9090
+```
+
+```bash
+tool/chat.command --workspace "~/다른 프로젝트들" --port 9090
 ```
 
 ## 로그인 확인·계정 바꾸기
