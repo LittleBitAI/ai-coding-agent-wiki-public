@@ -37,10 +37,14 @@ export default function App() {
   const [options, setOptions] = useState<Options | null>(null)
   const [active, setActive] = useState('')
   const [messages, setMessages] = useState<Msg[]>([])
+  const [legacy, setLegacy] = useState<api.Turn[]>([])
+  const [configuring, setConfiguring] = useState(false)
+  const selectedRepo = channels[0]?.repo ?? ''
   // 답하는 중인 채널. 전역 불리언이면 한 채널이 답하는 동안 다른 채널도
   // 막힌다 — 채널이 독립이라는 약속이 깨진다. 실제로 #위키 입력창이 막혔다.
-  const [busyOn, setBusyOn] = useState('')
+  const [busyOn, setBusyOn] = useState<string[]>([])
   const activeRef = useRef('')
+  const inFlight = useRef(new Map<string, Msg>())
   activeRef.current = active
   const [fault, setFault] = useState('')
   const [note, setNote] = useState('')
@@ -67,6 +71,7 @@ export default function App() {
     if (!active || active === MAP) return
     let stale = false
     setMessages([])
+    setLegacy([])
     setNote('')
     setHandoff('')
     setPeek(null)
@@ -74,41 +79,52 @@ export default function App() {
       .getLog(active)
       .then((rows) => {
         if (stale) return
+        const restored: Msg[] = rows.map((r) => ({ role: r.role, text: r.text, tools: [], source: r.source, error: r.error,
+          ms: r.ms, cost: r.cost_usd, model: r.model, sessionId: r.session_id, tokens: r.tokens,
+          simpleText: r.simple_text, simpleError: r.simple_error,
+          simpleMs: r.simple_meta?.ms, simpleCost: r.simple_meta?.cost_usd }))
+        const live = inFlight.current.get(active)
+        if (live && restored.at(-1)?.role === 'user') restored.push(live)
         setMessages((prev) =>
           prev.length
             ? prev
-            : rows.map((r) => ({ role: r.role, text: r.text, tools: [], source: r.source, error: r.error,
-                ms: r.ms, cost: r.cost_usd, model: r.model, sessionId: r.session_id, tokens: r.tokens,
-                simpleText: r.simple_text, simpleError: r.simple_error,
-                simpleMs: r.simple_meta?.ms, simpleCost: r.simple_meta?.cost_usd })),
+            : restored,
         )
       })
       .catch(() => !stale && setFault('기록을 못 읽었다'))
+    api.getLog(active, true).then((rows) => !stale && setLegacy(rows))
+      .catch(() => !stale && setFault('이전 기록을 못 읽었다'))
     return () => {
       stale = true
     }
-  }, [active])
+  }, [active, selectedRepo])
 
   const send = useCallback(
     async (text: string) => {
       const cid = active
-      setBusyOn(cid)
+      const placeholder: Msg = { role: 'assistant', text: '', tools: [], pending: true }
+      inFlight.current.set(cid, placeholder)
+      setBusyOn((prev) => [...prev, cid])
       setFault('')
       setMessages((prev) => [
         ...prev,
         { role: 'user', text, tools: [] },
-        { role: 'assistant', text: '', tools: [], pending: true },
+        placeholder,
       ])
 
       // 스트림 중에 채널을 바꾸면 화면의 목록은 다른 채널 것이다. 그 위에 토막을
       // 붙이면 남의 대화가 망가진다. 서버가 기록하니 돌아오면 되살아난다.
-      const patch = (fn: (m: Msg) => Msg) =>
+      const patch = (fn: (m: Msg) => Msg) => {
+        const previous = inFlight.current.get(cid)!
+        const nextMessage = fn(previous)
+        inFlight.current.set(cid, nextMessage)
         setMessages((prev) => {
-          if (activeRef.current !== cid || !prev.length) return prev
+          if (activeRef.current !== cid || prev.at(-1) !== previous) return prev
           const next = [...prev]
-          next[next.length - 1] = fn(next[next.length - 1])
+          next[next.length - 1] = nextMessage
           return next
         })
+      }
 
       try {
         await api.say(cid, text, (ev) => {
@@ -147,30 +163,34 @@ export default function App() {
           ? ({ ...m, simpleText: '', simpleError: String(err), simplePending: false })
           : ({ ...m, error: String(err), pending: false }))
       } finally {
-        setBusyOn((b) => (b === cid ? '' : b))
+        inFlight.current.delete(cid)
+        setBusyOn((prev) => prev.filter((id) => id !== cid))
         api.getChannels().then(setChannels).catch(() => {})
       }
     },
     [active],
   )
 
-  // 모델·effort 는 `--resume` 으로 이어 붙어 대화가 남는다. 저장소는 cwd 가
-  // 곧 문맥이라 못 이어 붙이고 새 대화가 된다. 어느 쪽이었는지 서버가 말해
-  // 주므로 그대로 알린다 — 대화가 사라진 이유를 모르는 것이 제일 나쁘다.
+  // 프로젝트를 바꾸면 해당 프로젝트의 기록과 문맥을 다시 선택한다.
   const apply = useCallback(
     async (cfg: { repo: string; model: string; effort: string }) => {
       setFault('')
+      setConfiguring(true)
       try {
-        const { kept } = await api.setConfig(active, cfg)
+        const { kept, switched } = await api.setConfig(active, cfg)
         setChannels(await api.getChannels())
-        if (!kept) {
+        if (switched) {
           setMessages([])
-          setNote('저장소 또는 Claude/Codex를 바꿔 새 대화를 시작했다. 지난 기록은 그대로 남아 있다.')
+        } else if (!kept) {
+          setMessages([])
+          setNote('Claude/Codex를 바꿔 새 대화를 시작했다. 지난 기록은 그대로 남아 있다.')
         } else {
           setNote('다음 발화부터 적용된다. 지금까지 한 대화는 이어진다.')
         }
       } catch (err) {
         setFault(String(err))
+      } finally {
+        setConfiguring(false)
       }
     },
     [active],
@@ -209,7 +229,7 @@ export default function App() {
   }, [active])
 
   const here = channels.find((c) => c.id === active)
-  const busy = busyOn === active
+  const busy = busyOn.includes(active) || configuring
 
   const showPeek = useCallback(
     async (path: string, line: number) => {
@@ -266,7 +286,8 @@ export default function App() {
               </div>
               <div className="flex flex-wrap items-center gap-3">
                 {here && (
-                  <Toolbar channel={here} options={options} busy={busy} onChange={apply} />
+                  <Toolbar channel={here} options={options} busy={busy}
+                    projectBusy={busyOn.length > 0 || configuring} onChange={apply} />
                 )}
                 <button
                   type="button"
@@ -291,6 +312,13 @@ export default function App() {
               </div>
             )}
             {handoff && <Handoff text={handoff} onClose={() => setHandoff('')} />}
+            {legacy.length > 0 && (
+              <details key={active} className="max-h-64 overflow-auto border-b border-border px-6 py-2 text-xs">
+                <summary className="cursor-pointer">프로젝트 미분류 이전 기록 ({legacy.length}개)</summary>
+                <p className="my-2 text-muted-foreground">예전 기록에는 프로젝트가 저장되지 않았습니다. 현재 프로젝트의 기록으로 간주하지 않습니다.</p>
+                {legacy.map((row, i) => <pre key={i} className="my-3 whitespace-pre-wrap">{row.role === 'user' ? '나' : '답'}: {row.text}</pre>)}
+              </details>
+            )}
 
             <div className="flex min-h-0 flex-1">
               <div className="flex min-w-0 flex-1 flex-col">

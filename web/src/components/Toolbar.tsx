@@ -11,6 +11,7 @@ type Props = {
   channel: Channel
   options: Options | null
   busy: boolean
+  projectBusy: boolean
   onChange: (next: { repo: string; model: string; effort: string }) => void
 }
 
@@ -23,7 +24,7 @@ const inn = (v: string) => v || NONE
 
 type Item = { value: string; label: string; note?: string }
 
-export function Toolbar({ channel, options, busy, onChange }: Props) {
+export function Toolbar({ channel, options, busy, projectBusy, onChange }: Props) {
   const pick = (patch: Partial<Channel>) =>
     onChange({
       repo: channel.repo,
@@ -48,12 +49,12 @@ export function Toolbar({ channel, options, busy, onChange }: Props) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
       <Picker
-        label="프로젝트"
+        label="공통 프로젝트"
         width="w-56"
         mono
         items={projects}
         value={channel.repo}
-        disabled={busy || !options}
+        disabled={projectBusy || !options}
         onPick={(repo) => repo && pick({ repo })}
       />
       <Picker

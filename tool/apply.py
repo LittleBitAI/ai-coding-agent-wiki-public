@@ -70,7 +70,7 @@ def unfilled(adapter: str | None, project: Path | None = None) -> dict[str, list
 
 def hook_entry(python: str, adapter: str | None, project: str = "") -> dict:
     where = f' --project "{project}"' if project else ""
-    selection = f' --adapter {adapter}' if adapter and not (
+    selection = f' --adapter "{adapter}"' if adapter and not (
         project and (Path(project) / ".wiki/adapter.toml").exists()
     ) else ""
     return {

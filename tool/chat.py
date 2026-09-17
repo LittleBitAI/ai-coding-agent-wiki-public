@@ -44,7 +44,7 @@ PY = sys.executable
 
 MAX_REPLAY = 200  # 화면에 되살릴 지난 발화 수
 
-_sessions: dict[str, ChatSession] = {}
+_sessions: dict[tuple[str, str], ChatSession] = {}
 _lock = threading.Lock()
 _busy: set[str] = set()
 
@@ -68,12 +68,29 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="wiki chat", lifespan=lifespan)
 
 
-# 채널마다 지금 무엇을 보고 무슨 모델로 얼마나 생각하나. 화면이 바꾼다.
-_config: dict[str, dict] = {}
+# 프로젝트 선택은 모든 채널이 공유한다. 문맥과 모델 설정은 프로젝트·채널별이다.
+_config: dict[tuple[str, str], dict] = {}
+_project: str | None = None
+
+
+def project() -> str:
+    global _project
+    if _project is None:
+        path = LOGS / "project.json"
+        name = json.loads(path.read_text(encoding="utf-8")) if path.exists() else chat_channels.WIKI.name
+        if not isinstance(name, str):
+            raise HTTPException(409, "저장된 프로젝트 설정을 읽을 수 없습니다")
+        _project = name
+    return _project
+
+
+def session_key(cid: str) -> tuple[str, str]:
+    return (str(repo_of(cid)), cid)
 
 
 def config(cid: str) -> dict:
-    if cid not in _config:
+    key = (project(), cid)
+    if key not in _config:
         channel = chat_channels.get(cid)
         model = chat_channels.LOCAL.get("model", channel.model)
         effort = channel.effort
@@ -84,10 +101,10 @@ def config(cid: str) -> dict:
                     effort = selected["default_effort"]
             except Exception as exc:
                 raise HTTPException(503, "기본 Codex 모델을 확인할 수 없습니다. 설치 명령을 다시 실행하세요.") from exc
-        _config[cid] = {"repo": channel.repo.name,
+        _config[key] = {"repo": project(),
                         "model": model,
                         "effort": effort}
-    return _config[cid]
+    return _config[key]
 
 
 def session(cid: str) -> ChatSession:
@@ -101,19 +118,28 @@ def session(cid: str) -> ChatSession:
     모델·effort 를 바꿀 때마다 대화가 조용히 사라진다. 실제로 그랬다 —
     응답은 `kept: True` 인데 세션 id 가 갈렸다. 되살리는 것은 `ensure` 가 한다.
 
-    새 객체가 필요한 것은 저장소가 바뀔 때뿐이고, 그건 `configure` 가 목록에서
-    빼는 것으로 말한다.
+    다른 프로젝트로 갔다 돌아와도 같은 프로젝트·채널의 객체를 다시 쓴다.
     """
 
     with _lock:
-        chat = _sessions.get(cid)
+        key = session_key(cid)
+        chat = _sessions.get(key)
         if chat is None:
             channel = chat_channels.get(cid)
             cfg = config(cid)
-            repo = chat_channels.repo_for(cfg["repo"]) or channel.repo
+            repo = repo_of(cid)
             chat = ChatSession(repo, system=chat_channels.ANSWER_PROMPT + "\n\n" + channel.preamble,
                                model=cfg["model"], effort=cfg["effort"])
-            _sessions[cid] = chat
+            # 서버 재시작도 문맥 지우기가 아니다. 명시적 초기화 뒤의 같은 CLI만 재개한다.
+            for row in reversed(recall(cid, include_context=True)):
+                if row.get("role") == "context":
+                    break
+                if row.get("session_id"):
+                    provider = row.get("provider") or ("claude" if str(row.get("model", "")).startswith("claude-") else "codex")
+                    if provider == ("codex" if chat.is_codex else "claude"):
+                        chat.session_id = row["session_id"]
+                    break
+            _sessions[key] = chat
         return chat
 
 
@@ -122,21 +148,24 @@ def session(cid: str) -> ChatSession:
 
 def remember(cid: str, role: str, text: str, error: str = "", **extra) -> None:
     LOGS.mkdir(parents=True, exist_ok=True)
-    row = {"ts": time.time(), "role": role, "text": text, **extra}
+    row = {"ts": time.time(), "role": role, "text": text, "repo": str(repo_of(cid)), **extra}
     if error:
         row["error"] = error
     with (LOGS / f"{cid}.jsonl").open("a", encoding="utf-8", newline="\n") as fh:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def recall(cid: str) -> list[dict]:
+def recall(cid: str, legacy: bool = False, include_context: bool = False) -> list[dict]:
     path = LOGS / f"{cid}.jsonl"
     if not path.exists():
         return []
     rows = []
     for line in path.read_text(encoding="utf-8").splitlines():
         try:
-            rows.append(json.loads(line))
+            row = json.loads(line)
+            belongs = not row.get("repo") if legacy else row.get("repo") == str(repo_of(cid))
+            if belongs and (include_context or row.get("role") in ("user", "assistant")):
+                rows.append(row)
         except json.JSONDecodeError:
             continue
     return rows[-MAX_REPLAY:]
@@ -172,8 +201,8 @@ def options() -> dict:
 def channels() -> list[dict]:
     return [
         {"id": c.id, "label": c.label, "blurb": c.blurb,
-         "live": c.id in _sessions and _sessions[c.id].alive,
-         "model_name": _sessions[c.id].model_name if c.id in _sessions else "",
+         "live": session_key(c.id) in _sessions and _sessions[session_key(c.id)].alive,
+         "model_name": _sessions[session_key(c.id)].model_name if session_key(c.id) in _sessions else "",
          # 답에 나오는 SHA 를 커밋 링크로 만들 때 쓴다. 리모트가 없으면 빈 값.
          "remote": repo_url(repo_of(c.id)),
          **config(c.id)}
@@ -183,13 +212,8 @@ def channels() -> list[dict]:
 
 @app.post("/api/config/{cid}")
 def configure(cid: str, body: Config) -> dict:
-    """채널이 무엇을 보고 무슨 모델로 얼마나 생각할지를 바꾼다.
-
-    바꾸는 것에 따라 대화의 운명이 다르다.
-
-        모델·effort   `--resume` 으로 이어 붙는다. 대화가 남는다
-        저장소·CLI    문맥이나 세션 형식이 달라 새 대화다
-    """
+    """프로젝트는 전체 채널에, 모델·effort는 선택한 프로젝트의 채널에 적용한다."""
+    global _project
 
     if cid not in chat_channels.BY_ID:
         raise HTTPException(404, "그런 채널이 없다")
@@ -209,26 +233,41 @@ def configure(cid: str, body: Config) -> dict:
         raise HTTPException(400, "이 모델이 지원하지 않는 effort")
 
     with _lock:
-        if cid in _busy:
+        switched = body.repo != project()
+        if cid in _busy or (switched and _busy):
             raise HTTPException(409, "답변 생성이 끝난 뒤 설정을 바꿔 주세요")
+        if switched:
+            # 기록 중인 턴이 없을 때만 바꾼다. 디스크 쓰기 실패 시 선택도 그대로다.
+            LOGS.mkdir(parents=True, exist_ok=True)
+            path = LOGS / "project.json"
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(body.repo, ensure_ascii=False) + "\n", encoding="utf-8")
+            temporary.replace(path)
+            _project = body.repo
         cfg = config(cid)
-        moved = body.repo != cfg["repo"] or body.model.startswith("codex:") != cfg["model"].startswith("codex:")
-        cfg.update(repo=body.repo, model=body.model,
-                   effort=body.effort or selected.get("default_effort", ""))
-        chat = _sessions.pop(cid, None) if moved else _sessions.get(cid)
+        moved = not switched and body.model.startswith("codex:") != cfg["model"].startswith("codex:")
+        if not switched:
+            cfg.update(model=body.model, effort=body.effort or selected.get("default_effort", ""))
+        key = session_key(cid)
+        if moved:
+            remember(cid, "context", "CLI 변경")
+        chat = _sessions.pop(key, None) if moved else _sessions.get(key)
+        inactive = [s for (repo, _), s in _sessions.items() if repo != key[0]] if switched else []
+    for old in inactive:
+        old.close()  # session_id는 남겨 두고 돌아오면 --resume으로 재개한다.
     if chat is not None:
         if moved:
             chat.close()
         else:
             chat.reconfigure(cfg["model"], cfg["effort"])
-    return {"kept": not moved, **cfg}
+    return {"kept": not moved, "switched": switched, **cfg}
 
 
 @app.get("/api/log/{cid}")
-def log(cid: str) -> list[dict]:
+def log(cid: str, legacy: bool = False) -> list[dict]:
     if cid not in chat_channels.BY_ID:
         raise HTTPException(404, "그런 채널이 없다")
-    return recall(cid)
+    return recall(cid, legacy)
 
 
 @app.post("/api/reset/{cid}")
@@ -238,7 +277,8 @@ def reset(cid: str) -> dict:
     with _lock:
         if cid in _busy:
             raise HTTPException(409, "답변 생성이 끝난 뒤 대화를 초기화해 주세요")
-        chat = _sessions.pop(cid, None)
+        remember(cid, "context", "사용자가 문맥 지우기")
+        chat = _sessions.pop(session_key(cid), None)
     if chat:
         chat.close()
     return {"ok": True}
@@ -321,7 +361,8 @@ def say(cid: str, body: Say) -> StreamingResponse:
             try:
                 if answer or failed:
                     remember(cid, "assistant", "".join(answer), failed,
-                             simple_text=simple, simple_error=simple_error, simple_meta=simple_meta, **metadata)
+                             simple_text=simple, simple_error=simple_error, simple_meta=simple_meta,
+                             provider="codex" if cfg["model"].startswith("codex:") else "claude", **metadata)
             finally:
                 with _lock:
                     _busy.discard(cid)
@@ -338,8 +379,10 @@ def sse(payload: dict) -> str:
 # -- 트리거 히트 ------------------------------------------------------------
 
 def repo_of(cid: str) -> Path:
-    channel = chat_channels.get(cid)
-    return chat_channels.repo_for(config(cid)["repo"]) or channel.repo
+    repo = chat_channels.repo_for(project())
+    if repo is None:
+        raise HTTPException(409, "선택한 프로젝트를 찾을 수 없습니다")
+    return repo
 
 
 def hits_for(cid: str, text: str) -> list[str]:

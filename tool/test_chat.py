@@ -16,8 +16,10 @@ from chat_session import ChatSession, Event
 
 
 @pytest.fixture(autouse=True)
-def no_machine_settings():
-    with patch.object(chat_channels, "LOCAL", {}):
+def no_machine_settings(tmp_path):
+    with patch.object(chat_channels, "LOCAL", {}), patch.object(chat, "LOGS", tmp_path), \
+         patch.object(chat, "_project", None), patch.object(chat, "_config", {}), \
+         patch.object(chat, "_sessions", {}), patch.object(chat, "_busy", set()):
         yield
 
 
@@ -142,11 +144,59 @@ def test_provider_switch_and_config_validation(tmp_path):
         assert client.post("/api/config/wiki", json={"repo": "sample", "model": "codex:missing"}).status_code == 400
         assert client.post("/api/config/wiki", json={"repo": "sample", "model": "codex:another-model", "effort": "max"}).status_code == 400
         response = client.post("/api/config/wiki", json={"repo": "sample", "model": "codex:test-model", "effort": "max"})
+        assert response.json()["switched"]
+        response = client.post("/api/config/wiki", json={"repo": "sample", "model": "codex:test-model", "effort": "max"})
         assert response.status_code == 200 and not response.json()["kept"]
         response = client.post("/api/config/wiki", json={"repo": "sample", "model": "codex:another-model"})
         assert response.json()["kept"] and response.json()["effort"] == "high"
         with patch.object(chat, "_busy", {"wiki"}):
             assert client.post("/api/reset/wiki").status_code == 409
+
+
+def test_project_shared_sessions_and_records_isolated(tmp_path):
+    repos = {name: tmp_path / name for name in ("a", "b")}
+    for repo in repos.values():
+        (repo / ".git").mkdir(parents=True)
+    client = TestClient(chat.app)
+    with patch.object(chat_channels, "repo_for", side_effect=repos.get):
+        client.post("/api/config/diagnose", json={"repo": "a"}).raise_for_status()
+        assert {c["repo"] for c in client.get("/api/channels").json()} == {"a"}
+        a = chat.session("retro")
+        a.session_id = "a-context"
+        chat.remember("retro", "assistant", "a 회고", session_id="a-context", provider="claude")
+        client.post("/api/config/progress", json={"repo": "b"}).raise_for_status()
+        assert client.get("/api/log/retro").json() == []
+        assert chat.session("retro") is not a
+        chat.remember("retro", "assistant", "b 회고")
+        client.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
+        assert {c["repo"] for c in client.get("/api/channels").json()} == {"a"}
+        assert chat.session("retro") is a and a.session_id == "a-context"
+        assert [r["text"] for r in client.get("/api/log/retro").json()] == ["a 회고"]
+        with patch.object(chat, "_busy", {"diagnose"}):
+            assert client.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
+        assert chat.project() == "a"
+        chat._project = None
+        assert chat.project() == "a", "서버 재시작 때 프로젝트 선택을 복원해야 한다"
+        chat._sessions.clear()
+        assert chat.session("retro").session_id == "a-context"
+        client.post("/api/reset/retro").raise_for_status()
+        assert chat.session("retro") is not a
+        assert chat.session("retro").session_id is None
+        assert client.get("/api/log/retro").json()[0]["text"] == "a 회고"
+
+
+def test_legacy_records_remain_visible_but_not_in_handoff(tmp_path):
+    (tmp_path / "retro.jsonl").write_text(
+        json.dumps({"role": "assistant", "text": "소속 모름"}) + "\n", encoding="utf-8")
+    client = TestClient(chat.app)
+    assert client.get("/api/log/retro").json() == []
+    assert client.get("/api/log/retro?legacy=true").json()[0]["text"] == "소속 모름"
+    assert "소속 모름" not in client.post("/api/handoff/retro").json()["text"]
+    import chat_post
+    (tmp_path / ".git").mkdir()
+    with patch.object(chat_post, "LOGS", tmp_path), patch.object(chat_channels, "repo_for", return_value=tmp_path):
+        chat_post.post("retro", "프로젝트 회고", project=tmp_path)
+        assert client.get("/api/log/retro").json()[0]["text"] == "프로젝트 회고"
 
 
 def test_model_discovery_and_failure_reporting():

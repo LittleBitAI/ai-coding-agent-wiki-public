@@ -19,7 +19,7 @@ export function ChannelRail({ channels, active, busy, onPick, onReset }: Props) 
           위키에 묻는다
         </div>
         <div className="mt-0.5 text-[11.5px] text-faint">
-          채널마다 저장소와 문맥이 따로다
+          프로젝트는 함께, 대화는 채널별로
         </div>
       </div>
 
