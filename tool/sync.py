@@ -5,6 +5,7 @@ from __future__ import annotations
 import hook_diagnostics  # noqa: F401 -- 진입점의 제한 시간 전 스택 보존
 import argparse
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -42,11 +43,23 @@ def stale_docs(repo: Path, roots: list[str]) -> tuple[bool, str]:
     return False, ""
 
 
+SEQUENCE = re.compile(r"^\d{4}-\d{2}-\d{2}-(\d{1,4})-")
+
+
 def recorded(repo: Path) -> set[int]:
-    """이미 기록된 PR 번호."""
+    """이미 기록된 PR 번호.
+
+    `pr:` 줄만 보면 손으로 쓴 기록을 못 본다. 그것들은 같은 이름 규칙
+    (`<날짜>-<번호>-<슬러그>`)을 따르면서 frontmatter 에는 `pr:` 을 안 적는다.
+    그래서 파일 이름의 번호도 같이 읽는다 — 2026-09-17 에 013·015·016 이
+    그 구멍으로 통째로 덮였다.
+    """
 
     found = set()
     for path in (repo / ".wiki" / "decisions").glob("*.md"):
+        match = SEQUENCE.match(path.stem)
+        if match:
+            found.add(int(match.group(1)))
         for line in path.read_text(encoding="utf-8").splitlines()[:12]:
             if line.startswith("pr:"):
                 try:
@@ -89,7 +102,12 @@ def new_decisions(repo: Path, limit: int) -> list[str]:
         name, text = harvest.record(pr)
         out = repo / ".wiki" / "decisions"
         out.mkdir(parents=True, exist_ok=True)
-        (out / f"{name}.md").write_text(text, encoding="utf-8")
+        path = out / f"{name}.md"
+        # 있는 파일은 절대 안 덮는다. 캔 기록은 PR 본문을 눌러 담은 것이고, 같은
+        # 자리에 있는 것은 사람이 쓴 전문일 수 있다. 번호 판정이 또 틀려도 여기서 멈춘다.
+        if path.exists():
+            continue
+        path.write_text(text, encoding="utf-8", newline="\n")
         written.append(name)
     return written
 
