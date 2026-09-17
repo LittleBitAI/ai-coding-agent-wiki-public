@@ -58,18 +58,25 @@ def install(project, choice, check, allow_dirty=False):
         if any(char in str(path) for char in ('"', '$', '`', '\n', '\r')):
             raise ValueError(f"고정 위키의 셸 인용이 지원하지 않는 문자가 경로에 있습니다: {path}. "
                              "따옴표·달러·백틱·줄바꿈 없는 경로로 옮기세요. 공백·한글은 지원합니다.")
-    revision = (project / ".wiki/wiki-revision").read_text(encoding="utf-8").strip()
     actual = run(["git", "rev-parse", "HEAD"], wiki).strip()
-    if not re.fullmatch(r"[0-9a-f]{40}", revision) or actual != revision:
-        raise ValueError(f"위키 버전 불일치: 기대 {revision}, 현재 {actual}. "
-                         "기존 작업을 보존한 별도 checkout을 준비하세요. 자동 checkout은 하지 않습니다.")
-    runtime = ("tool", "operator", "craft", "skills")
-    dirty = run(["git", "diff", "--name-only", "HEAD", "--", *runtime], wiki)
-    dirty += run(["git", "ls-files", "--others", "--exclude-standard", "--", *runtime], wiki)
-    if dirty.strip() and not allow_dirty:
-        raise ValueError("고정 버전과 다른 위키 실행 코드·규칙이 있습니다. 깨끗한 별도 checkout을 사용하세요:\n" + dirty)
-    if allow_dirty:
-        print("개발 검증: --allow-dirty-wiki 사용. 고정 버전의 배포 검증으로 세지 않습니다.")
+    if project == wiki:
+        # 위키가 자기 자신을 대상으로 삼는 경우다. 버전 핀도 dirty 검사도 자기참조가 된다.
+        # 커밋할 때마다 핀이 낡고, 도구를 고치는 중에는 늘 dirty다. 설치되는 훅은 어차피
+        # 이 작업 트리를 가리키므로 "다른 버전을 쓰고 있는가"라는 물음 자체가 성립하지 않는다.
+        revision = actual
+        print("자기 설치: 이 checkout의 현재 상태를 그대로 겁니다. 위키 버전 고정 검사는 하지 않습니다.")
+    else:
+        revision = (project / ".wiki/wiki-revision").read_text(encoding="utf-8").strip()
+        if not re.fullmatch(r"[0-9a-f]{40}", revision) or actual != revision:
+            raise ValueError(f"위키 버전 불일치: 기대 {revision}, 현재 {actual}. "
+                             "기존 작업을 보존한 별도 checkout을 준비하세요. 자동 checkout은 하지 않습니다.")
+        runtime = ("tool", "operator", "craft", "skills")
+        dirty = run(["git", "diff", "--name-only", "HEAD", "--", *runtime], wiki)
+        dirty += run(["git", "ls-files", "--others", "--exclude-standard", "--", *runtime], wiki)
+        if dirty.strip() and not allow_dirty:
+            raise ValueError("고정 버전과 다른 위키 실행 코드·규칙이 있습니다. 깨끗한 별도 checkout을 사용하세요:\n" + dirty)
+        if allow_dirty:
+            print("개발 검증: --allow-dirty-wiki 사용. 고정 버전의 배포 검증으로 세지 않습니다.")
 
     # 부모 세션의 테스트용 WIKI_ROOT가 다른 허브를 가리켜도 설치 대상은 이 도구다.
     os.environ["WIKI_ROOT"] = str(wiki)
