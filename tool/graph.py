@@ -12,7 +12,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from inject import (  # noqa: E402
-    INJECTABLE, RULE_BUDGET, SLOT, WIKI, budget, slots_for,
+    INJECTABLE, RULE_BUDGET, SLOT, WIKI, adapter_path, budget, slots_for,
 )
 from wikilib import front_matter  # noqa: E402
 
@@ -335,6 +335,37 @@ def build(pages: dict[str, dict], project_paths: list[Path]) -> dict:
     }
 
 
+def connected() -> list[Path]:
+    """`--project` 를 안 주면 붙은 저장소를 스스로 찾는다.
+
+    목록을 손으로 드는 순간 저장소가 늘 때마다 여기를 고쳐야 하고, 그것은 곧 안
+    고치는 것이다. 붙었다는 판정은 주입기와 같은 것을 쓴다 — 그 저장소에
+    `.wiki/adapter.toml` 이 있는가. 저장소 이름은 어디에도 안 적는다.
+
+    어디를 뒤질지는 채팅이 쓰는 `.chat-local.json` 의 워크스페이스가 있으면 그것을,
+    없으면 위키의 상위 폴더를 본다. `WIKI_ROOT` 로 이 checkout 이 아닌 허브를
+    가리켰다면 아무것도 안 찾는다 — 그 허브의 상위 폴더는 프로젝트를 모아 둔
+    자리가 아니고, 실제로 임시 폴더를 뒤져 남의 저장소를 그래프에 실은 적이 있다.
+    """
+
+    if WIKI != HERE.parent:
+        return []
+    where = ".."
+    config = WIKI / ".chat-local.json"
+    if config.is_file():
+        try:
+            where = json.loads(config.read_text(encoding="utf-8")).get("workspace") or ".."
+        except (OSError, ValueError):
+            pass
+    try:
+        workspace = (WIKI / Path(where).expanduser()).resolve()
+        return [path for path in sorted(workspace.iterdir())
+                if (path / ".git").exists() and adapter_path(project=path)]
+    except OSError as error:
+        print(f"붙은 저장소를 못 찾았다 ({type(error).__name__}). --project 로 직접 줘라.")
+        return []
+
+
 def main() -> int:
     # 출력이 파이프로 가면 기본이 cp949 다. 인코딩을 환경에 안 맡긴다.
     sys.stdout.reconfigure(encoding="utf-8")
@@ -343,11 +374,13 @@ def main() -> int:
     parser.add_argument("--json", type=Path, default=WIKI / "graph.json")
     parser.add_argument(
         "--project", action="append", type=Path, default=[],
-        help="붙은 상태를 읽을 저장소. 여러 번 줄 수 있다",
+        help="붙은 상태를 읽을 저장소. 여러 번 줄 수 있다 (기본: 붙은 저장소를 스스로 찾는다)",
     )
     args = parser.parse_args()
 
     projects = [p.expanduser().resolve() for p in args.project if p.expanduser().is_dir()]
+    if not args.project:
+        projects = connected()
     pages = load_pages(projects)
     if not pages:
         print("페이지가 없다.")

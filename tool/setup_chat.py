@@ -46,6 +46,9 @@ def install(agents, workspace):
     workspace = workspace.expanduser().resolve()
     if not workspace.is_dir():
         raise ValueError(f"프로젝트를 모아 둔 폴더가 없습니다: {workspace}")
+    if workspace == ROOT:
+        raise ValueError(f"프로젝트 폴더로 위키 자신을 지정했습니다: {workspace}. "
+                         f"프로젝트들이 들어 있는 상위 폴더를 지정하세요: {ROOT.parent}")
     for name in ("git", "node", "npm", *agents):
         cli_command(name)
     version = subprocess.check_output([*cli_command("node"), "--version"], text=True).strip()

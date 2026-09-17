@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -51,6 +52,32 @@ def test_아티팩트가_축을_선언한다():
     data = json.loads(artifact.read_text(encoding="utf-8"))
     assert data["ns"] == "rule"
     assert [n["id"] for n in data["nodes"]] == ["craft/a"]
+
+
+def test_붙은_저장소를_스스로_찾는다():
+    # 이름을 손으로 들면 저장소가 늘 때마다 여기를 고쳐야 하고, 그것은 곧 안 고치는 것이다.
+    # 어댑터가 없거나 저장소가 아닌 폴더는 빼고, 워크스페이스 설정이 깨져도 그래프는 나와야 한다.
+    import graph
+
+    workspace = Path(tempfile.mkdtemp())
+    wiki = workspace / "위키"
+    for name, wired in (("붙은 저장소", True), ("안 붙은 것", False), ("위키", True)):
+        repo = workspace / name
+        (repo / ".git").mkdir(parents=True)
+        if wired:
+            (repo / ".wiki").mkdir()
+            (repo / ".wiki/adapter.toml").write_text("agents=[]\n", encoding="utf-8")
+    (workspace / "저장소_아님").mkdir()
+
+    with patch.object(graph, "WIKI", wiki), patch.object(graph, "HERE", wiki / "tool"):
+        assert graph.connected() == [workspace / "붙은 저장소", wiki]
+        (wiki / ".chat-local.json").write_text('{"workspace": "."}', encoding="utf-8")
+        assert graph.connected() == []          # 위키 아래에는 저장소가 없다
+        (wiki / ".chat-local.json").write_text("깨진 JSON", encoding="utf-8")
+        assert graph.connected() == [workspace / "붙은 저장소", wiki]
+    # WIKI_ROOT 로 다른 허브를 가리키면 그 상위 폴더를 뒤지지 않는다.
+    with patch.object(graph, "WIKI", wiki):
+        assert graph.connected() == []
 
 
 def test_그리는_코드가_여기_없다():

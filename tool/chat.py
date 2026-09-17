@@ -693,6 +693,10 @@ def main() -> int:
         chat_channels.WORKSPACE = args.workspace.expanduser().resolve()
     if not chat_channels.WORKSPACE.is_dir():
         ap.error("프로젝트 폴더가 없습니다. --workspace로 실제 폴더를 지정하세요.")
+    # 위키 자신을 가리키면 그 아래에 저장소가 없어 목록이 위키 한 장으로 조용히 줄어든다.
+    if chat_channels.WORKSPACE == chat_channels.WIKI:
+        ap.error("프로젝트 폴더가 위키 자신입니다. 프로젝트들이 들어 있는 상위 폴더를 지정하세요: "
+                 f"{chat_channels.WIKI.parent}")
 
     if args.check:
         demo()
