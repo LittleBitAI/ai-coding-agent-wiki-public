@@ -82,7 +82,7 @@ def install(agents, workspace):
         local_workspace = str(workspace)
     data.update(workspace=local_workspace, model=model)
     SETTINGS.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
-    print("설치 완료. Windows: tool\\chat.cmd / macOS·Linux: .venv/bin/python tool/chat.py")
+    print("설치 완료. Windows: tool\\chat.cmd / macOS·Linux: tool/chat.command")
 
 
 def main():

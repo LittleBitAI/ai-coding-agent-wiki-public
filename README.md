@@ -168,6 +168,7 @@ Codex의 이벤트 자동 실행은 신뢰 승인 뒤 별도로 확인해야 한
 ```bash
 python tool/graph.py --project ~/PycharmProjects/<name> --project ...
 tool/chat.cmd                      # http://127.0.0.1:8787 · 왼쪽 아래 "위키 지도"
+tool/chat.command                  # macOS·Linux에서는 이쪽
 ```
 
 지도는 `web/` 안에 있다. 옵시디언에서 살아 있는 힘 배치,
@@ -191,7 +192,7 @@ tool/chat.cmd                      # http://127.0.0.1:8787 · 왼쪽 아래 "위
 작성자의 개인 경로·로그인 정보를 사용하지 않고, 각 PC의 CLI와 계정을 사용한다.
 프로젝트 위치는 위키의 상위 폴더가 기본이며 설치 때 `--workspace`로 바꿀 수 있다.
 
-`tool/chat.cmd`로 켜고 프로젝트·모델·추론 강도를 고른다. 선택한 CLI에 먼저 로그인해야 한다.
+`tool/chat.cmd`(macOS·Linux는 `tool/chat.command`)로 켜고 프로젝트·모델·추론 강도를 고른다. 선택한 CLI에 먼저 로그인해야 한다.
 Codex 모델은 이름을 고정하지 않고 설치된 CLI의 `model/list`에서 가져온다.
 모델마다 지원하는 추론 강도만 표시하고, 선택한 모델 ID를 두 호출의 `--model`에 명시한다.
 목록을 읽지 못하면 오류를 표시한다. 계정이나 CLI를 바꿨다면 서버를 다시 켜 목록을 갱신한다.
