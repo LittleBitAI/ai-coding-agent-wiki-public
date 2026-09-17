@@ -115,15 +115,14 @@ export const getGraph = () =>
 export const getOptions = () =>
   fetch('/api/options').then((r) => json<Options>(r, '고를 것'))
 
-export const getLog = (id: string) =>
-  fetch(`/api/log/${id}`).then((r) => json<Turn[]>(r, '기록'))
+export const getLog = (id: string, legacy = false) =>
+  fetch(`/api/log/${id}?legacy=${legacy}`).then((r) => json<Turn[]>(r, '기록'))
 
-export const reset = (id: string) => post(`/api/reset/${id}`).then(() => undefined)
+export const reset = (id: string) => post(`/api/reset/${id}`).then((r) => json(r, '문맥 지우기'))
 
-/** 무엇을 보고 무슨 모델로 얼마나 생각할지. 저장소를 바꾸면 대화는 새로
- *  시작한다(`kept: false`) — cwd 가 곧 문맥이라 이어 붙일 수 없다. */
+/** 프로젝트 선택은 모든 채널이 공유하고 대화는 프로젝트·채널별로 보존한다. */
 export const setConfig = (id: string, cfg: { repo: string; model: string; effort: string }) =>
-  post(`/api/config/${id}`, cfg).then((r) => json<{ kept: boolean }>(r, '설정'))
+  post(`/api/config/${id}`, cfg).then((r) => json<{ kept: boolean; switched: boolean }>(r, '설정'))
 
 /** 틀린 그 순간에 부류 하나를 찍는다. census 형식으로 쌓인다. */
 export const mark = (

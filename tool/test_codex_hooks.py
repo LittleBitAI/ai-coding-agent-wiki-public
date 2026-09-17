@@ -85,6 +85,34 @@ def test_installed_context_and_sync(connected):
     assert "README.md" in start["hookSpecificOutput"]["additionalContext"]
 
 
+def test_question_policy_before_agent_decides_to_ask(connected):
+    # 일반 발화: 에이전트가 뒤에서 질문할지는 사용자 발화로 알 수 없다.
+    payload = {"prompt": "현재 이 프로젝트의 진척도를 알려줘."}
+    context = run_hook(connected, "UserPromptSubmit", payload)["hookSpecificOutput"]["additionalContext"]
+    assert "operator/ask-with-arrow-key-options" in context
+    assert "AskUserQuestion" in context and "default_mode_request_user_input" in context
+    assert run_hook(connected, "PreToolUse", {"tool_name": "request_user_input", "tool_input": {}}) == {}
+    # Claude는 별도 설치 파일과 네이티브 도구를 쓴다. Codex의 실험 설정을 쓰지 않는다.
+    from setup_agents import hook_shell
+    project, _ = connected
+    done = subprocess.run([sys.executable, str(TOOL / "apply.py"), "--project", str(project),
+                           "--agent", "claude", "--write"], capture_output=True, timeout=20)
+    assert done.returncode == 0, done.stderr
+    settings = json.loads((project / ".claude/settings.json").read_text(encoding="utf-8"))
+    for event in ("UserPromptSubmit", "PreToolUse"):
+        for group in settings["hooks"][event]:
+            for hook in group["hooks"]:
+                result = subprocess.run([*hook_shell("claude"), hook["command"]],
+                    input=json.dumps({**payload, "tool_name": "AskUserQuestion", "tool_input": {}}),
+                    text=True, encoding="utf-8", capture_output=True, timeout=20, cwd=project)
+                assert result.returncode == 0 and not result.stderr, result.stderr
+                answer = json.loads(result.stdout or "{}")
+                if event == "UserPromptSubmit":
+                    assert "operator/ask-with-arrow-key-options" in answer["hookSpecificOutput"]["additionalContext"]
+                else:
+                    assert answer == {}, "Claude의 질문 도구를 위키 훅이 막으면 안 된다"
+
+
 @pytest.mark.parametrize("command,description,blocked", [
     ("git status --short", "", False),
     ("git reset --hard", "", True),

@@ -152,7 +152,6 @@ class Channel:
     id: str
     label: str
     blurb: str
-    repo: Path          # 기본값. 실제로 보는 곳은 화면이 정한다
     preamble: str
     model: str = ""     # 기본 모델
     effort: str = ""    # 기본 effort
@@ -163,7 +162,6 @@ CHANNELS: list[Channel] = [
         id="progress",
         label="진척도",
         blurb="무엇이 닫혔고 다음이 무엇인가",
-        repo=WIKI,
         effort="low",   # 읽고 옮기는 일이라 깊이 생각할 게 없다
         preamble=(
             "Focus: repository progress and plans. Read `.wiki/plan-active.md` first "
@@ -176,7 +174,6 @@ CHANNELS: list[Channel] = [
         id="diagnose",
         label="진단",
         blurb="왜 안 되나 — 기록부터 본다",
-        repo=WIKI,
         effort="high",  # 원인을 캐는 자리다
         preamble=(
             "Focus: diagnosis. Follow `.wiki/telemetry.md`. Before interpreting code, "
@@ -190,7 +187,6 @@ CHANNELS: list[Channel] = [
         id="retro",
         label="회고",
         blurb="오늘 어긋난 자리를 센다",
-        repo=WIKI,
         effort="high",
         preamble=(
             "Focus: retrospective. Follow the retrospect skill. Read today's commits "
@@ -209,7 +205,6 @@ CHANNELS: list[Channel] = [
         id="review",
         label="리뷰",
         blurb="PR 번호를 주면 리뷰 라운드를 낸다",
-        repo=WIKI,
         effort="high",
         preamble=(
             "Focus: read-only code review. For a PR, read `gh pr view <n>` and "
@@ -225,7 +220,6 @@ CHANNELS: list[Channel] = [
         id="wiki",
         label="위키",
         blurb="위키와 도구 자체를 본다",
-        repo=WIKI,
         preamble=(
             "Focus: the wiki and its tools. Read the contracts in `SCHEMA.md` and "
             "the five enforcement levels in `ENFORCEMENT.md`. Before proposing a "

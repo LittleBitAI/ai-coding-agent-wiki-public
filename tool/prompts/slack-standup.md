@@ -27,7 +27,7 @@ python "<WIKI_ROOT>/tool/slack_brief.py" --project .
 Slack 에 올린 본문을 그대로 파일 하나에 쓰고(`.tmp/brief.md` 같은 임시 경로), 이 명령으로 `#progress` 채널 기록에 넣는다. 서버가 안 떠 있어도 된다.
 
 ```
-python "<WIKI_ROOT>/tool/chat_post.py" --channel progress --source standup --file <그 파일>
+python "<WIKI_ROOT>/tool/chat_post.py" --project . --channel progress --source standup --file <그 파일>
 ```
 
 ## 규칙

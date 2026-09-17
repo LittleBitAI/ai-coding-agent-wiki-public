@@ -33,7 +33,7 @@ python "<WIKI_ROOT>/tool/slack_brief.py" --project . --kind retro
 Slack 에 올린 본문을 그대로 파일 하나에 쓰고(`.tmp/brief.md` 같은 임시 경로), 이 명령으로 `#retro` 채널 기록에 넣는다. 서버가 안 떠 있어도 된다.
 
 ```
-python "<WIKI_ROOT>/tool/chat_post.py" --channel retro --source retro --file <그 파일>
+python "<WIKI_ROOT>/tool/chat_post.py" --project . --channel retro --source retro --file <그 파일>
 ```
 
 ## 규칙
