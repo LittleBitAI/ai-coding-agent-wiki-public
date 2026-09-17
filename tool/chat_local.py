@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import re
 import shutil
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -26,14 +27,16 @@ def cli_command(name):
     path = Path(binary)
     if path.suffix.lower() not in (".cmd", ".bat", ".ps1"):
         return [binary]
-    entry = {
-        "npm": "npm/bin/npm-cli.js",
-        "codex": "@openai/codex/bin/codex.js",
-        "claude": "@anthropic-ai/claude-code/cli.js",
-    }.get(name)
-    script = path.parent / "node_modules" / (entry or "")
-    node = path.parent / "node.exe"
-    node_binary = str(node) if node.is_file() else shutil.which("node")
-    if entry and script.is_file() and node_binary:
-        return [node_binary, str(script)]
+    # shim이 가리키는 실제 실행 파일을 읽는다. js든 네이티브 바이너리든 패키지 구조를 따라간다.
+    # npm.cmd처럼 경로가 여럿이면 마지막 것이 실제로 실행되는 진입점이다.
+    found = re.findall(r"""node_modules[\\/][^"'\s%]+\.(?:js|cjs|mjs|exe)""",
+                       path.read_text(encoding="utf-8", errors="replace"))
+    target = path.parent / found[-1].replace("\\", "/") if found else None
+    if target and target.is_file():
+        if target.suffix.lower() == ".exe":
+            return [str(target)]
+        node = path.parent / "node.exe"
+        node_binary = str(node) if node.is_file() else shutil.which("node")
+        if node_binary:
+            return [node_binary, str(target)]
     raise ValueError(f"{name} 실행 파일을 확인할 수 없습니다. 공식 CLI 설치 후 다시 시도하세요: {binary}")
