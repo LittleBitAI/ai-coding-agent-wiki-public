@@ -36,7 +36,9 @@ def hush(wiki: Path) -> None:
     lines = ignore.read_text(encoding="utf-8").splitlines() if ignore.exists() else []
     if FILENAME in lines:
         return
-    ignore.write_text("\n".join([*lines, FILENAME]) + "\n", encoding="utf-8")
+    # 줄끝을 환경에 안 맡긴다. Windows 기본으로 쓰면 이미 있던 줄까지 CRLF 로 뒤집혀
+    # 한 줄 추가가 파일 전체 diff 로 보인다.
+    ignore.write_text("\n".join([*lines, FILENAME]) + "\n", encoding="utf-8", newline="\n")
 
 
 def last_row(path: Path) -> dict | None:

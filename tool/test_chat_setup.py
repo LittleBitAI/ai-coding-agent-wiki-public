@@ -64,6 +64,19 @@ def test_current_user_cli_and_npm_shim_avoid_shell(tmp_path):
             chat_local.cli_command("claude")
 
 
+def test_workspace_cannot_be_the_wiki_itself(tmp_path, monkeypatch):
+    """위키 아래에는 프로젝트가 없다. 그대로 두면 목록이 위키 한 장으로 조용히 줄어든다."""
+    root = tmp_path.resolve()
+    with patch.object(setup_chat, "ROOT", root):
+        with pytest.raises(ValueError, match="위키 자신"):
+            setup_chat.install(["codex"], root)
+    monkeypatch.setattr(sys, "argv", ["chat.py"])
+    with patch.object(chat_channels, "WORKSPACE", chat_channels.WIKI):
+        with pytest.raises(SystemExit) as stop:
+            chat.main()
+    assert stop.value.code == 2
+
+
 @pytest.mark.parametrize("agent", ["claude", "codex"])
 def test_login_uses_official_commands_and_never_changes_user_environment(agent, monkeypatch):
     monkeypatch.setenv("CODEX_HOME", "team-member-owned-config")
