@@ -1,5 +1,8 @@
-"""수확이 줄끝에 흔들리지 않는다."""
+"""수확이 줄끝에 흔들리지 않고, 있는 기록을 덮지 않는다."""
 import sys
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 
 sys.stdout.reconfigure(encoding="utf-8")
 
@@ -99,6 +102,43 @@ def test_낱말로_선_표지는_그대로_걸린다() -> None:
     assert triggers_for("턴 조립", "feat/turn-assembly")[0] == "api"
     assert triggers_for("스키마를 올립니다", "chore/migration")[0] == "infra"
     assert triggers_for("런처를 고칩니다", "fix/launcher")[0] == "infra"
+
+
+def test_손으로_쓴_기록은_번호가_이름에만_있어도_보인다() -> None:
+    """`pr:` 줄만 보면 손으로 쓴 전문이 안 보이고, 캔 기록이 그 자리를 덮는다.
+
+    2026-09-17 에 013·015·016 이 그렇게 통째로 날아갔다. 파일 이름의 번호도 읽는다.
+    """
+    import sync
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / ".wiki" / "decisions"
+        out.mkdir(parents=True)
+        (out / "2026-09-17-013-docs-run-archive.md").write_text(
+            '---\nscope: project\ntitle: "손으로 쓴 전문"\n---\n', encoding="utf-8")
+        (out / "2026-09-17-012-feat-x.md").write_text("---\npr: 12\n---\n", encoding="utf-8")
+        (out / "2026-09-18-run-colab-1789.md").write_text("---\nscope: project\n---\n",
+                                                          encoding="utf-8")
+        assert sync.recorded(Path(tmp)) == {12, 13}, "이름의 번호와 pr: 줄을 둘 다 읽어야 한다"
+
+
+def test_있는_결정_파일은_절대_안_덮는다() -> None:
+    """번호 판정이 또 틀려도 여기서 멈춘다. 사람이 쓴 전문이 그 자리에 있을 수 있다."""
+    import sync
+
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        out = repo / ".wiki" / "decisions"
+        out.mkdir(parents=True)
+        kept = out / "2026-09-17-013-docs-run-archive.md"
+        kept.write_text("사람이 쓴 전문\n", encoding="utf-8")
+        pr = {"number": 13, "title": "docs: archive", "body": "본문",
+              "mergedAt": "2026-09-17T00:00:00Z", "headRefName": "docs/run-archive"}
+        with patch.object(sync.harvest, "prs", return_value=[pr]), \
+                patch.object(sync, "recorded", return_value=set()):
+            written = sync.new_decisions(repo, 10)
+        assert written == [], "있는 파일을 덮으려 했다"
+        assert kept.read_text(encoding="utf-8") == "사람이 쓴 전문\n"
 
 
 if __name__ == "__main__":
