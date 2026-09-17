@@ -33,14 +33,32 @@ def test_projects_are_local_and_include_wiki_outside_workspace(tmp_path):
         assert next(p for p in chat_channels.projects() if p["id"] == project.name)["wired"]
 
 
+def _npm_shim(shim, entry):
+    """npm이 만드는 shim은 실제 진입점 경로를 그대로 담는다."""
+    target = shim.parent / entry
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("", encoding="utf-8")
+    tail = '"%_prog%"  ' if target.suffix == ".js" else ""
+    shim.write_text(rf'... & {tail}"%dp0%\{entry}" %*'.replace("/", "\\"), encoding="utf-8")
+    return target
+
+
 def test_current_user_cli_and_npm_shim_avoid_shell(tmp_path):
     home = tmp_path / "다른 팀원"
-    shim = home / "codex.cmd"
-    script = home / "node_modules/@openai/codex/bin/codex.js"
-    script.parent.mkdir(parents=True)
-    script.write_text("", encoding="utf-8")
-    with patch.object(chat_local.shutil, "which", side_effect=lambda name: str(shim) if name == "codex" else sys.executable):
+    home.mkdir()
+    script = _npm_shim(home / "codex.cmd", "node_modules/@openai/codex/bin/codex.js")
+    # 네이티브 바이너리를 배포하는 패키지(claude)는 node 없이 그 바이너리를 직접 실행한다.
+    native = _npm_shim(home / "claude.cmd", "node_modules/@anthropic-ai/claude-code/bin/claude.exe")
+    # npm.cmd는 경로를 여러 개 담는다. 실제 진입점은 마지막 것이다.
+    npm_cli = _npm_shim(home / "npm.cmd", "node_modules/npm/bin/npm-cli.js")
+    (home / "npm.cmd").write_text(r'SET "NPM_PREFIX_JS=%~dp0\node_modules\npm\bin\npm-prefix.js"'
+                                  '\n' r'SET "NPM_CLI_JS=%~dp0\node_modules\npm\bin\npm-cli.js"',
+                                  encoding="utf-8")
+    which = {name: str(home / f"{name}.cmd") for name in ("codex", "claude", "npm")}
+    with patch.object(chat_local.shutil, "which", side_effect=lambda name: which.get(name, sys.executable)):
         assert chat_local.cli_command("codex") == [sys.executable, str(script)]
+        assert chat_local.cli_command("claude") == [str(native)]
+        assert chat_local.cli_command("npm") == [sys.executable, str(npm_cli)]
     with patch.object(chat_local.shutil, "which", return_value=None):
         with pytest.raises(FileNotFoundError):
             chat_local.cli_command("claude")
