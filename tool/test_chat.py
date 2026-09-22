@@ -13,6 +13,7 @@ import pytest
 import chat
 import chat_channels
 import chat_session
+import mirror
 import translate
 from chat_session import ChatSession, Event
 
@@ -318,3 +319,38 @@ def test_mirror_only_points_at_a_repo_it_listed():
         )
         assert answer.status_code == 200
         assert answer.json()["project"] == offered[0]["path"]
+
+
+def test_a_deleted_worktree_moves_the_mirror_instead_of_stalling_it(tmp_path):
+    """The one thing the mirror does without being asked.
+
+    Deleting a worktree leaves its log behind, so "is there a log" goes on
+    saying yes forever. What the screen is pointed at has to be a directory
+    that is still there, or it sits showing the last thing a checkout that no
+    longer exists ever said.
+    """
+
+    gone, live = tmp_path / "gone", tmp_path / "live"
+    live.mkdir()
+    station = mirror.Station(host="claude", poll=mirror.POLL)
+    station.point("claude", gone)          # never created
+    stalled = station.now()[0]
+
+    with patch.object(chat, "_station", station), \
+         patch.object(mirror, "checkouts", lambda host: [{"path": str(live)}]):
+        _, _, _, project = chat._pointed()
+
+    assert project == str(live)
+    assert station.now()[0] != stalled     # a new feed, so the screen clears
+
+
+def test_the_mirror_never_tails_a_checkout_that_is_gone(tmp_path):
+    """`session_of` is the guard, so the terminal tail gets it too."""
+
+    gone, live = tmp_path / "gone", tmp_path / "live"
+    live.mkdir()
+    with patch.object(mirror.sessions, "FINDERS",
+                      {"claude": lambda project: project / "log.jsonl"}):
+        pick = mirror.session_of("claude")
+        assert pick(live) == live / "log.jsonl"
+        assert pick(gone) is None

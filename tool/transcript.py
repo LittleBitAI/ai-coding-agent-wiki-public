@@ -12,9 +12,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from census import INJECTED, MAX_HUMAN_CHARS, transcript_dir  # noqa: E402
+from sessions import INJECTED, MAX_HUMAN_CHARS, SESSIONS, folder  # noqa: E402
 
-SESSIONS = Path.home() / ".claude" / "projects"
 MAX_TURN_CHARS = 600   # How much of one utterance to show. A long paste may be cut
 
 
@@ -74,13 +73,13 @@ def read(path: Path) -> dict:
             "size_kb": path.stat().st_size // 1024}
 
 
-def pick(folder: Path, since: dt.datetime, session: str | None) -> list[Path]:
-    if not folder.is_dir():
+def pick(directory: Path, since: dt.datetime, session: str | None) -> list[Path]:
+    if not directory.is_dir():
         return []
     if session:
-        return sorted(p for p in folder.glob(f"{session}*.jsonl"))
+        return sorted(p for p in directory.glob(f"{session}*.jsonl"))
     stamp = since.timestamp()
-    return sorted((p for p in folder.glob("*.jsonl") if p.stat().st_mtime >= stamp),
+    return sorted((p for p in directory.glob("*.jsonl") if p.stat().st_mtime >= stamp),
                   key=lambda p: p.stat().st_mtime)
 
 
@@ -115,8 +114,8 @@ def main() -> int:
     else:
         since = dt.datetime.fromisoformat(args.since)
 
-    folder = transcript_dir(args.project.expanduser().resolve(), SESSIONS)
-    sessions = [read(p) for p in pick(folder, since, args.session)]
+    directory = folder(args.project.expanduser().resolve(), SESSIONS)
+    sessions = [read(p) for p in pick(directory, since, args.session)]
 
     if args.json:
         for s in sessions:

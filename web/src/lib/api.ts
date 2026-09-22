@@ -95,7 +95,21 @@ export type Part = {
   name: string
 }
 
-export type Repo = { path: string; name: string; at: number }
+/** One checkout with a session — a clone, or one of its worktrees.
+ *
+ *  `name` is the directory's own, which is not an identifier: two different
+ *  repositories each had a worktree called `pollock`. `repo` is git's answer
+ *  to which repository it is a checkout of, and `branch` is what tells two
+ *  checkouts of that one repository apart. Both are empty for a directory
+ *  git does not answer for — a scratchpad folder turns up here too. */
+export type Repo = {
+  path: string
+  name: string
+  at: number
+  repo: string
+  repoName: string
+  branch: string
+}
 
 export type Mirrors = {
   here: { host: string; project: string }

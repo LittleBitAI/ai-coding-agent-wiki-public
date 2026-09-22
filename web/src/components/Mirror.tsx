@@ -2,12 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
 import * as api from '@/lib/api'
-import type { Frame, Mirrors, Part } from '@/lib/api'
+import type { Frame, Mirrors, Part, Repo } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 /* What the person reads while the agent writes English.
@@ -105,6 +107,10 @@ export function Mirror() {
   const code = useStick(ran.length)
 
   const repos = where?.hosts[here.host] ?? []
+  // One repository, several checkouts. A flat list of leaf names hid that:
+  // `barb` and `pollock` said nothing about whose worktree they were, and two
+  // repositories each had a `pollock`.
+  const grouped = groupByRepo(repos)
 
   return (
     <div className="flex h-full flex-col">
@@ -121,7 +127,7 @@ export function Mirror() {
               <SelectItem key={host} value={host}>
                 {host}
                 <span className="ml-1.5 text-[10.5px] text-faint">
-                  저장소 {where?.hosts[host].length ?? 0}
+                  작업트리 {where?.hosts[host].length ?? 0}
                 </span>
               </SelectItem>
             ))}
@@ -132,19 +138,26 @@ export function Mirror() {
           value={here.project}
           onValueChange={(path) => path && switchTo(here.host, path, setFault)}
         >
-          <SelectTrigger size="sm" className="w-80 bg-background text-[12.5px]">
+          <SelectTrigger size="sm" className="w-96 bg-background text-[12.5px]">
             <SelectValue>
-              <span className="font-mono text-[12px]">
-                {repos.find((r) => r.path === here.project)?.name ?? '…'}
-              </span>
+              <span className="font-mono text-[12px]">{label(repos, here.project)}</span>
             </SelectValue>
           </SelectTrigger>
           <SelectContent>
-            {repos.map((repo) => (
-              <SelectItem key={repo.path} value={repo.path}>
-                <span className="font-mono text-[12px]">{repo.name}</span>
-                <span className="ml-1.5 text-[10.5px] text-faint">{repo.path}</span>
-              </SelectItem>
+            {grouped.map(([repoName, rows]) => (
+              <SelectGroup key={repoName}>
+                <SelectLabel className="font-mono text-[11px] text-faint">
+                  {repoName || '저장소 밖'}
+                </SelectLabel>
+                {rows.map((repo) => (
+                  <SelectItem key={repo.path} value={repo.path}>
+                    <span className="font-mono text-[12px]">
+                      {repo.branch || repo.name}
+                    </span>
+                    <span className="ml-1.5 text-[10.5px] text-faint">{repo.path}</span>
+                  </SelectItem>
+                ))}
+              </SelectGroup>
             ))}
           </SelectContent>
         </Select>
@@ -212,6 +225,31 @@ function useStick(count: number) {
 
 const firstOf = (where: Mirrors | null, host: string) =>
   where?.hosts[host]?.[0]?.path ?? ''
+
+/** The checkouts of one repository, together, newest repository first.
+ *
+ *  Insertion order carries the sort the server already did, so the repository
+ *  worked in most recently stays at the top and its worktrees sit under it. */
+function groupByRepo(repos: Repo[]): [string, Repo[]][] {
+  const by = new Map<string, Repo[]>()
+  for (const repo of repos) {
+    const key = repo.repoName || ''
+    const rows = by.get(key)
+    if (rows) rows.push(repo)
+    else by.set(key, [repo])
+  }
+  return [...by]
+}
+
+/** What the closed picker shows: the repository, then which checkout of it. */
+function label(repos: Repo[], project: string) {
+  const here = repos.find((r) => r.path === project)
+  if (!here) return '…'
+  const which = here.branch || here.name
+  return here.repoName && here.repoName !== which
+    ? `${here.repoName} · ${which}`
+    : which
+}
 
 function switchTo(host: string, project: string, onFault: (text: string) => void) {
   if (!project) {

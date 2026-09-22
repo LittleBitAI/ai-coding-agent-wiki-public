@@ -15,9 +15,9 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from session_state import active_page, branch_line, decisions, run  # noqa: E402
+from sessions import folder  # noqa: E402
 
 MAX_COMMITS = 12
-SESSIONS = Path.home() / ".claude" / "projects"
 
 
 def repo_url(repo: Path) -> str:
@@ -94,15 +94,11 @@ def today_sessions(repo: Path) -> list[Path]:
     whole is not an answer.
     """
 
-    flat = str(repo).replace(":", "-").replace("\\", "-").replace("/", "-")
-    folder = SESSIONS / flat
-    if not folder.is_dir():
-        folder = next((p for p in SESSIONS.iterdir()
-                       if p.is_dir() and p.name.endswith(repo.name)), None)
-        if folder is None:
-            return []
+    directory = folder(repo)
+    if not directory.is_dir():
+        return []
     midnight = dt.datetime.combine(dt.date.today(), dt.time.min).timestamp()
-    return sorted((p for p in folder.glob("*.jsonl")
+    return sorted((p for p in directory.glob("*.jsonl")
                    if p.stat().st_mtime >= midnight),
                   key=lambda p: p.stat().st_mtime)
 

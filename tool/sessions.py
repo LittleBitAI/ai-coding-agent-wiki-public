@@ -1,0 +1,338 @@
+"""sessions — which session log belongs to which checkout.
+
+Both hosts write one log per cell, and three things here need to find one: the
+census counting what went wrong, the transcript feeding a retro, and the mirror
+tailing a cell that is running right now. That last one is a live screen, and
+it was importing `census` — the report generator — to learn where a log lives.
+This module is that knowledge standing on its own, so the screen and the report
+share only the thing they actually share.
+
+**A checkout is not a repository.** `git worktree` gives one repository
+several, and on this machine most of them are Orca's, under
+`~/orca/workspaces/<repo>/<name>`. The leaf name is not an identifier — two
+different repositories both had a worktree called `pollock` — so which
+repository a checkout belongs to is read out of git, and nothing here infers it
+from the shape of a path.
+
+**A log outlives its checkout.** Deleting a worktree does not delete what the
+host wrote about it, so a listing built from the log directory alone keeps
+offering checkouts that are not on disk any more. Twelve of twenty-nine rows
+were that. Anything that is gone is dropped here, once, rather than in each
+caller.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+from pathlib import Path
+
+# Where Claude Code writes, one directory per checkout.
+SESSIONS = Path.home() / ".claude" / "projects"
+
+# How many rollout files back to look before giving up on finding a repo's
+# Codex cell. They are one per session and dated, so the answer is always in
+# the newest handful unless the cell has been idle for weeks.
+CODEX_DEPTH = 60
+
+# Things that arrive in the conversation log in the same place as a person's
+# utterance without a person having typed them. The harness injects these, so
+# the list has nothing to do with language.
+INJECTED = (
+    "<local-command-",
+    "<command-name>",
+    "<command-message>",
+    "<system-reminder>",
+    "<task-notification>",
+    "Caveat: The messages below were generated",
+    "[Request interrupted",
+    "API Error",
+    "Base directory for this skill:",
+    "You have access to browser automation tools",
+    "Goal check-in:",
+    "is still active, and evaluation has been deferred",
+    "This session is being continued from a previous",
+    "A session-scoped Stop hook is now active",
+    # Skill bodies. They arrive as the same record type as a person's
+    # utterance and they are long, so left in they take the whole of "the most
+    # re-entered instruction". Which is what happened.
+    "Approach this as the design lead",
+    "Use this skill whenever you are about to create",
+    "PONYTAIL MODE ACTIVE",
+)
+
+# The list above is always behind — one more skill and one more body leaks
+# through. So there is a length filter as well. A person rarely types this
+# much at once, and the rare time they do it is usually a pasted log rather
+# than an instruction.
+MAX_HUMAN_CHARS = 20_000
+
+
+def parse(line: str) -> dict | None:
+    """A JSONL line, or `None` for anything that is not one.
+
+    The last line of a file being written is routinely half a record. It comes
+    back `None` here and arrives whole on the next read.
+    """
+
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        record = json.loads(line)
+    except Exception:
+        return None
+    return record if isinstance(record, dict) else None
+
+
+def newest(paths) -> Path | None:
+    def when(path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return -1.0
+
+    return max(paths, key=when, default=None)
+
+
+# --------------------------------------------------------------------------
+# Which repository a checkout belongs to
+# --------------------------------------------------------------------------
+
+
+def git(path: Path, *args: str) -> list[str]:
+    """`git -C path ...`, as whatever it managed to print. Empty for a non-repo.
+
+    The exit code is not the test. `rev-parse` asked two questions at once
+    answers the one it can and fails on the one it cannot: a clone with no
+    commit yet prints its `--git-common-dir` and *then* exits 128 over `HEAD`.
+    Demanding a zero threw away the answer that was right there, and the repo
+    came out looking like it was not a repo at all.
+
+    The encoding is named. A checkout with a Korean directory name in its path
+    decodes as cp949 by default on this machine and raises inside
+    `subprocess`'s reader thread, where no caller can catch it.
+    """
+
+    try:
+        done = subprocess.run(
+            ["git", "-C", str(path), *args],
+            capture_output=True, text=True, timeout=10,
+            encoding="utf-8", errors="replace",
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return done.stdout.strip().splitlines()
+
+
+def checkout(path: Path) -> tuple[str, str]:
+    """`(the repository this checkout is of, the branch it has out)`.
+
+    `--git-common-dir` is the main clone's `.git` seen from any worktree of it,
+    which is the one thing that answers "the same repository" without a
+    registry to consult — and the registries disagree: `git worktree list`
+    covers only what this clone knows, Orca's covers the machine.
+
+    `("", "")` for a directory git does not answer for. A scratchpad folder and
+    `C:\\Windows` both turn up in the log directory, and neither is a checkout.
+    """
+
+    lines = git(path, "rev-parse", "--path-format=absolute",
+                "--git-common-dir", "--abbrev-ref", "HEAD")
+    if not lines:
+        return "", ""
+    common = Path(lines[0])
+    root = common.parent if common.name == ".git" else common
+    # `HEAD` is what `--abbrev-ref` says for a detached or still-unborn one.
+    # That is not a branch name, and printing it next to a repository reads as
+    # though the checkout were on a branch called HEAD.
+    branch = lines[1] if len(lines) > 1 and lines[1] != "HEAD" else ""
+    return str(root), branch
+
+
+# --------------------------------------------------------------------------
+# Claude Code
+# --------------------------------------------------------------------------
+
+
+def folder(project: Path, root: Path = SESSIONS) -> Path:
+    """The log directory for a checkout.
+
+    Claude Code flattens the checkout path into a directory name:
+    `C:\\projects\\demo` becomes `C--projects-demo`, every separator turning
+    into `-`, and the drive's `:` taking a place of its own, which is why there
+    are two hyphens at the front.
+
+    When that rule does not hold, the directories are searched by the tail of
+    their name — but only while exactly one matches. The leaf name of a
+    worktree is not unique: two repositories each had a `pollock`, and a
+    fallback that took the first match would hand one repository's session to
+    the other's mirror.
+    """
+
+    flat = str(project.resolve()).replace(":", "-").replace("\\", "-").replace("/", "-")
+    exact = root / flat
+    if exact.is_dir() or not root.is_dir():
+        return exact
+    tail = f"-{project.resolve().name}"
+    found = [p for p in sorted(root.glob("*")) if p.is_dir() and p.name.endswith(tail)]
+    return found[0] if len(found) == 1 else exact
+
+
+def claude_cwd(path: Path) -> Path | None:
+    """The checkout a session ran in, read out of the log.
+
+    The directory name is that path with every separator flattened to `-`,
+    which is lossy: a repo whose own name contains a hyphen cannot be told
+    from a nested one. The records carry the real thing, so read it instead of
+    trying to undo the flattening. It is not on the first line — the first few
+    records are bookkeeping — so a handful get checked.
+    """
+
+    try:
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            for _ in range(8):
+                record = parse(fh.readline())
+                if record is None:
+                    continue
+                raw = record.get("cwd")
+                if isinstance(raw, str) and raw:
+                    return Path(raw).resolve()
+    except OSError:
+        return None
+    return None
+
+
+def claude_session(project: Path) -> Path | None:
+    directory = folder(project)
+    return newest(directory.glob("*.jsonl")) if directory.is_dir() else None
+
+
+# --------------------------------------------------------------------------
+# Codex
+# --------------------------------------------------------------------------
+
+
+def codex_homes() -> list[Path]:
+    """Every session directory this machine's Codex could be writing into.
+
+    The default is `~/.codex`, and `CODEX_HOME` moves it. Orca sets that per
+    account, so every Codex cell launched from Orca writes under
+    `%APPDATA%/orca/codex-accounts/<id>/home` and none of it appears in the
+    default. A mirror that reads only the default sees no session the person
+    actually runs, and says "no session" while one is running in front of
+    them — which is exactly what it did.
+    """
+
+    roots = [Path(os.environ["CODEX_HOME"])] if os.environ.get("CODEX_HOME") else []
+    roots.append(Path.home() / ".codex")
+    accounts = Path(
+        os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming"
+    ) / "orca" / "codex-accounts"
+    if accounts.is_dir():
+        roots += [account / "home" for account in accounts.iterdir() if account.is_dir()]
+    found = [root / "sessions" for root in roots]
+    return [path for path in dict.fromkeys(found) if path.is_dir()]
+
+
+def codex_rollouts() -> list[Path]:
+    """The newest rollouts across every session directory, merged and sorted."""
+
+    found: list[Path] = []
+    for root in codex_homes():
+        found += root.rglob("rollout-*.jsonl")
+    return sorted(
+        found,
+        key=lambda p: p.stat().st_mtime if p.exists() else -1.0,
+        reverse=True,
+    )[:CODEX_DEPTH]
+
+
+def codex_cwd(path: Path) -> Path | None:
+    """The `cwd` out of the first record. Nothing else ties a rollout to a repo."""
+
+    try:
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            record = parse(fh.readline())
+    except OSError:
+        return None
+    payload = (record or {}).get("payload")
+    raw = payload.get("cwd") if isinstance(payload, dict) else None
+    if not isinstance(raw, str):
+        return None
+    try:
+        return Path(raw).resolve()
+    except OSError:
+        return None
+
+
+def under(cwd: Path | None, project: Path) -> bool:
+    """Is that cell working inside this checkout?
+
+    Not `==`. A cell is routinely opened in a subdirectory — `web/`, a package
+    folder — and an exact match silently reports "no session" for a repo whose
+    mirror is sitting right there.
+    """
+
+    return cwd is not None and (cwd == project or project in cwd.parents)
+
+
+def codex_session(project: Path) -> Path | None:
+    for path in codex_rollouts():
+        if under(codex_cwd(path), project):
+            return path
+    return None
+
+
+FINDERS = {"claude": claude_session, "codex": codex_session}
+
+
+# --------------------------------------------------------------------------
+# The listing
+# --------------------------------------------------------------------------
+
+
+def checkouts(host: str) -> list[dict]:
+    """Every checkout this host has a session for that is still on disk.
+
+    Newest first, one row per checkout, each carrying the repository it is a
+    worktree of. Both hosts stamp the real path into the log, so the paths are
+    not guesses; what is and is not still there is `is_dir`, and which
+    repository a row belongs to is git's answer, not a parsed path.
+    """
+
+    seen: dict[str, float] = {}
+    if host == "codex":
+        for path in codex_rollouts():
+            where = codex_cwd(path)
+            if where is None:
+                continue
+            when = path.stat().st_mtime if path.exists() else 0.0
+            seen[str(where)] = max(seen.get(str(where), 0.0), when)
+    elif SESSIONS.is_dir():
+        for directory in SESSIONS.iterdir():
+            if not directory.is_dir():
+                continue
+            latest = newest(directory.glob("*.jsonl"))
+            if latest is None:
+                continue
+            where = claude_cwd(latest)
+            if where is None:
+                continue
+            seen[str(where)] = max(seen.get(str(where), 0.0), latest.stat().st_mtime)
+
+    rows = []
+    for path, when in sorted(seen.items(), key=lambda row: -row[1]):
+        if not Path(path).is_dir():
+            continue  # the worktree was deleted; its log was not
+        repo, branch = checkout(Path(path))
+        rows.append({
+            "path": path,
+            "name": Path(path).name,
+            "at": when,
+            "repo": repo,
+            "repoName": Path(repo).name if repo else "",
+            "branch": branch,
+        })
+    return rows

@@ -18,6 +18,11 @@ that ties a rollout file to a repository. Both are append-only, so both are
 read the same way: seek to where the last read stopped, take whole lines, keep
 the partial tail for next time.
 
+*Finding* that file is `sessions.py`'s job, not this one's. This file knows
+what a record means and how to keep up with a growing one; which checkout a
+log belongs to, and whether that checkout still exists, is a question the
+census asks too, and it used to be answered here by importing the census.
+
 What gets translated is the short list: the agent's prose, and the one-line
 description it writes for a tool call. Commands, patches, file contents and
 tool output are code — translating them would be both expensive and wrong.
@@ -34,8 +39,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import json
-import os
 import sys
 import threading
 import time
@@ -46,36 +49,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import sessions  # noqa: E402
 import translate as T  # noqa: E402
-from census import INJECTED, transcript_dir  # noqa: E402
-from transcript import SESSIONS, human_text  # noqa: E402
-
-# Where Codex writes its rollouts. Not one place.
-#
-# The default is `~/.codex`, and `CODEX_HOME` moves it. Orca sets that per
-# account, so every Codex cell launched from Orca writes under
-# `%APPDATA%/orca/codex-accounts/<id>/home` and none of it appears in the
-# default. A mirror that reads only the default sees no session the person
-# actually runs, and says "no session" while one is running in front of them —
-# which is exactly what it did.
-def codex_homes() -> list[Path]:
-    """Every session directory this machine's Codex could be writing into."""
-
-    roots = [Path(os.environ["CODEX_HOME"])] if os.environ.get("CODEX_HOME") else []
-    roots.append(Path.home() / ".codex")
-    accounts = Path(
-        os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming"
-    ) / "orca" / "codex-accounts"
-    if accounts.is_dir():
-        roots += [account / "home" for account in accounts.iterdir() if account.is_dir()]
-    found = [root / "sessions" for root in roots]
-    return [path for path in dict.fromkeys(found) if path.is_dir()]
-
-
-# How many rollout files back to look before giving up on finding this repo's
-# Codex cell. They are one per session and dated, so the answer is always in
-# the newest handful unless the cell has been idle for weeks.
-CODEX_DEPTH = 60
+from sessions import INJECTED, checkouts, parse  # noqa: E402
+from transcript import human_text  # noqa: E402
 
 POLL = 1.0
 
@@ -116,23 +93,6 @@ def clock(record: dict) -> str:
 
 def now() -> str:
     return dt.datetime.now().strftime("%H:%M")
-
-
-def parse(line: str) -> dict | None:
-    """A JSONL line, or `None` for anything that is not one.
-
-    The last line of a file being written is routinely half a record. It comes
-    back `None` here and arrives whole on the next read.
-    """
-
-    line = line.strip()
-    if not line:
-        return None
-    try:
-        record = json.loads(line)
-    except Exception:
-        return None
-    return record if isinstance(record, dict) else None
 
 
 # --------------------------------------------------------------------------
@@ -288,133 +248,32 @@ def codex_parts(record: dict) -> list[tuple[str, str, str]]:
 # --------------------------------------------------------------------------
 # Which file to tail
 # --------------------------------------------------------------------------
+#
+# `sessions.py` answers this for both hosts and for the census as well. What
+# stays here is only the pairing: a finder, and the parser that reads what it
+# finds.
 
 
-def newest(paths) -> Path | None:
-    def when(path: Path) -> float:
-        try:
-            return path.stat().st_mtime
-        except OSError:
-            return -1.0
+def session_of(host: str):
+    """The finder for a host, guarded by the checkout still being there.
 
-    return max(paths, key=when, default=None)
-
-
-def claude_session(project: Path) -> Path | None:
-    folder = transcript_dir(project, SESSIONS)
-    return newest(folder.glob("*.jsonl")) if folder.is_dir() else None
-
-
-def codex_cwd(path: Path) -> Path | None:
-    """The `cwd` out of the first record. Nothing else ties a rollout to a repo."""
-
-    try:
-        with path.open(encoding="utf-8", errors="replace") as fh:
-            record = parse(fh.readline())
-    except OSError:
-        return None
-    payload = (record or {}).get("payload")
-    raw = payload.get("cwd") if isinstance(payload, dict) else None
-    if not isinstance(raw, str):
-        return None
-    try:
-        return Path(raw).resolve()
-    except OSError:
-        return None
-
-
-def codex_rollouts() -> list[Path]:
-    """The newest rollouts across every session directory, merged and sorted."""
-
-    found: list[Path] = []
-    for root in codex_homes():
-        found += root.rglob("rollout-*.jsonl")
-    return sorted(
-        found,
-        key=lambda p: p.stat().st_mtime if p.exists() else -1.0,
-        reverse=True,
-    )[:CODEX_DEPTH]
-
-
-def under(cwd: Path | None, project: Path) -> bool:
-    """Is that cell working inside this repository?
-
-    Not `==`. A cell is routinely opened in a subdirectory — `web/`, a package
-    folder — and an exact match silently reports "no session" for a repo whose
-    mirror is sitting right there.
+    A deleted worktree leaves its log behind — the host wrote it, and nothing
+    removes it when the directory goes. Without this the mirror sits on a dead
+    file forever, showing the last thing a checkout that no longer exists ever
+    said. Returning `None` is what lets the screen move itself somewhere live.
     """
 
-    return cwd is not None and (cwd == project or project in cwd.parents)
+    find = sessions.FINDERS[host]
 
+    def pick(project: Path) -> Path | None:
+        return find(project) if project.is_dir() else None
 
-def claude_cwd(path: Path) -> Path | None:
-    """The checkout this session ran in, read out of the log.
-
-    The directory name is that path with every separator flattened to `-`,
-    which is lossy: a repo whose own name contains a hyphen cannot be told
-    from a nested one. The records carry the real thing, so read it instead of
-    trying to undo the flattening. It is not on the first line — the first few
-    records are bookkeeping — so a handful get checked.
-    """
-
-    try:
-        with path.open(encoding="utf-8", errors="replace") as fh:
-            for _ in range(8):
-                record = parse(fh.readline())
-                if record is None:
-                    continue
-                raw = record.get("cwd")
-                if isinstance(raw, str) and raw:
-                    return Path(raw).resolve()
-    except OSError:
-        return None
-    return None
-
-
-def repos(host: str) -> list[dict]:
-    """Every checkout this host has a session for, newest first.
-
-    Both hosts stamp the real path into the log, so neither list is a guess.
-    A repo appears once, under its most recent session.
-    """
-
-    seen: dict[str, float] = {}
-    if host == "codex":
-        for path in codex_rollouts():
-            where = codex_cwd(path)
-            if where is None:
-                continue
-            when = path.stat().st_mtime if path.exists() else 0.0
-            seen[str(where)] = max(seen.get(str(where), 0.0), when)
-    elif SESSIONS.is_dir():
-        for folder in SESSIONS.iterdir():
-            if not folder.is_dir():
-                continue
-            latest = newest(folder.glob("*.jsonl"))
-            if latest is None:
-                continue
-            where = claude_cwd(latest)
-            if where is None:
-                continue
-            when = latest.stat().st_mtime
-            seen[str(where)] = max(seen.get(str(where), 0.0), when)
-
-    return [
-        {"path": path, "name": Path(path).name, "at": when}
-        for path, when in sorted(seen.items(), key=lambda row: -row[1])
-    ]
-
-
-def codex_session(project: Path) -> Path | None:
-    for path in codex_rollouts():
-        if under(codex_cwd(path), project):
-            return path
-    return None
+    return pick
 
 
 HOSTS = {
-    "claude": (claude_session, claude_parts),
-    "codex": (codex_session, codex_parts),
+    "claude": (session_of("claude"), claude_parts),
+    "codex": (session_of("codex"), codex_parts),
 }
 
 
@@ -748,11 +607,16 @@ def main() -> int:
 
     if args.session is None and pick() is None:
         print(f"{project} 의 {args.host} 세션 로그를 아직 못 찾았다.", file=sys.stderr)
-        others = [r["path"] for r in repos(args.host) if r["path"] != str(project)]
+        others = [r for r in checkouts(args.host) if r["path"] != str(project)]
         if others:
-            print("세션이 있는 저장소는 이것들이다:", file=sys.stderr)
-            for where in others[:8]:
-                print(f"  --project {where}", file=sys.stderr)
+            print("세션이 있는 작업트리는 이것들이다:", file=sys.stderr)
+            for row in others[:8]:
+                # The leaf name of a worktree says nothing on its own — two
+                # repositories each had one called `pollock`. Which repository
+                # and which branch is what tells them apart.
+                whose = " · ".join(x for x in (row["repoName"], row["branch"]) if x)
+                print(f"  --project {row['path']}"
+                      + (f"   ({whose})" if whose else ""), file=sys.stderr)
         else:
             print("그 호스트로 한 번 말을 걸면 파일이 생긴다.", file=sys.stderr)
         print("계속 기다린다.", file=sys.stderr, flush=True)
