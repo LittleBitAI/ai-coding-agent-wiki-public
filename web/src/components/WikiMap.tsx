@@ -1,8 +1,10 @@
-// 위키 지도. `wiki.html` 이 하던 일이고, 이제 여기가 그 자리다.
+// The wiki map. What `wiki.html` used to do, and this is where it lives now.
 //
-// 산문은 안 옮겼다. 옛 페이지는 사다리 설명·옵시디언 비교·쓰는 법을 같이
-// 담았는데 셋 다 README·SCHEMA·ENFORCEMENT 의 사본이었고, 그중 하나(쓰는 법)는
-// 이미 낡아서 lint 를 "여섯 자리" 라고 적고 있었다. 여기 남은 것은 잰 값뿐이다.
+// The prose did not come across. The old page carried an explanation of the
+// ladder, a comparison with Obsidian and a how-to, and all three were copies
+// of README, SCHEMA and ENFORCEMENT — one of them, the how-to, had already
+// gone stale and described lint as looking at six places. What is left here
+// is the measured values and nothing else.
 
 import { useEffect, useRef, useState } from 'react'
 

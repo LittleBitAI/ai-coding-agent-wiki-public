@@ -2,7 +2,8 @@ import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Candidates } from '@/components/Candidates'
 
-// 인용으로 보이는 인라인 코드. `tool/chat.py:118` · `docs/x.md` · Git 커밋 식별자.
+// Inline code that looks like a citation: `tool/chat.py:118`, `docs/x.md`, a
+// git commit identifier.
 const FILE = /^([\w./-]+\.(?:py|md|ts|tsx|js|json|toml|ya?ml|cmd|txt|css|html|jsonl))(?::(\d+)(?:-\d+)?)?$/
 const SHA = /^[0-9a-f]{7,40}$/
 
@@ -13,13 +14,15 @@ export type AnswerProps = {
   onDecide?: (candidate: string, target: 'wiki' | 'claude_md' | 'drop') => Promise<string>
 }
 
-/** 답 본문. 표와 코드블록이 자주 온다 — gfm 이 그것을 든다.
+/** The answer body. Tables and code blocks arrive often, and gfm holds those.
  *
- *  링크는 새 탭으로 연다. 답에 붙는 링크는 거의 다 커밋 permalink 라, 눌러서
- *  원본을 대조하는 동안 대화가 사라지면 안 된다.
+ *  Links open in a new tab. Almost every link in an answer is a commit
+ *  permalink, and the conversation must not disappear while the person is
+ *  off comparing against the original.
  *
- *  인라인 코드가 경로나 SHA 모양이면 누를 수 있게 한다 — 영상이 "원본 장면까지"
- *  라고 부른 것. 경로는 옆 서랍에서 그 줄을 보여 주고, SHA 는 GitHub 로 간다. */
+ *  Inline code shaped like a path or a SHA becomes clickable — "all the way
+ *  to the original". A path opens that line in the side drawer; a SHA goes to
+ *  GitHub. */
 export function Answer({ text, remote, onPeek, onDecide }: AnswerProps) {
   return (
     <div className="prose-answer">
@@ -39,7 +42,8 @@ export function Answer({ text, remote, onPeek, onDecide }: AnswerProps) {
           code: ({ className, children }) => {
             const raw = String(children ?? '').replace(/\n$/, '')
 
-            // ```retro-candidates 펜스 — 회고 후보. 버튼이 붙는다.
+            // A ```retro-candidates fence: the retro's candidates, which get
+            // buttons.
             if (className === 'language-retro-candidates') {
               return onDecide ? (
                 <Candidates raw={raw} onDecide={onDecide} />
@@ -47,7 +51,7 @@ export function Answer({ text, remote, onPeek, onDecide }: AnswerProps) {
                 <code className={className}>{raw}</code>
               )
             }
-            // 다른 펜스는 그대로.
+            // Every other fence stands as it is.
             if (className) return <code className={className}>{children}</code>
 
             const file = raw.match(FILE)

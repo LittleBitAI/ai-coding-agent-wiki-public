@@ -2,7 +2,7 @@ import { useState } from 'react'
 
 type Props = { text: string; onClose: () => void }
 
-/** 다음 세션에 붙일 글. 복사해서 새 터미널에 넣는다. */
+/** The text to hand the next session. Copied, and pasted into a new terminal. */
 export function Handoff({ text, onClose }: Props) {
   const [copied, setCopied] = useState(false)
 
@@ -12,7 +12,8 @@ export function Handoff({ text, onClose }: Props) {
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     } catch {
-      // 클립보드가 막힌 환경이면 본문을 직접 긁으면 된다.
+      // Where the clipboard is blocked, the body is still there to select by
+      // hand. A failed copy must not leave the person with nothing.
     }
   }
 

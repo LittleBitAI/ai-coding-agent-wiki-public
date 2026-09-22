@@ -17,9 +17,10 @@ type Props = {
   onChange: (next: { repo: string; model: string; effort: string }) => void
 }
 
-// Radix Select 는 빈 문자열을 값으로 못 쓴다. "기본"(플래그를 안 붙임)을
-// 화면에서는 이 표로 들고, 서버로 보낼 때 다시 빈 문자열로 돌린다.
-// 고른 것을 다시 눌러 해제하면 `null` 이 오므로 그것도 "기본" 으로 친다.
+// A Radix Select cannot use the empty string as a value. "default" — meaning
+// no flag is passed — is carried on screen by this token and turned back into
+// an empty string on the way to the server. Pressing the selected item again
+// deselects it and yields `null`, which counts as "default" too.
 const NONE = '__default__'
 const out = (v: string | null) => (!v || v === NONE ? '' : v)
 const inn = (v: string) => v || NONE
@@ -111,11 +112,12 @@ export function Toolbar({
   )
 }
 
-/** 고르는 칸 하나.
+/** One picker.
  *
- *  `SelectValue` 에 표시를 직접 넘긴다. 목록이 서버에서 오는데, 그 전에 한 번
- *  그려지면 Radix 가 고른 값에 맞는 항목을 못 찾아 값 자체를 그대로 띄운다 —
- *  화면에 `__default__` 가 떴다. 라벨을 우리가 들면 그 일이 없다. */
+ *  The label is handed to `SelectValue` directly. The list comes from the
+ *  server, and on a render before it arrives Radix cannot find an item
+ *  matching the selected value and shows the raw value instead —
+ *  `__default__` appeared on screen. Holding the label ourselves stops that. */
 function Picker({
   label,
   width,

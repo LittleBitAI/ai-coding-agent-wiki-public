@@ -18,7 +18,8 @@ type Props = {
 export function Stream({ messages, korean, remote, onPeek, onDecide, onMark }: Props) {
   const end = useRef<HTMLDivElement>(null)
 
-  // 답이 토막으로 자라므로 길이가 바뀔 때마다 따라 내려간다.
+  // The answer grows in pieces, so this follows every change in length
+  // rather than every new message.
   const grown = messages.length + (messages.at(-1)?.text.length ?? 0) + (messages.at(-1)?.simpleText?.length ?? 0)
   useEffect(() => {
     end.current?.scrollIntoView({ block: 'end' })
@@ -136,7 +137,7 @@ function AnswerVersions(
   )
 }
 
-/** 답 밑의 한 줄 — 걸린 시간 · 비용 · 모델, 그리고 "어긋났다". */
+/** The line under an answer: time, cost, model, and "that was wrong". */
 function Foot({ m, onMark }: { m: Msg; onMark: (k: Kind) => Promise<void> }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)

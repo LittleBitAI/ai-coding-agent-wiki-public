@@ -8,10 +8,11 @@ type Props = {
 
 type State = { busy?: Target; result?: string; done?: Target }
 
-/** 회고가 낸 후보 한 줄에 버튼 셋.
+/** Three buttons per candidate the retro produced.
  *
- *  `retrospect` 스킬 5번 걸음은 "선택지로 물어라" 인데 헤드리스는 못 묻는다.
- *  여기가 그 자리다. 눌러야만 파일이 바뀐다 — 버튼이 곧 허가다. */
+ *  Step 5 of the `retrospect` skill says to ask with options, and a headless
+ *  run cannot ask. This is where it asks. Nothing on disk changes until a
+ *  button is pressed: the button is the permission. */
 export function Candidates({ raw, onDecide }: Props) {
   const lines = raw
     .split('\n')
