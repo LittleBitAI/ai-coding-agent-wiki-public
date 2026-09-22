@@ -89,6 +89,12 @@ a code span, which turned it into a space and is the only one that cannot be
 counted directly. What is left over after counting the first two is charged to
 a bold only when every code span in the block is inside it.
 
+Both of those counts reach the same depth, into nested tokens, and that is not
+an incidental detail: they decide together who owns a folded line, so one
+reaching deeper than the other leaves a line nobody can own. A multi-line code
+span inside an image's alt text was exactly that — its line in the residue,
+chargeable to no bold, and chargeable to the wrong one nearby.
+
 A bold holds a line break when a break token is inside it, or when a token
 inside it carries one from the source — judged off the same function the
 counting uses, so the two cannot drift apart. Naming one token type instead let

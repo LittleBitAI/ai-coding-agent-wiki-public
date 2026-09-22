@@ -125,6 +125,20 @@ def newlines(child) -> int:
         for kid in child.children or []
     )
 
+
+def codespans(child) -> int:
+    """Code spans at any depth inside this token.
+
+    The same depth `newlines` reaches, and that is the point: these two decide
+    together who owns a folded line, so one of them reaching deeper than the
+    other leaves a line nobody can own. Counting only the top level did exactly
+    that — a multi-line code span inside an image's alt text put its line in
+    the residue while no bold could be charged with it.
+    """
+
+    return (1 if child.type == "code_inline" else 0) + sum(
+        codespans(kid) for kid in child.children or [])
+
 # Above this share of prose lines, emphasis is no longer marking exceptions.
 # Not taken from the pages in this repo: several of them are already past it,
 # which is how the habit spread in the first place.
@@ -212,7 +226,7 @@ def scan(text: str) -> tuple[int, int, list[str], int, int]:
         # Charging it to any bold that merely holds one refused correct prose
         # twice: beside an unrelated span that wrapped, and beside a tag that
         # did -- the second only because tags were counted as folding at all.
-        spans = sum(1 for c in children if c.type == "code_inline")
+        spans = sum(codespans(c) for c in children)
 
         here = 0
         opens: list[dict] = []
@@ -232,6 +246,9 @@ def scan(text: str) -> tuple[int, int, list[str], int, int]:
             if newlines(child):
                 for frame in opens:
                     frame["broken"] = True
+            # Read at the same depth, in the same place, for the same reason.
+            for frame in opens:
+                frame["spans"] += codespans(child)
 
             if child.type in ("softbreak", "hardbreak"):
                 for frame in opens:
@@ -268,8 +285,6 @@ def scan(text: str) -> tuple[int, int, list[str], int, int]:
             elif child.content:
                 for frame in opens:
                     frame["parts"].append(child.content)
-                    if child.type == "code_inline":
-                        frame["spans"] += 1
                 if child.content.strip():
                     first = False
         bolds += here

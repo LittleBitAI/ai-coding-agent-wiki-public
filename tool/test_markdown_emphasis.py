@@ -203,6 +203,16 @@ def test_a_code_span_outside_the_bold_does_not_convict_it(tmp_path: Path) -> Non
     assert findings("**" + tick + "one" + tick + "** ![alt\ntext](x)",
                     whole=False) == []
 
+    # A code span nested in alt text is still a code span. Counting only the
+    # top level while the newline check recursed left its folded line owned by
+    # nobody: the bold around it went free, and a bold beside it was charged
+    # with a fold that was never its own.
+    nested = "**![" + tick + "a\nb" + tick + "](x)** 뒤."
+    assert any("줄바꿈을 품은" in line for line in findings(nested, whole=False))
+
+    apart = "![" + tick + "a\nb" + tick + "](x) **" + tick + "one" + tick + "**"
+    assert findings(apart, whole=False) == []
+
 
 def test_fragments_are_not_stitched_into_a_paragraph(tmp_path: Path) -> None:
     """Two edits are two fragments; whatever separates them is not in the call.
