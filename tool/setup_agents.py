@@ -234,19 +234,24 @@ def install_global(choice, check, projects, trust):
     if missing:
         raise ValueError(f"{sys.executable} 이 {', '.join(missing)} 를 못 읽습니다. "
                          "requirements-hooks.txt 를 설치한 Python으로 다시 실행하세요.")
-    # Before anything is written. A mistyped path would otherwise be created
-    # and handed twelve deny rules that bind whatever lands there later.
+    # Everything that can refuse, refuses before the first write. A mistyped
+    # path would otherwise be created and handed twelve deny rules, and a
+    # missing second CLI would leave the first host installed alone.
+    from sessions import checkout
+
     for project in projects:
-        if not (project / ".wiki/adapter.toml").is_file():
-            raise ValueError(f"위키가 붙은 checkout이 아닙니다 (.wiki/adapter.toml 없음): {project}")
+        top = checkout(project)[0]
+        if not top or os.path.normcase(top) != os.path.normcase(project) or not (project / ".wiki/adapter.toml").is_file():
+            raise ValueError(f"위키가 붙은 git checkout 의 루트가 아닙니다 (.wiki/adapter.toml 필요): {project}")
     agents = tuple(SETTINGS) if choice == "both" else (choice,)
-    broken = []
     for agent in agents:
         binary = shutil.which(agent)
         if not binary:
             raise ValueError(f"{agent} CLI를 PATH에서 찾지 못했습니다.")
         print(run([binary, "--version"], WIKI).strip())
         run([*hook_shell(agent), "exit 0"], WIKI)
+    broken = []
+    for agent in agents:
         for path in user_files(agent):
             settings = read_json(path)
             changes = configure(settings, None, None, sys.executable, agent)

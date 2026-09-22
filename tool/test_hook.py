@@ -136,12 +136,16 @@ def test_check_fails_when_a_named_project_gets_nothing():
     if not shutil.which("claude"):
         return
     with tempfile.TemporaryDirectory() as raw:
-        # An adapter but no repository: attached on paper, nothing to inject.
-        (Path(raw) / ".wiki").mkdir()
-        (Path(raw) / ".wiki/adapter.toml").write_text('agents=["claude"]\n', encoding="utf-8")
+        # An attached clone still carrying its old per-project hooks: the
+        # dispatcher steps aside for them, so the global SessionStart says nothing.
+        main, _tree = attached_repo(Path(raw))
+        old = {}
+        apply.configure(old, main, None, sys.executable, "claude")
+        (main / ".claude").mkdir()
+        (main / ".claude/settings.json").write_text(json.dumps(old), encoding="utf-8")
         done = subprocess.run(
             [sys.executable, str(HERE / "setup_agents.py"), "--global", "--check",
-             "--agent", "claude", "--project", raw],
+             "--agent", "claude", "--project", str(main.resolve())],
             capture_output=True, text=True, encoding="utf-8", timeout=120,
         )
         assert done.returncode == 2 and "주입하지 않았다" in done.stderr, done.stdout + done.stderr
@@ -150,11 +154,37 @@ def test_check_fails_when_a_named_project_gets_nothing():
 def test_a_mistyped_project_is_refused_before_anything_is_written():
     with tempfile.TemporaryDirectory() as raw:
         typo = Path(raw) / "typo"
-        done = subprocess.run(
-            [sys.executable, str(HERE / "setup_agents.py"), "--global",
-             "--agent", "claude", "--project", str(typo)],
-            capture_output=True, text=True, encoding="utf-8", timeout=120,
-        )
-        assert done.returncode == 2 and "adapter.toml" in done.stderr, done.stdout + done.stderr
-        assert not typo.exists(), "없는 경로를 만들어 차단 규칙을 남기지 않는다"
+        # An adapter with no repository around it is not a checkout either.
+        (Path(raw) / "no repo/.wiki").mkdir(parents=True)
+        (Path(raw) / "no repo/.wiki/adapter.toml").write_text('agents=["claude"]\n', encoding="utf-8")
+        for target in (typo, Path(raw) / "no repo"):
+            done = subprocess.run(
+                [sys.executable, str(HERE / "setup_agents.py"), "--global",
+                 "--agent", "claude", "--project", str(target)],
+                capture_output=True, text=True, encoding="utf-8", timeout=120,
+            )
+            assert done.returncode == 2 and "adapter.toml" in done.stderr, done.stdout + done.stderr
+            assert not (target / ".claude").exists(), "차단 규칙을 남기지 않는다"
+        assert not typo.exists(), "없는 경로를 만들지 않는다"
         assert not any(Path(os.environ["WIKI_USER_HOME"]).glob(".claude/settings.json")), "사용자 설정도 안 건드린다"
+
+
+def test_a_missing_second_host_leaves_the_first_unwritten():
+    import shutil
+
+    if not shutil.which("claude"):
+        return
+    with tempfile.TemporaryDirectory() as raw:
+        # Git and Python stay findable; `codex` does not.
+        bin_dir = Path(raw)
+        env = {**os.environ, "PATH": os.pathsep.join(
+            str(Path(shutil.which(name)).parent) for name in ("claude", "git"))}
+        done = subprocess.run(
+            [sys.executable, str(HERE / "setup_agents.py"), "--global", "--agent", "both"],
+            capture_output=True, text=True, encoding="utf-8", timeout=120, env=env, cwd=bin_dir,
+        )
+        if shutil.which("codex", path=env["PATH"]):
+            return
+        assert done.returncode == 2 and "codex" in done.stderr, done.stdout + done.stderr
+        assert not any(Path(os.environ["WIKI_USER_HOME"]).glob(".claude/settings.json")), \
+            "한 호스트만 설치된 채로 끝나지 않는다"
