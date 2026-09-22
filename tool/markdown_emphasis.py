@@ -43,11 +43,14 @@ MOVE_TO = re.compile(r"^\*\*\* Move to: (.+)$", re.M)
 # says what a hooks install needs. It is not optional: a
 # missing parser is reported, never quietly skipped, because "every `.md`
 # passes" must not be able to mean "no `.md` was read".
-# 절대경로다. 훅의 작업 디렉터리는 보통 대상 저장소이고 이 파일은 허브 위키에
-# 있으므로, 상대경로로 적은 복구 명령은 화면에서 읽은 그대로는 안 돈다.
+# 화면의 복구 명령은 그대로 붙여 넣어 돌아야 한다. 그러려면 셋이 다 맞아야 한다.
+# 경로는 절대경로여야 하고 — 훅의 작업 디렉터리는 대상 저장소이고 이 파일은 허브에
+# 있다 — 따옴표로 감싸야 하며 — 이 저장소는 공백 경로를 지원한다고 적어 두었다 —
+# 인터프리터는 `python` 이 아니라 훅이 실제로 돌고 있는 이것이어야 한다.
 MISSING = (
-    "markdown-it-py 가 없어 강조 검사를 돌리지 못했다 — `python -m pip "
-    f"install -r {Path(__file__).resolve().parents[1] / 'requirements-hooks.txt'}`"
+    "markdown-it-py 가 없어 강조 검사를 돌리지 못했다 — "
+    f'`"{sys.executable}" -m pip install -r '
+    f'"{Path(__file__).resolve().parents[1] / "requirements-hooks.txt"}"`'
 )
 
 _PARSER: object | None = None
@@ -85,6 +88,23 @@ def parser():
 # This matches the text the parser resolved, so the delimiters are already
 # gone and `**Rule.**` and `__Rule.__` arrive here identical.
 LABEL = re.compile(r"^[^\n]{1,24}[.:]$")
+
+# HTML's void elements, the whole list from the spec at once rather than a
+# clause per review round. An inline tag is normally scaffolding around text
+# and puts nothing on the page itself, so a bold behind `<span>` still opens
+# its block. These are the exceptions: they render something by themselves,
+# so a bold behind one is no longer the first thing the reader sees.
+VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+        "meta", "param", "source", "track", "wbr"}
+TAG = re.compile(r"^<\s*([a-zA-Z][-a-zA-Z0-9]*)")
+
+
+def standalone(raw: str) -> bool:
+    """Does this inline tag put something on the page by itself?"""
+
+    name = TAG.match(raw)
+    return bool(name) and (
+        name.group(1).lower() in VOID or raw.rstrip().endswith("/>"))
 
 # Above this share of prose lines, emphasis is no longer marking exceptions.
 # Not taken from the pages in this repo: several of them are already past it,
@@ -162,11 +182,17 @@ def scan(text: str) -> tuple[int, int, list[str], int, int]:
         # code span, which is the one place a newline disappears from the token
         # stream — it is how `**`+"`a\nb`"+`**` looks like a single-line bold.
         breaks = sum(1 for c in children if c.type in ("softbreak", "hardbreak"))
-        folded = max(0, token.map[1] - token.map[0] - 1 - breaks)
-        # Which code span ate them is not recorded, so a bold owns the folding
-        # only when every code span in the block is inside it. Attributing it
-        # to any bold that merely holds a code span refused correct prose --
-        # one bold with a one-line span beside an unrelated span that wrapped.
+        # A newline the block covers is in exactly one of three places: a break
+        # token, a token that still carries it (an inline tag written across
+        # lines keeps its own), or a code span, which replaced it with a space
+        # and is the only one that cannot be counted directly.
+        kept = sum(c.content.count("\n") for c in children if c.content)
+        folded = max(0, token.map[1] - token.map[0] - 1 - breaks - kept)
+        # So which code span ate the rest is still unrecorded, and a bold owns
+        # that residue only when every code span in the block is inside it.
+        # Charging it to any bold that merely holds one refused correct prose
+        # twice: beside an unrelated span that wrapped, and beside a tag that
+        # did -- the second only because tags were counted as folding at all.
         spans = sum(1 for c in children if c.type == "code_inline")
 
         here = 0
@@ -195,12 +221,19 @@ def scan(text: str) -> tuple[int, int, list[str], int, int]:
                 if opens:
                     opens[-1]["parts"].append(inner)
             elif child.type == "html_inline":
-                # A tag is not what the reader sees, so it neither joins the
-                # label text nor ends the run of nothing-yet-seen. Both faces
-                # of treating it as visible were review findings: the source
-                # inside the label string, and `<span>**Rule.**</span>` being
-                # let through because the tag had already said "not first".
-                pass
+                # A tag written across lines carries the newline itself, and
+                # the bold holding it holds a line break as surely as one
+                # holding a soft break.
+                if "\n" in child.content:
+                    for frame in opens:
+                        frame["broken"] = True
+                # Its source is never label text. Whether it ends the run of
+                # nothing-seen-yet is a separate question, and both blanket
+                # answers were review findings: counting every tag as visible
+                # let `<span>**Rule.**</span>` through, counting none as
+                # visible refused `<img src=x> **Rule.**`.
+                if standalone(child.content):
+                    first = False
             elif child.content:
                 for frame in opens:
                     frame["parts"].append(child.content)

@@ -138,6 +138,13 @@ def test_an_inline_tag_is_not_part_of_the_label(tmp_path: Path) -> None:
     assert markdown_emphasis.scan(wrapped)[2] == ["규칙."]
     assert blocked(CLEAN.replace("규칙. 훅은", "<span>**규칙.**</span> 훅은"))
 
+    # But a tag that renders something of its own is content, and the bold
+    # after it is mid-sentence emphasis. Treating every tag as invisible
+    # refused this, which is correct prose.
+    for tag in ("<img src=x>", "<br>", "<input type=text>", "<span/>"):
+        after = f"{tag} **규칙.** 훅은 세션을 멈추지 않는다.\n"
+        assert markdown_emphasis.scan(after)[2] == [], tag
+
 
 def test_a_code_span_outside_the_bold_does_not_convict_it(tmp_path: Path) -> None:
     """Folding is owned only by a bold that holds every code span in the block.
@@ -155,6 +162,16 @@ def test_a_code_span_outside_the_bold_does_not_convict_it(tmp_path: Path) -> Non
     # The same block with no other span: now the folding can only be its own.
     inside = "**" + tick + "multi\nline" + tick + "**"
     assert any("줄바꿈을 품은" in line for line in findings(inside, whole=False))
+
+    # A tag written across lines keeps its own newline, so it is counted
+    # directly rather than left in the residue a code span is charged with.
+    # Both faces were findings: the bold holding such a tag was missed, and a
+    # one-line bold beside such a tag was convicted of the tag's break.
+    holding = "**<span\nclass=x>규칙</span>** 이다."
+    assert any("줄바꿈을 품은" in line for line in findings(holding, whole=False))
+
+    beside = ("**" + tick + "one" + tick + "** <span\nclass=x>text</span>")
+    assert findings(beside, whole=False) == []
 
 
 def test_fragments_are_not_stitched_into_a_paragraph(tmp_path: Path) -> None:
@@ -663,6 +680,30 @@ def test_wiring_refuses_an_interpreter_without_the_parser(tmp_path: Path) -> Non
     assert done.returncode == 2, done.stdout + done.stderr
     assert "markdown-it-py" in done.stdout
     assert "requirements-hooks.txt" in done.stdout
+    # Paths with spaces are supported, so the printed command has to survive
+    # being pasted as written.
+    assert f'"{sys.executable}" -m pip install -r "' in done.stdout
+
+
+def test_the_probe_covers_the_stdlib_and_the_version_floor() -> None:
+    """"Everything the hooks use" is not just the pip list.
+
+    Swapping the probe for that list dropped `tomllib` and the 3.11 floor with
+    it, and a 3.10 interpreter passed as a wiring target — the hooks import
+    `tomllib` and would have died on it at run time, silently.
+    """
+
+    import apply
+
+    assert apply.unusable(sys.executable) == []
+
+    older = Path(r"C:\Users\dasdk\AppData\Local\Programs\Python\Python310\python.exe")
+    if not older.is_file():
+        import pytest
+        pytest.skip("3.11 미만 인터프리터가 이 기계에 없다")
+    missing = apply.unusable(str(older))
+    assert any("3.11" in name for name in missing), missing
+    assert "tomllib" in missing, missing
 
 
 def test_a_missing_parser_is_said_out_loud(monkeypatch, tmp_path) -> None:

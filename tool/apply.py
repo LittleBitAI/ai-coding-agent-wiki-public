@@ -21,6 +21,13 @@ from wikilib import front_matter  # noqa: E402
 # 그게 이 표를 손으로 두 번 적는 것을 감당할 수 있게 만드는 유일한 이유다.
 NEEDED = {"PyYAML": "yaml", "markdown-it-py": "markdown_it"}
 
+# 훅이 돌 인터프리터가 갖춰야 하는 나머지. pip 으로 받는 것이 아니라 버전으로
+# 따라오는 것들이다. `tomllib` 을 빼먹은 판이 한 번 있었다 — 패키지 목록으로
+# 검사를 바꾸면서 stdlib 조건이 같이 사라졌고, 3.10 인터프리터가 배선 대상으로
+# 통과했다. "훅이 쓰는 것을 전부" 는 stdlib 과 버전 하한까지다.
+FLOOR = (3, 11)
+BUILTIN = {"tomllib": "tomllib"}
+
 HOOK_MARK = "tool/inject.py"
 SESSION_MARK = "tool/session_state.py"
 SYNC_MARK = "tool/sync.py"
@@ -306,6 +313,33 @@ def wiring_drift(project: Path, agents: tuple[str, ...] | None = None) -> list[t
     return findings
 
 
+def unusable(python: str) -> list[str]:
+    """훅이 돌 인터프리터에 없는 것. 비어 있으면 그 인터프리터로 붙여도 된다.
+
+    자기 프로세스가 아니라 `--python` 이 가리키는 것을 본다. 설치를 돌리는
+    인터프리터와 훅이 돌 인터프리터는 다를 수 있고, 조용히 죽는 것은 후자다.
+    """
+
+    names = {f"Python {FLOOR[0]}.{FLOOR[1]} 이상": None, **BUILTIN, **NEEDED}
+    script = (
+        "import sys\n"
+        "bad = []\n"
+        f"if sys.version_info < {FLOOR}:\n"
+        f"    bad.append({next(iter(names))!r})\n"
+    )
+    for name, module in {**BUILTIN, **NEEDED}.items():
+        script += (f"try:\n    import {module}\n"
+                   f"except Exception:\n    bad.append({name!r})\n")
+    script += "print('\\n'.join(bad))\n"
+
+    done = subprocess.run([python, "-c", script], capture_output=True,
+                          encoding="utf-8", errors="replace")
+    if done.returncode:
+        # 인터프리터가 이 검사조차 못 돌리면 그것이 답이다.
+        return [f"{python} 을 못 돌린다"]
+    return [line for line in done.stdout.splitlines() if line.strip()]
+
+
 def main() -> int:
     # 출력이 파이프로 가면 기본이 cp949 다. 인코딩을 환경에 안 맡긴다.
     sys.stdout.reconfigure(encoding="utf-8")
@@ -336,12 +370,14 @@ def main() -> int:
     # `apply --write` 와 `setup_agents` — 한쪽에만 걸었더니 다른 쪽으로 들어온
     # 기계에서 강조 훅이 붙은 채로 매번 통과했다. 배선을 쓰는 것은 결국 이
     # 함수 하나뿐이므로 검사도 여기 하나다.
-    missing = [name for name, module in NEEDED.items() if subprocess.run(
-        [args.python, "-c", f"import {module}"], capture_output=True).returncode]
+    missing = unusable(args.python)
     if missing:
+        needs = WIKI / "requirements-hooks.txt"
         print(f"`{args.python}` 이 {', '.join(missing)} 를 못 읽는다. 훅이 조용히 죽는다.")
-        print(f"`{args.python} -m pip install -r {WIKI / 'requirements-hooks.txt'}`"
-              " 를 돌리거나 `--python` 으로 다른 인터프리터를 대라.")
+        # 경로에 공백이 있을 수 있다. 이 저장소는 공백 경로를 지원한다고
+        # 적어 두었으므로, 화면에 뜨는 복구 명령은 따옴표째 나간다.
+        print(f'`"{args.python}" -m pip install -r "{needs}"` 를 돌리거나'
+              " `--python` 으로 다른 인터프리터를 대라.")
         return 2
 
     source = adapter_path(adapter, project)

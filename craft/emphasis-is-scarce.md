@@ -83,16 +83,24 @@ newlines are already spaces by then, so every line it swallowed is lost and
 every count after it is off. A block is a unit the parser hands over exactly,
 so that is the unit.
 
-A block still knows how many of its lines vanished, from its own line span
-against the breaks it shows. It does not know into which code span, so a bold
-is charged with the folding only when every code span in the block is inside
-it. An inline tag counts for nothing at all: it is not what the reader sees,
-so it neither joins a label's text nor ends the run of nothing-seen-yet that
-makes a bold a label.
+A newline the block covers is in one of three places: a break token, a token
+that still carries it — an inline tag written across lines keeps its own — or
+a code span, which turned it into a space and is the only one that cannot be
+counted directly. What is left over after counting the first two is charged to
+a bold only when every code span in the block is inside it.
+
+An inline tag never joins a label's text, because a label is what the reader
+sees. Whether it ends the run of nothing-seen-yet is a separate question with a
+separate answer: a void element renders something by itself, so a bold behind
+`<img>` is mid-sentence emphasis, while a bold behind `<span>` still opens its
+block. Both blanket answers were review findings.
 
 The parser is checked where the wiring is written — `apply.py`, which both
 documented installs go through — and it probes the interpreter the hooks will
-run under, not the one doing the installing.
+run under, not the one doing the installing. It checks the version floor and
+the stdlib that floor brings, not only the package list: swapping the probe for
+that list once dropped `tomllib`, and a 3.10 interpreter passed as a target for
+hooks that import it.
 
 `markdown-it-py` is in `requirements-hooks.txt`, the one file that says what a
 hooks install needs and which the chat and dev requirements both pull in. It is
