@@ -30,7 +30,13 @@ MOVE_TO = re.compile(r"^\*\*\* Move to: (.+)$", re.M)
 # or more backticks or tildes, then an info string.
 FENCE = re.compile(r"^ {0,3}(?P<run>`{3,}|~{3,})(?P<info>.*)$")
 
-BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
+# Both spellings Markdown renders as bold. Counting only `**` left `__` as a
+# way out of the rule that nobody had to argue for.
+BOLD = re.compile(r"\*\*(.+?)\*\*|__(.+?)__", re.S)
+
+# Inline code, lifted before counting. Asterisks inside it are characters, not
+# emphasis, and counting them refused correct prose about Markdown itself.
+CODE = re.compile(r"`+[^`\n]*`+")
 
 # A paragraph label: the line opens with a short bolded run ending in a period
 # or a colon. This repo's own pages write those plain -- `규칙.`, `어겼을 때.` --
@@ -97,7 +103,10 @@ def prose(text: str) -> list[tuple[str, bool]]:
             if fence:
                 # A close is the same character, at least as long, and carries
                 # no info string. Anything else on that line is content.
-                if run[0] == fence[0] and len(run) >= len(fence) and not info.strip():
+                # `strip()` here also ate U+00A0, which CommonMark counts as
+                # content. Only ASCII space and tab are blank in a fence line.
+                if (run[0] == fence[0] and len(run) >= len(fence)
+                        and not info.strip(" \t")):
                     fence = ""
                     blank = True
                     continue
@@ -132,12 +141,14 @@ def findings(text: str, whole: bool = True) -> list[str]:
 
     found = []
     rows = prose(text)
-    lines = [line for line, _opens in rows]
+    # Inline code is blanked, not removed, so line numbers and the label check
+    # still see the line they were written against.
+    lines = [CODE.sub(lambda m: " " * len(m.group(0)), line) for line, _ in rows]
     body = "\n".join(lines)
 
     labels = [
-        line.strip()[:40] for line, opens in rows
-        if whole and opens and LABEL.match(line)
+        line.strip()[:40] for (line, opens), bare in zip(rows, lines)
+        if whole and opens and LABEL.match(bare)
     ]
     if labels:
         found.append(f"- 문단 라벨을 굵게 했다 ({len(labels)}곳): {labels[0]} …")
@@ -146,7 +157,7 @@ def findings(text: str, whole: bool = True) -> list[str]:
     if twice:
         found.append(f"- 한 줄에 굵게가 둘 이상인 줄이 {twice}개 있다")
 
-    wrapped = sum(1 for m in BOLD.finditer(body) if "\n" in m.group(1))
+    wrapped = sum(1 for m in BOLD.finditer(body) if "\n" in (m.group(1) or m.group(2)))
     if wrapped:
         found.append(f"- 줄바꿈을 건너뛰는 굵게가 {wrapped}곳 있다")
 

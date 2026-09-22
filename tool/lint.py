@@ -6,6 +6,7 @@ import argparse
 import ast
 import io
 import re
+import subprocess
 import sys
 import tokenize
 from pathlib import Path
@@ -233,6 +234,29 @@ def missing_hook_guards(wiki: Path, loaded: dict) -> list[tuple[str, str]]:
     return found
 
 
+def tracked_markdown(root: Path) -> list[str]:
+    """이 저장소가 자기 것이라고 보는 `.md`. 손으로 쓴 제외 목록을 안 쓴다.
+
+    처음엔 `web/`·`artifacts/`·`raw/`·`node_modules` 를 이름으로 걸렀다. 허브의
+    사정이고 대상 저장소의 사정이 아니라, 남의 저장소에서는 진짜 문서가 통째로
+    빠졌다. `node_modules-guide.md` 처럼 이름이 앞자리만 같은 파일도 같이 빠졌다.
+
+    "이 파일이 우리 것인가" 는 git 이 이미 답을 안다. 추적되는 것만 본다 —
+    생성물과 vendor 는 어차피 무시 대상이고, 아무도 리뷰하지 않는다.
+    """
+
+    done = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-z", "--", "*.md"],
+        capture_output=True, check=False,
+    )
+    if done.returncode == 0:
+        return sorted(
+            name for name in done.stdout.decode("utf-8", "replace").split("\0") if name
+        )
+    # git 저장소가 아니면 전부 본다. 이 경로는 임시 디렉터리를 쓰는 시험이다.
+    return sorted(p.relative_to(root).as_posix() for p in root.rglob("*.md"))
+
+
 def loud_emphasis(wiki: Path = WIKI) -> list[tuple[str, str]]:
     """강조가 소음이 된 `.md`. 훅이 못 보는 자리를 여기서 본다.
 
@@ -245,10 +269,8 @@ def loud_emphasis(wiki: Path = WIKI) -> list[tuple[str, str]]:
     import markdown_emphasis
 
     found = []
-    for path in sorted(wiki.rglob("*.md")):
-        name = path.relative_to(wiki).as_posix()
-        if name.startswith(("node_modules", "web/", "artifacts/", "raw/", ".venv")):
-            continue
+    for name in tracked_markdown(wiki):
+        path = wiki / name
         try:
             text = path.read_text(encoding="utf-8")
         except Exception as error:
@@ -420,7 +442,8 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="게이트용: 슬롯 값 차이만 종료 코드에서 제외")
     parser.add_argument(
         "--repo", action="append", type=Path, default=[],
-        help="낡은 서술 검사에 쓸 저장소. 여러 번 줄 수 있다",
+        help="같이 검진할 저장소. 낡은 서술과 그 저장소가 추적하는 `.md` 의 "
+             "강조를 본다. 여러 번 줄 수 있다",
     )
     args = parser.parse_args()
 

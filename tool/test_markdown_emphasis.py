@@ -205,6 +205,48 @@ def test_the_check_reaches_a_target_repository(tmp_path: Path) -> None:
     assert [k for k, _ in lint.check(lint.WIKI, None, [tmp_path])[2] if k == "강조 과다"]
 
 
+def test_the_scan_follows_git_rather_than_a_hand_written_exclusion_list(
+    tmp_path: Path,
+) -> None:
+    """손으로 쓴 제외 목록은 허브의 사정이지 남의 저장소의 사정이 아니다.
+
+    `web/`·`artifacts/`·`raw/` 를 이름으로 거르니 대상 저장소에서는 진짜 문서가
+    통째로 빠졌고, 앞자리만 같은 `node_modules-guide.md` 도 같이 빠졌다.
+    "이 파일이 우리 것인가" 는 git 이 이미 답을 안다.
+    """
+
+    import lint
+
+    for args in (["init", "-q"], ["config", "user.email", "t@e.com"],
+                 ["config", "user.name", "t"]):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True,
+                       capture_output=True)
+    (tmp_path / ".gitignore").write_text("vendor/\n", encoding="utf-8")
+
+    noisy = "# 제목\n\n" + "\n\n".join(f"{n} 번째 **강조**." for n in range(9)) + "\n"
+    for rel in ("web/docs/x.md", "artifacts/x.md", "raw/x.md",
+                "node_modules-guide.md", "vendor/skip.md"):
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(noisy, encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True,
+                   capture_output=True)
+
+    seen = {where.split("`")[1] for _kind, where in lint.loud_emphasis(tmp_path)}
+    assert "web/docs/x.md" in seen and "node_modules-guide.md" in seen
+    assert "vendor/skip.md" not in seen, "무시 대상까지 봤다"
+
+
+def test_both_bold_spellings_count_and_inline_code_does_not() -> None:
+    """`__` 만 쓰면 규칙을 통째로 빠져나갈 수 있었다. 반대로 인라인 코드 안의
+    별표는 문자인데 강조로 세어 마크다운을 설명하는 산문을 거부했다."""
+
+    under = "# t\n\n" + "\n\n".join(f"{n} 번째 __강조__." for n in range(9)) + "\n"
+    assert findings(under), "`__bold__` 가 안 세어졌다"
+
+    assert findings("`**a**` and `**b**`", whole=False) == []
+
+
 def test_a_markdown_file_that_cannot_be_read_is_a_finding(tmp_path: Path) -> None:
     """건너뛰면 "전부 봤다" 가 거짓인 채로 게이트가 초록이 된다."""
 
