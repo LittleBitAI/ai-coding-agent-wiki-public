@@ -690,17 +690,25 @@ _station = mirror.Station(host="claude", poll=mirror.POLL)
 
 
 def _pointed() -> tuple[int, object, str, str]:
-    """Point at the most recent repository if nothing has been chosen yet.
+    """Point somewhere live — if nothing was chosen, or what was chose is gone.
 
-    Listing repositories walks directories and reads the head of each log, so
-    it happens when the mirror tab is first opened rather than when the server
-    starts. Someone who never opens the mirror never pays for it.
+    Two things move the mirror without anyone asking. Nothing has been chosen
+    yet, which is the first time the tab is opened. Or the checkout it was
+    watching has been deleted: a worktree goes, its log stays behind, and a
+    mirror that only asked "is there a log" would sit on a dead file showing
+    the last thing a directory that no longer exists ever said.
+
+    `is_dir` is the cheap half and runs every pass. Listing checkouts is the
+    expensive half — it walks directories, reads the head of each log and asks
+    git which repository each one belongs to — so it runs only when the cheap
+    half already said something is wrong. Someone who never opens the mirror
+    never pays for it.
     """
 
     gen, feed, host, project = _station.now()
-    if project:
+    if project and Path(project).is_dir():
         return gen, feed, host, project
-    found = mirror.repos(host)
+    found = mirror.checkouts(host)
     if found:
         _station.point(host, Path(found[0]["path"]))
     return _station.now()
@@ -708,11 +716,16 @@ def _pointed() -> tuple[int, object, str, str]:
 
 @app.get("/api/mirror/repos")
 def mirror_repos() -> dict:
-    """Every checkout with a session. Both hosts record the real path."""
+    """Every checkout with a session, and which repository each is of.
+
+    Both hosts record the real path, so the list is not a guess — but a
+    worktree's directory name is one. Two repositories each had a worktree
+    called `pollock`, and the picker offered both under that one word.
+    """
 
     _, _, host, project = _pointed()
     return {"here": {"host": host, "project": project},
-            "hosts": {name: mirror.repos(name) for name in sorted(mirror.HOSTS)}}
+            "hosts": {name: mirror.checkouts(name) for name in sorted(mirror.HOSTS)}}
 
 
 class Point(BaseModel):
@@ -730,8 +743,8 @@ def mirror_point(body: Point) -> dict:
 
     if body.host not in mirror.HOSTS:
         raise HTTPException(404, "그런 호스트가 없다")
-    if body.project not in {row["path"] for row in mirror.repos(body.host)}:
-        raise HTTPException(404, "그 저장소의 세션이 없다")
+    if body.project not in {row["path"] for row in mirror.checkouts(body.host)}:
+        raise HTTPException(404, "그 작업트리의 세션이 없다")
     _station.point(body.host, Path(body.project))
     gen, _, host, project = _station.now()
     return {"gen": gen, "host": host, "project": project}

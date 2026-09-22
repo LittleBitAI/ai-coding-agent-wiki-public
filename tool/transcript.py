@@ -12,9 +12,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from census import INJECTED, MAX_HUMAN_CHARS, transcript_dir  # noqa: E402
+from sessions import INJECTED, MAX_HUMAN_CHARS, SESSIONS, logs  # noqa: E402
 
-SESSIONS = Path.home() / ".claude" / "projects"
 MAX_TURN_CHARS = 600   # How much of one utterance to show. A long paste may be cut
 
 
@@ -74,13 +73,17 @@ def read(path: Path) -> dict:
             "size_kb": path.stat().st_size // 1024}
 
 
-def pick(folder: Path, since: dt.datetime, session: str | None) -> list[Path]:
-    if not folder.is_dir():
-        return []
+def pick(files: list[Path], since: dt.datetime, session: str | None) -> list[Path]:
+    """Narrow this checkout's logs to the ones asked for.
+
+    Which files are this checkout's is settled before this — one log directory
+    can hold two of them — so nothing here looks at a directory.
+    """
+
     if session:
-        return sorted(p for p in folder.glob(f"{session}*.jsonl"))
+        return sorted(p for p in files if p.name.startswith(session))
     stamp = since.timestamp()
-    return sorted((p for p in folder.glob("*.jsonl") if p.stat().st_mtime >= stamp),
+    return sorted((p for p in files if p.stat().st_mtime >= stamp),
                   key=lambda p: p.stat().st_mtime)
 
 
@@ -115,8 +118,8 @@ def main() -> int:
     else:
         since = dt.datetime.fromisoformat(args.since)
 
-    folder = transcript_dir(args.project.expanduser().resolve(), SESSIONS)
-    sessions = [read(p) for p in pick(folder, since, args.session)]
+    mine = logs(args.project.expanduser().resolve(), SESSIONS)
+    sessions = [read(p) for p in pick(mine, since, args.session)]
 
     if args.json:
         for s in sessions:

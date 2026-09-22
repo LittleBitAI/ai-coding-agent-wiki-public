@@ -1,4 +1,9 @@
-"""census — the first diagnostic to run when attaching a new project."""
+"""census — the first diagnostic to run when attaching a new project.
+
+Where a session log lives is `sessions.py`'s answer, not this file's. It used
+to be this file's, and the mirror — a live screen with nothing diagnostic
+about it — imported the report generator to find a log.
+"""
 
 from __future__ import annotations
 
@@ -12,39 +17,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+
+from sessions import INJECTED, SESSIONS, folder, logs  # noqa: E402
+
 DEFAULT_MARKERS = HERE / "markers" / "ko.toml"
-
-# Things that arrive in the conversation log in the same place as a person's
-# utterance without a person having typed them. The harness injects these, so
-# the list has nothing to do with language.
-INJECTED = (
-    "<local-command-",
-    "<command-name>",
-    "<command-message>",
-    "<system-reminder>",
-    "<task-notification>",
-    "Caveat: The messages below were generated",
-    "[Request interrupted",
-    "API Error",
-    "Base directory for this skill:",
-    "You have access to browser automation tools",
-    "Goal check-in:",
-    "is still active, and evaluation has been deferred",
-    "This session is being continued from a previous",
-    "A session-scoped Stop hook is now active",
-    # Skill bodies. They arrive as the same record type as a person's
-    # utterance and they are long, so left in they take the whole of "the most
-    # re-entered instruction". Which is what happened.
-    "Approach this as the design lead",
-    "Use this skill whenever you are about to create",
-    "PONYTAIL MODE ACTIVE",
-)
-
-# The list above is always behind — one more skill and one more body leaks
-# through. So there is a length filter as well. A person rarely types this
-# much at once, and the rare time they do it is usually a pasted log rather
-# than an instruction.
-MAX_HUMAN_CHARS = 20_000
 
 
 @dataclass
@@ -77,34 +54,17 @@ class Markers:
         )
 
 
-def transcript_dir(project: Path, root: Path) -> Path:
-    """Claude Code flattens the checkout path into a directory name.
+def human_turns(files: list[Path]) -> list[Turn]:
+    """Of the `type=user` records, only what a person typed. Tool results and
+    injected text are removed.
 
-    `C:\\projects\\demo` becomes `C--projects-demo`: every separator turns into
-    `-`, and the drive's `:` takes a place of its own, which is why there are
-    two hyphens at the front. Rather than guessing at the rule, when nothing
-    matches the real directories are scanned and found by their tail.
+    Files, not a directory. Which files are this checkout's is `sessions.logs`'s
+    answer — one directory can hold two checkouts' sessions, and counting both
+    as one project's is a census of a conversation that never happened.
     """
 
-    flat = re.sub(r"[:\\/]", "-", str(project.resolve()))
-    exact = root / flat
-    if exact.is_dir():
-        return exact
-    # Fallback for an environment where that rule does not hold: find it by
-    # the tail of the name.
-    tail = f"-{project.resolve().name}"
-    for candidate in sorted(root.glob("*")):
-        if candidate.is_dir() and candidate.name.endswith(tail):
-            return candidate
-    return exact
-
-
-def human_turns(directory: Path) -> list[Turn]:
-    """Of the `type=user` records, only what a person typed. Tool results and
-    injected text are removed."""
-
     turns: list[Turn] = []
-    for path in sorted(directory.glob("*.jsonl")):
+    for path in sorted(files):
         for order, line in enumerate(
             path.read_text(encoding="utf-8", errors="replace").splitlines()
         ):
@@ -195,7 +155,7 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description="세션 로그로 무엇이 고장 나는지 센다")
     parser.add_argument("--project", required=True, type=Path)
-    parser.add_argument("--transcripts", type=Path, default=Path.home() / ".claude" / "projects")
+    parser.add_argument("--transcripts", type=Path, default=SESSIONS)
     parser.add_argument("--markers", type=Path, default=DEFAULT_MARKERS)
     parser.add_argument(
         "--governing",
@@ -212,13 +172,15 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    directory = transcript_dir(args.project, args.transcripts)
-    if not directory.is_dir():
-        print(f"세션 로그를 못 찾았다: {directory}", file=sys.stderr)
+    files = logs(args.project, args.transcripts)
+    if not files:
+        directory = folder(args.project, args.transcripts)
+        where = directory if directory.is_dir() else args.transcripts
+        print(f"이 체크아웃의 세션 로그를 못 찾았다: {where}", file=sys.stderr)
         return 2
 
     markers = Markers.load(args.markers)
-    turns = human_turns(directory)
+    turns = human_turns(files)
     if not turns:
         print("사람 발화가 없다. --transcripts 경로를 확인하라.", file=sys.stderr)
         return 2

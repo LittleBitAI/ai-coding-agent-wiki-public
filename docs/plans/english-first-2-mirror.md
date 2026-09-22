@@ -18,8 +18,9 @@ Claude Code와 Codex의 출력을 한국어로 옮겨 찍는다. mirror 담당�
 Orca의 두 번째 셀은 사람이 열며 실행법을 `docs/mirror-setup.md`에 적는다.
 
 - 로그 위치: `~/.claude/projects/<저장소 슬러그>/*.jsonl`.
-  `tool/transcript.py` 가 같은 경로를 이미 안다 (`SESSIONS`, `census.transcript_dir`) —
-  새로 쓰지 말고 그것을 부른다
+  `tool/sessions.py` 가 같은 경로를 이미 안다 (`SESSIONS`, `sessions.folder`) —
+  새로 쓰지 말고 그것을 부른다. 당시에는 `census.transcript_dir` 이었고,
+  미러가 진단 도구를 임포트하게 만든 자리라 뒤에 떼어 냈다
 - 인자 없이 돌리면 이 저장소 슬러그에서 `mtime` 이 가장 최근인 jsonl 을 잡는다.
   `--session <경로>` 로 지정할 수 있다
 - 번역 대상:
