@@ -161,3 +161,25 @@ def test_installed_stop(connected, message, active, blocked):
         "transcript_path": None,
     }, "declared_continuation.py")
     assert (answer.get("decision") == "block") == blocked
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Git Bash 탐색은 Windows 에서만 돈다")
+def test_git_bash_is_found_from_every_copy_of_git_exe(tmp_path, monkeypatch):
+    """Git for Windows 는 git.exe 를 세 곳에 둔다. 한 층만 올라가면 못 찾는다.
+
+    `mingw64/bin/git.exe` 가 PATH 에 걸린 기계에서 실제로 빨갰다 — 한 층 위는
+    `mingw64` 이고 거기엔 `bin/bash.exe` 가 없다. 설치 루트는 세 층 위다.
+    """
+    from setup_agents import hook_shell
+
+    root = tmp_path / "Git"
+    (root / "bin").mkdir(parents=True)
+    (root / "bin" / "bash.exe").write_text("", encoding="utf-8")
+    monkeypatch.delenv("CLAUDE_CODE_GIT_BASH_PATH", raising=False)
+
+    for where in ("cmd/git.exe", "bin/git.exe", "mingw64/bin/git.exe"):
+        copy = root / where
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        copy.write_text("", encoding="utf-8")
+        monkeypatch.setattr(shutil, "which", lambda _name, _at=copy: str(_at))
+        assert hook_shell("claude")[0] == str(root / "bin" / "bash.exe"), where

@@ -34,7 +34,17 @@ def hook_shell(agent):
     git = shutil.which("git")
     bash = os.environ.get("CLAUDE_CODE_GIT_BASH_PATH")
     if not bash and git:
-        bash = str(Path(git).resolve().parents[1] / "bin/bash.exe")
+        # Git for Windows ships git.exe three times -- `cmd/`, `bin/` and
+        # `mingw64/bin/` -- and only the install root holds `bin/bash.exe`.
+        # One level up reaches it from `cmd/` and lands on `mingw64` from the
+        # third, which is the copy PATH points at on a machine that installed
+        # the MinGW tools. So walk up instead of assuming a depth. Three levels
+        # is the deepest of the three layouts and keeps the search inside the
+        # Git install, where a match cannot be WSL's bash.exe.
+        for parent in Path(git).resolve().parents[:3]:
+            if (parent / "bin/bash.exe").is_file():
+                bash = str(parent / "bin/bash.exe")
+                break
     if bash and Path(bash).is_file():
         return [bash, "--noprofile", "--norc", "-c"]
     raise ValueError("이 위키 버전의 Claude hooks는 Git for Windows의 Git Bash가 필요합니다. "
