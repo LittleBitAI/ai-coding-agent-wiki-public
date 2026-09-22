@@ -28,6 +28,33 @@ def test_제목의_파이프는_제목에_남는다():
     assert rows[0].endswith("수정: a|b 를 가른다"), rows[0]
 
 
+def test_공용_상태_한_줄은_기본이_한국어다():
+    """`session_state.report` 하나를 영어로 바꾸려다 Slack 과 웹 인계까지
+    영어가 되는 것을 막는다.
+
+    `branch_line`·`decisions`·`active_page` 는 세 소비자가 나눠 쓴다. 번역을
+    이 함수들 안에 넣으면 에이전트 컨텍스트 하나를 고치는 값으로 사람이 읽는
+    화면 둘이 같이 바뀐다. 그래서 영어는 `report()` 가 명시적으로 고른다.
+    """
+
+    # `tmp_path` 픽스처를 안 쓴다. 이 파일 끝의 직접 실행 러너가 인자 없이
+    # 부르므로, 픽스처를 받으면 pytest 에서만 도는 검사가 된다.
+    import subprocess
+    import tempfile
+
+    from session_state import branch_line
+
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        for args in (["init", "-q"], ["config", "user.email", "t@e.com"],
+                     ["config", "user.name", "t"]):
+            subprocess.run(["git", "-C", tmp, *args], check=True,
+                           capture_output=True, encoding="utf-8", errors="replace")
+
+        assert "워크트리 깨끗" in branch_line(repo)
+        assert "worktree clean" in branch_line(repo, english=True)
+
+
 def test_리모트가_없으면_링크_없이_해시만():
     rows = format_rows(f"abc1234{SEP}수정: 무언가", "")
     assert rows == ["- `abc1234` 수정: 무언가"]

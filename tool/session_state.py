@@ -8,16 +8,22 @@ import json
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import translate  # noqa: E402
 from wikilib import front_matter  # noqa: E402
 
 MAX_PLANS = 2       # 계획 문서를 몇 개까지 볼 것인가
 MAX_ROWS = 8        # 한 계획에서 미완 행 몇 개까지
 MAX_DECISIONS = 4   # 최근 결정 몇 건
+
+# 번역 전체에 주는 시간. 훅 예산 25초 아래에 둔다 — 넘기면 번역이 아니라
+# 주입 전체를 잃는다. 못 끝낸 문자열은 한국어 원문으로 나간다.
+BUDGET = 18.0
 
 
 def run(repo: Path, *args: str) -> str:
@@ -31,14 +37,28 @@ def run(repo: Path, *args: str) -> str:
         return ""
 
 
-def branch_line(repo: Path) -> str:
+def branch_line(repo: Path, english: bool = False) -> str:
+    """기본은 한국어다. 영어는 부르는 쪽이 명시적으로 고른다.
+
+    `slack_brief.standup` 과 `chat.handoff` 가 이 함수를 같이 쓰고, 둘 다
+    사람이 읽는 화면에 그대로 싣는다. 여기서 언어를 바꾸면 에이전트 컨텍스트
+    하나를 고치려다 Slack 과 웹 인계까지 영어가 된다.
+
+    번역기에 안 태운다. 우리가 만드는 고정 문자열이라 영어 표기를 그냥 적으면
+    되고, 세션 시작마다 왕복 하나를 아낀다.
+    """
+
     branch = run(repo, "rev-parse", "--abbrev-ref", "HEAD") or "?"
     dirty = run(repo, "status", "--porcelain")
     ahead = run(repo, "rev-list", "--count", "@{u}..HEAD") if branch != "?" else ""
     bits = [f"`{branch}`"]
     if ahead and ahead != "0":
-        bits.append(f"미푸시 {ahead}")
-    bits.append(f"변경 {len(dirty.splitlines())}개" if dirty else "워크트리 깨끗")
+        bits.append(f"{ahead} unpushed" if english else f"미푸시 {ahead}")
+    if dirty:
+        count = len(dirty.splitlines())
+        bits.append(f"{count} changed" if english else f"변경 {count}개")
+    else:
+        bits.append("worktree clean" if english else "워크트리 깨끗")
     return " · ".join(bits)
 
 
@@ -145,51 +165,104 @@ def doc_catalog(repo: Path) -> str:
         return ""
 
 
+def titled(listing: str) -> tuple[list[str], list[int]]:
+    """`(제목들, 그 제목이 있던 줄 번호)`. 경로는 제목이 아니다.
+
+    목록 전체를 번역기에 넣으면 파일 이름과 디렉터리까지 번역 대상이 된다.
+    코드 펜스로 감싸서 막으려 하면 이번엔 통째로 보호돼 제목도 안 바뀐다.
+    그래서 제목만 뽑아 보내고 경로는 손대지 않는다.
+    """
+
+    rows, at = [], []
+    for n, line in enumerate(listing.splitlines()):
+        if line.startswith("  ") and " — " in line:
+            rows.append(line.split(" — ", 1)[1])
+            at.append(n)
+    return rows, at
+
+
+def retitled(listing: str, rows: list[str], at: list[int]) -> str:
+    lines = listing.splitlines()
+    for n, title in zip(at, rows):
+        lines[n] = lines[n].split(" — ", 1)[0] + " — " + title
+    return "\n".join(lines).replace("(저장소 루트)", "(repo root)")
+
+
 def report(repo: Path) -> str:
-    lines = [
-        "이 저장소에서 지금 어디까지 와 있는지다. 위키가 세션 시작에 한 번 넣는다.",
-        "",
-        f"## 브랜치\n\n{branch_line(repo)}",
-    ]
+    """세션 시작 컨텍스트. **에이전트 입력이므로 영어다.**
+
+    한국어는 이 저장소의 정본으로 남는다 — 커밋 메시지도 `.wiki/decisions/`
+    도 사람이 GitHub 에서 읽으니까. 번역은 그것이 에이전트에게 건너가는
+    **이 한 자리**에서만 일어난다. 읽어 오는 함수들은 한국어 그대로 둔다.
+
+    번역은 한 번에 묶어 보낸다. 문자열마다 따로 기다리면 결정 네 건만으로도
+    24초이고 훅 예산이 25초다 — 그러면 번역이 아니라 주입 전체를 잃는다.
+    마감까지 못 끝낸 것은 한국어 원문으로 조립해 **반드시** 내보낸다.
+    """
+
+    deadline = time.monotonic() + BUDGET
+
     body, stale = active_page(repo)
+    open_plans = [] if body else plans(repo)
+    recent = decisions(repo)
+    listing = doc_catalog(repo)
+    titles, title_at = titled(listing)
+
+    step_rows = [s for _p, steps in open_plans for s in steps]
+    pairs = [t for pair in recent for t in pair]
+    chunks = [[body], step_rows, pairs, titles]
+    flat = [t for chunk in chunks for t in chunk]
+    done = translate.translate(flat, translate.KO_EN, deadline)
+    cut, taken = [], 0
+    for chunk in chunks:
+        cut.append(done[taken:taken + len(chunk)])
+        taken += len(chunk)
+    (body,), step_rows, pairs, titles = cut
+    recent = list(zip(pairs[::2], pairs[1::2]))
+
+    lines = [
+        "Where this repository stands right now. The wiki puts this in once, "
+        "at session start.",
+        "",
+        f"## Branch\n\n{branch_line(repo, english=True)}",
+    ]
     if body:
-        lines.append("\n## 하던 일\n")
+        lines.append("\n## In progress\n")
         lines.append(body)
         if stale:
             lines.append(
-                f"\n**이 목록이 낡았을 수 있다.** `{'`, `'.join(stale)}` 가 더 "
-                "나중에 고쳐졌다. 무엇을 바꿀지 정하기 전에 그 문서를 읽고 "
-                "`.wiki/plan-active.md` 를 맞춰라."
+                f"\n**This list may be stale.** `{'`, `'.join(stale)}` changed "
+                "later than it did. Read those documents and bring "
+                "`.wiki/plan-active.md` into line before deciding what to change."
             )
-    else:
-        open_plans = plans(repo)
-        if open_plans:
-            lines.append("\n## 아직 안 끝난 계획 (표에서 뽑음)\n")
-            for path, steps in open_plans:
-                lines.append(f"`{path.relative_to(repo).as_posix()}`")
-                lines += [f"- {s}" for s in steps]
-                lines.append("")
-            lines.append(
-                "이 목록은 `## 단계` 표의 상태 칸만 본 것이라 취소된 이유도 "
-                "다음 후보도 담지 못한다. 계획 문서를 읽기 전에 무엇을 바꿀지 "
-                "정하지 마라."
-            )
-    listing = doc_catalog(repo)
-    if listing:
-        lines.append("\n## 이 저장소의 문서 전부\n")
+    elif open_plans:
+        lines.append("\n## Plans still open (read off their step tables)\n")
+        taken = 0
+        for path, steps in open_plans:
+            lines.append(f"`{path.relative_to(repo).as_posix()}`")
+            lines += [f"- {s}" for s in step_rows[taken:taken + len(steps)]]
+            lines.append("")
+            taken += len(steps)
         lines.append(
-            "찾을 것이 있으면 여기서 고른 다음 그 파일을 열어라. 본문은 안 실린다."
+            "This only reads the status column of the `## 단계` table, so it "
+            "carries neither why something was cancelled nor what comes next. "
+            "Read the plan document before deciding what to change."
         )
-        lines.append("\n```\n" + listing + "\n```")
+    if listing:
+        lines.append("\n## Every document in this repository\n")
+        lines.append(
+            "Pick from here and open that file. No bodies are loaded."
+        )
+        lines.append("\n```\n" + retitled(listing, titles, title_at) + "\n```")
 
-    recent = decisions(repo)
     if recent:
-        lines.append("\n## 최근 결정 — 다시 뒤집기 전에 이유를 보라\n")
+        lines.append("\n## Recent decisions — read the reason before reversing one\n")
         for title, why in recent:
             lines.append(f"- {title}" + (f" — {why}" if why else ""))
         lines.append(
-            "\n전체는 `.wiki/decisions/` 에 있다. 이미 재 보고 버린 방향을 "
-            "다시 제안하는 것이 가장 비싼 반복이다."
+            "\nThe full records are in `.wiki/decisions/`. Re-proposing a "
+            "direction already weighed and dropped is the most expensive "
+            "repetition there is."
         )
     return "\n".join(lines)
 

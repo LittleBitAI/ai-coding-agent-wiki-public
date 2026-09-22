@@ -100,7 +100,9 @@ def session_entry(python: str, project: str) -> dict:
                     f'"{python}" "{(HERE / "session_state.py").as_posix()}"'
                     f' --project "{project}"'
                 ),
-                "timeout": 15,
+                # 15 였다. `report()` 가 결정·계획·문서 제목을 한 번에 묶어
+                # 번역한다. 묶어도 첫 세션은 캐시가 비어 있어 가장 느리다.
+                "timeout": 25,
                 "statusMessage": "위키: 현재 상태",
             }
         ]
