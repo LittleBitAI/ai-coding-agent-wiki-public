@@ -106,27 +106,24 @@ def parser():
 # gone and `**Rule.**` and `__Rule.__` arrive here identical.
 LABEL = re.compile(r"^[^\n]{1,24}[.:]$")
 
-# HTML's void elements, the whole list from the spec at once rather than a
-# clause per review round. An inline tag is normally scaffolding around text
-# and puts nothing on the page itself, so a bold behind `<span>` still opens
-# its block. These are the exceptions: they render something by themselves,
-# so a bold behind one is no longer the first thing the reader sees.
-VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
-        "meta", "param", "source", "track", "wbr"}
-TAG = re.compile(r"^<\s*([a-zA-Z][-a-zA-Z0-9]*)")
+def newlines(child) -> int:
+    """Source line breaks this token carries inside itself.
 
-
-def standalone(raw: str) -> bool:
-    """Does this inline tag put something on the page by itself?
-
-    The void list and nothing else. A trailing `/>` looks like it should mean
-    the same and does not: HTML has no self-closing syntax for ordinary
-    elements, so `<span/>` opens a span and the bold after it is still inside
-    it — a review round confirmed that against a real HTML parse.
+    Not `content.count("\\n")`. A character reference puts a newline into
+    decoded content that was never in the source — `**a&#10;b**` is one line —
+    and a review round found that false positive. Raw source survives in
+    `html_inline` and nowhere else; an image's alt text is decoded, so what
+    says whether it crossed a line is its own break tokens. A code span's
+    newlines became spaces and cannot be counted here at all, which is exactly
+    what the residue in `scan` is for.
     """
 
-    name = TAG.match(raw)
-    return bool(name) and name.group(1).lower() in VOID
+    if child.type == "html_inline":
+        return child.content.count("\n")
+    return sum(
+        (1 if kid.type in ("softbreak", "hardbreak") else 0) + newlines(kid)
+        for kid in child.children or []
+    )
 
 # Above this share of prose lines, emphasis is no longer marking exceptions.
 # Not taken from the pages in this repo: several of them are already past it,
@@ -208,7 +205,7 @@ def scan(text: str) -> tuple[int, int, list[str], int, int]:
         # token, a token that still carries it (an inline tag written across
         # lines keeps its own), or a code span, which replaced it with a space
         # and is the only one that cannot be counted directly.
-        kept = sum(c.content.count("\n") for c in children if c.content)
+        kept = sum(newlines(c) for c in children)
         folded = max(0, token.map[1] - token.map[0] - 1 - breaks - kept)
         # So which code span ate the rest is still unrecorded, and a bold owns
         # that residue only when every code span in the block is inside it.
@@ -222,14 +219,17 @@ def scan(text: str) -> tuple[int, int, list[str], int, int]:
         # True until something printable has been seen in this block, which is
         # what makes a bold run a label rather than mid-sentence emphasis.
         first = True
+        # False once the block holds something this cannot read -- see the
+        # `html_inline` branch. A block it cannot read is not label-judged.
+        labelled = True
         for child in children:
-            # A newline the bold covers, wherever it is written. Judged off the
-            # same fact `kept` is counted from -- the token still has it -- so
-            # the two cannot drift apart. Hanging this on one token type did
-            # drift: a multi-line inline tag was handled and a multi-line image
-            # was not, and the second was already being subtracted from the
-            # residue, so nothing caught it at all.
-            if child.content and "\n" in child.content:
+            # A newline the bold covers, wherever it is written. Read from the
+            # same function `kept` is summed with, so the two cannot drift
+            # apart. Hanging it on one token type did drift once: a multi-line
+            # inline tag was handled and a multi-line image was not, and the
+            # image was already being subtracted from the residue, so nothing
+            # caught it at all.
+            if newlines(child):
                 for frame in opens:
                     frame["broken"] = True
 
@@ -238,8 +238,8 @@ def scan(text: str) -> tuple[int, int, list[str], int, int]:
                     frame["broken"] = True
                 first = False
             elif child.type == "strong_open":
-                opens.append({"parts": [], "opened": first, "broken": False,
-                              "spans": 0})
+                opens.append({"parts": [], "opened": first and labelled,
+                              "broken": False, "spans": 0})
                 first = False
             elif child.type == "strong_close" and opens:
                 frame = opens.pop()
@@ -253,13 +253,18 @@ def scan(text: str) -> tuple[int, int, list[str], int, int]:
                 if opens:
                     opens[-1]["parts"].append(inner)
             elif child.type == "html_inline":
-                # A tag's source is never label text. Whether it ends the run
-                # of nothing-seen-yet is a separate question, and both blanket
-                # answers were review findings: counting every tag as visible
-                # let `<span>**Rule.**</span>` through, counting none as
-                # visible refused `<img src=x> **Rule.**`.
-                if standalone(child.content):
-                    first = False
+                # A tag's source is never label text. Whether a bold behind one
+                # opens the block is a question this cannot answer, so from
+                # here the block is not judged for labels at all.
+                #
+                # Three rounds went into answering it anyway. Every tag
+                # invisible refused `<img src=x> **Rule.**`; every tag visible
+                # let `<span>**Rule.**</span>` through; the void list said
+                # `<input type=hidden>` renders something, which it does not.
+                # The token stream for a tag that draws and one that does not
+                # is identical, so the answer is not in the parse -- and this
+                # check exists to judge only what is certain.
+                labelled = False
             elif child.content:
                 for frame in opens:
                     frame["parts"].append(child.content)

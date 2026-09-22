@@ -131,24 +131,40 @@ def test_an_inline_tag_is_not_part_of_the_label(tmp_path: Path) -> None:
     assert markdown_emphasis.scan(labelled)[2] == ["규칙."]
     assert blocked(CLEAN.replace("규칙. 훅은", "**<span>규칙.</span>** 훅은"))
 
-    # And with the tag outside the bold. An invisible tag does not make the
-    # bold behind it mid-sentence emphasis, which is how this order slipped
-    # past once the tag was merely kept out of the label text.
-    wrapped = "<span>**규칙.**</span> 훅은 세션을 멈추지 않는다.\n"
-    assert markdown_emphasis.scan(wrapped)[2] == ["규칙."]
-    assert blocked(CLEAN.replace("규칙. 훅은", "<span>**규칙.**</span> 훅은"))
-
-    # But a tag that renders something of its own is content, and the bold
-    # after it is mid-sentence emphasis. Treating every tag as invisible
-    # refused this, which is correct prose.
-    for tag in ("<img src=x>", "<br>", "<input type=text>"):
+    # A tag *before* the bold is a different question, and one the parse
+    # cannot answer: whether the reader sees anything there. Three rounds
+    # went into answering it anyway and each answer was wrong somewhere --
+    # every tag invisible refused the first row, every tag visible let the
+    # second through, the void list called the third visible when it draws
+    # nothing. The token stream is identical in all of them.
+    for tag in ("<img src=x>", "<span>", "<input type=hidden>", "<meta charset=x>",
+                "<br>", "<span/>"):
         after = f"{tag} **규칙.** 훅은 세션을 멈추지 않는다.\n"
         assert markdown_emphasis.scan(after)[2] == [], tag
 
-    # `<span/>` is not one of them. HTML has no self-closing syntax for
-    # ordinary elements, so that opens a span and the bold is inside it --
-    # reading the slash as "closed" made this a miss.
-    assert markdown_emphasis.scan("<span/> **규칙.** 이다.")[2] == ["규칙."]
+    # The block is only unreadable from the tag onward. A label before one
+    # is still a label.
+    both = "**규칙.** 훅은 <span>안</span> 멈춘다.\n"
+    assert markdown_emphasis.scan(both)[2] == ["규칙."]
+
+
+def test_a_character_reference_is_not_a_line_break() -> None:
+    """`&#10;` puts a newline in decoded content that the source never had.
+
+    Reading every token's content for `\\n` caught it and refused a one-line
+    bold. What carries raw source is `html_inline`; an image's alt text is
+    decoded, so its own break tokens are what say it crossed a line.
+    """
+
+    import markdown_emphasis
+
+    for one_line in ("**a&#10;b** 뒤.", "**![a&#10;b](x)** 뒤.",
+                     "**a&#xA;b** 뒤.", "**a&NewLine;b** 뒤."):
+        assert markdown_emphasis.scan(one_line)[1] == 0, one_line
+        assert findings(one_line, whole=False) == [], one_line
+
+    # And the real thing still counts.
+    assert markdown_emphasis.scan("**![alt\ntext](x)** 뒤.")[1] == 1
 
 
 def test_a_code_span_outside_the_bold_does_not_convict_it(tmp_path: Path) -> None:

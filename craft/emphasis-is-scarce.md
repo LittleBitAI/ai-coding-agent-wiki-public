@@ -89,18 +89,22 @@ a code span, which turned it into a space and is the only one that cannot be
 counted directly. What is left over after counting the first two is charged to
 a bold only when every code span in the block is inside it.
 
-A bold holds a line break when a break token is inside it, or when any token
-inside it still carries one — judged off the same fact the counting uses, so
-the two cannot drift apart. Naming one token type instead let a multi-line
-image be subtracted from the residue and then judged by nothing.
+A bold holds a line break when a break token is inside it, or when a token
+inside it carries one from the source — judged off the same function the
+counting uses, so the two cannot drift apart. Naming one token type instead let
+a multi-line image be subtracted from the residue and then judged by nothing.
+A newline in decoded content is not a source newline: `**a&#10;b**` is one
+line, and reading every token's content for one refused it.
 
 An inline tag never joins a label's text, because a label is what the reader
-sees. Whether it ends the run of nothing-seen-yet is a separate question with a
-separate answer: a void element renders something by itself, so a bold behind
-`<img>` is mid-sentence emphasis, while a bold behind `<span>` still opens its
-block. Both blanket answers were review findings. The void list decides it and
-a trailing slash does not — HTML has no self-closing syntax for ordinary
-elements, so `<span/>` opens a span like any other.
+sees. Whether a bold *behind* one opens its block is a question the parse
+cannot answer — the token stream for a tag that draws something and one that
+draws nothing is identical — so from the first inline tag onward a block is not
+judged for labels. Three rounds went into answering it anyway: every tag
+invisible refused `<img src=x> **Rule.**`, every tag visible let
+`<span>**Rule.**</span>` through, and the void list called
+`<input type=hidden>` visible when it renders nothing at all. No page in this
+repository uses inline HTML.
 
 The parser is checked where the wiring is written — `apply.py`, which both
 documented installs go through — and it probes the interpreter the hooks will
@@ -142,6 +146,9 @@ because an unrelated package wanted it.
 - A bold inside a table cell — but the table has to be one. A block of
   pipe-shaped lines with no delimiter row is a paragraph, and CommonMark
   renders its pipes literally, so its emphasis counts like any other.
+- A label in a block that holds inline HTML before it. Whether the reader sees
+  anything where the tag is cannot be read off the parse, and guessing it
+  wrong either refuses correct prose or claims a cover this does not have.
 - Files that are not `.md`. Emphasis in code comments belongs to
   [[comments-carry-why]].
 
