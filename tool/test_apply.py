@@ -40,7 +40,7 @@ LIVED_IN = {
     },
     "model": "opus",
 }
-SCRIPTS = {"korean_progress.py": script_entry(PY, "korean_progress.py", "확인")}
+SCRIPTS = {"english_progress.py": script_entry(PY, "english_progress.py", "확인")}
 
 
 def check(label: str, ok: bool, detail: str = "") -> bool:
@@ -144,6 +144,43 @@ def main() -> int:
     ))
     results.append(check("훅을 새로 안 만든다", len(commands) == 1, str(commands)))
     results.append(check("새 어댑터를 쓴다", "다른프로젝트" in commands[0], commands[0]))
+
+    # A renamed hook. Without this check the old entry stayed in
+    # `settings.json`, and deleting the script failed every tool call with
+    # "can't open file" until the shim went back.
+    old = {"hooks": {"PreToolUse": [script_entry(PY, "korean_progress.py", "옛것")]}}
+    merge(old, [], hook, SCRIPTS)
+    left = [
+        e["command"]
+        for g in old["hooks"]["PreToolUse"]
+        for e in g["hooks"]
+    ]
+    results.append(check(
+        "이름이 바뀐 옛 훅을 지운다",
+        not any("korean_progress.py" in c for c in left),
+        str(left),
+    ))
+    results.append(check(
+        "새 훅은 남긴다",
+        any("english_progress.py" in c for c in left),
+        str(left),
+    ))
+    # Twice has to give the same answer: an upgrade reads an existing install.
+    merge(old, [], hook, SCRIPTS)
+    twice_left = [e["command"] for g in old["hooks"]["PreToolUse"] for e in g["hooks"]]
+    results.append(check("두 번 적용해도 같다", twice_left == left, str(twice_left)))
+
+    # No replacement wired means no removal. Removing it would turn the
+    # enforcement off without saying so.
+    alone = {"hooks": {"PreToolUse": [script_entry(PY, "korean_progress.py", "옛것")]}}
+    from apply import retire
+
+    results.append(check(
+        "새것이 없으면 옛것을 안 지운다",
+        retire(alone, "korean_progress.py", "english_progress.py") == []
+        and len(alone["hooks"]["PreToolUse"]) == 1,
+        str(alone),
+    ))
 
     print()
     if all(results):

@@ -8,97 +8,109 @@ sources_withheld: true
 links: [pick-up-async-results, ask-with-arrow-key-options, agent-delegation]
 ---
 
-# Codex 리뷰 루프 — 파일로 오간다, 터미널은 초인종이다
+# The Codex review loop — files carry it, the terminal is a doorbell
 
-리뷰어는 기존 담당 세션을 재사용한다. 독립 리뷰 요청을 추가 구현 에이전트 생성으로 넓히지
-않는다. 생성 범위는 [[agent-delegation]]을 따른다.
+The reviewer is the session already assigned. A request for an independent
+review does not widen into spawning another implementation agent. What may be
+created is held by [[agent-delegation]].
 
-규칙. 리뷰는 파일로 주고받는다. 지시문은 `{review_dir}/<topic>-round-<n>.md`
-에 쓰고, 터미널로는 `'그 파일을 읽고 리뷰하라'` 한 문장만 보낸다. 결과는 리뷰어가
-`<topic>-round-<n>-result.md` 에 쓴다. 터미널에서 결과를 긁지 마라.
+Rule. Reviews pass through files. The instruction goes in
+`{review_dir}/<topic>-round-<n>.md`, and the terminal receives one sentence:
+`'read that file and review it'`. The reviewer writes the result to
+`<topic>-round-<n>-result.md`. Do not scrape the result off the terminal.
 
-어겼을 때. 라운드가 조용히 사라진다.
-더 나쁜 경우는 **리뷰가 일어난 것처럼 보이는데 아닌 것**이다 — 지시문을 안 읽은
-세션이 "어느 파일?" 이라고 되묻거나, 자기가 보고 있던 것을 리뷰해 돌려준다.
+What goes wrong. The round disappears quietly. Worse is
+**a review that looks like it happened and did not** — a session that never
+read the instruction asks "which file?", or reviews whatever it had open and
+hands that back.
 
-## 반드시 지시문에 들어가는 것
+## What the instruction must contain
 
-- 결과 파일 경로를 첫 절에. "이 파일에 써라, 터미널에는 아무 말도 하지 마라,
-  그 파일이 안 쓰이면 이 라운드는 일어나지 않은 것이다."
-- 워크트리 보호를 *허용* 목록으로. 금지를 먼저 쓰면 그 금지가 예외를 삼켜
-  리뷰가 화면에만 남는다.
-  - 허용: 읽기 · `git log`/`show`/`diff` · `gh pr view`/`diff` · 테스트 실행 ·
-    결과 파일 하나 쓰기
-  - 금지: `checkout`·`switch`·`stash`·`merge`·`rebase`·`reset`·`cherry-pick`·
-    `commit`·`push` · 패키지 설치 · 그 결과 파일 외의 모든 편집
-- 지난 라운드 이후 무엇이 바뀌었나. 커밋 범위와 `git diff --shortstat` 로
-  확인한 크기.
-- 이미 돌린 것. 다시 도출하게 하지 마라.
-- 이전 지적이 각각 무엇이 됐나. 거부한 것과 그 이유까지.
-- 보고 형식과 등급.
+- The result file's path, in the first section. "Write to this file, say
+  nothing on the terminal, and if that file is not written this round did not
+  happen."
+- Worktree protection as an *allow* list. Written as prohibitions first, a
+  prohibition swallows the exception and the review ends up on screen only.
+  - Allowed: reading · `git log`/`show`/`diff` · `gh pr view`/`diff` ·
+    running tests · writing that one result file
+  - Forbidden: `checkout`, `switch`, `stash`, `merge`, `rebase`, `reset`,
+    `cherry-pick`, `commit`, `push` · installing packages · every edit other
+    than that result file
+- What changed since the last round. The commit range and the size confirmed
+  with `git diff --shortstat`.
+- What has already been run. Do not make them derive it again.
+- What became of each earlier finding, including what was rejected and why.
+- The report format and the grades.
 
   ```
-  [P0|P1|P2] 파일:줄 — 무엇이 / 언제 / 왜
+  [P0|P1|P2] file:line — what / when / why
   ```
 
-  | 등급 | 기준 |
+  | Grade | Criterion |
   | --- | --- |
-  | P0 | 데이터 손상·유실, 보안, 크래시, 계약 위반 |
-  | P1 | correctness 결함, 회귀, 이 PR 이 도입한 잘못된 동작 |
-  | P2 | 개선 제안, 스타일, 후속 후보 |
+  | P0 | Data corruption or loss, security, crash, contract violation |
+  | P1 | A correctness defect, a regression, wrong behaviour this PR introduced |
+  | P2 | A suggestion, style, a follow-up candidate |
 
-- 근거 없는 지적을 만들지 말라는 지시. 문제가 없으면 `새 발견 없음` 한 줄.
-- 마지막 줄에 `머지 허용` 또는 `머지 불가 — <이유>`.
+- An instruction not to invent findings without grounds. With nothing wrong,
+  one line: `새 발견 없음`.
+- A last line of `머지 허용` or `머지 불가 — <reason>`.
 
-## 받는 쪽이 지키는 것
+## What the receiving side holds
 
-- 감시를 전송 *전에* 걸어라. 그리고 전송과 감시 사이에 턴을 끝내지 마라.
-→ [[pick-up-async-results]]
-- 경로 하나가 아니라 디렉터리를 봐라. 리뷰어가 옆 이름으로 파일을 쓰면
-  한 경로만 보는 폴링은 영원히 안 끝난다. 이전 라운드에 답한 세션은 지난번
-  경로를 재사용하기도 한다 — 그러면 새 결과가 옛 결과를 덮는다.
-- 결과 파일 첫 줄이 그 라운드를 지목하는지 확인하라.
-- 지적을 사실로 전제하지 마라. 고치기 전에 재현부터. 지적이 짚은 자리만
-  고치고, 그 규칙을 적용할 자리는 따로 세라.
-- P2 는 기본적으로 안 고친다. 라운드 파일 하단 `Deferred P2` 에 적고, 이미
-  적힌 P2 는 새 근거나 severity 변화가 없으면 다음 라운드에 다시 보고하지
-  말라고 지시한다.
-- 동의 못 하는 지적은 근거를 적어 되물어라.
+- Arm the watch *before* sending. And do not end the turn between the send and
+  the watch → [[pick-up-async-results]]
+- Watch the directory, not one path. If the reviewer writes under a
+  neighbouring name, polling one path never finishes. A session that answered
+  an earlier round sometimes reuses the previous path — and then the new
+  result overwrites the old one.
+- Check that the result file's first line names that round.
+- Do not take a finding as fact. Reproduce before fixing. Fix where the
+  finding points, and count separately the places that rule applies to.
+- P2 is not fixed by default. Record it under `Deferred P2` at the bottom of
+  the round file, and instruct that a P2 already recorded is not reported
+  again next round without new grounds or a severity change.
+- A finding that is not agreed with goes back as a question, with grounds.
 
-## 라운드마다
+## Every round
 
-1. 오프라인 게이트를 돌린다: `{gate_cmd}`
-2. 라이브가 있으면 돌리고 결과를 지시문에 싣는다: `{live_cmd}`
-3. 커밋하고 푸시한다. 로컬에만 스무 라운드를 쌓으면 PR 은 리뷰 시작 전
-   상태로 남아 있고, 그건 밖에서 보면 버려진 작업과 구별되지 않는다.
+1. Run the offline gate: `{gate_cmd}`
+2. If there is a live run, run it and carry the result in the instruction:
+   `{live_cmd}`
+3. Commit and push. Twenty rounds piled up locally leave the PR looking
+   exactly as it did before the review started, and from outside that is
+   indistinguishable from abandoned work.
 
-## 라운드가 안 줄면 — 부류부터 가른다
+## When the rounds stop shrinking — sort by family first
 
-지적 수가 라운드마다 비슷하면 리뷰어가 집요한 것이 아니라 수리가 원인에 안 닿고
-있다는 신호다. 다음 라운드를 보내기 전에 지금까지의 지적을 짝지어 표로 만든다.
-한 줄이 `지적 → 내가 한 수리 → 다음 라운드에 나온 것` 이다.
+A similar number of findings each round is not a relentless reviewer; it is a
+signal that the repairs are not reaching the cause. Before sending the next
+round, pair up the findings so far into a table. One row is
+`finding → the repair made → what came back next round`.
 
-원시 목록으로는 안 보인다. 짝을 지어야 부류가 나온다.
+A raw list does not show it. The families only appear once they are paired.
 
-| 부류 | 어떻게 알아보나 | 무엇을 해야 하나 |
+| Family | How to recognise it | What to do |
 | --- | --- | --- |
-| 잘못된 모델 | 한 파일에 지적이 몰리고, 매번 "이 입력도 안 본다" 다 | 그 코드가 무엇을 모형화하는지 다시 정한다 — [[gate-the-exit-not-the-callers]] |
-| 재는 자리 | 같은 값(시간·길이·비용)에 대한 지적이 두 번 온다 | 값의 생애를 따라가 마지막으로 바뀌는 자리를 찾는다 — [[measure-after-the-last-change]] |
-| 주장이 틀림 | 코드는 맞는데 커밋 메시지·주석·시험이 넓게 적혀 있다 | 코드가 아니라 문장과 시험을 고친다 |
-| 알고도 안 함 | 지시문의 "의심하는 자리" 에 적어 둔 것이 발견으로 돌아온다 | 의심을 적었으면 그 라운드에서 재현부터 한다 |
+| The wrong model | Findings cluster in one file and every one is "it does not look at this input either" | Re-decide what that code models — [[gate-the-exit-not-the-callers]] |
+| Where it measures | Two findings arrive about the same value (time, length, cost) | Follow the value's life and find where it changes last — [[measure-after-the-last-change]] |
+| The claim is wrong | The code is right and the commit message, comment or test is written too broadly | Fix the sentence and the test, not the code |
+| Knew and skipped | Something written under "what I suspect" in the instruction comes back as a finding | Having written the suspicion, reproduce it in that round |
 
-앞의 둘이 수렴을 막는다. 나머지 둘은 한 번에 닫힌다.
+The first two are what stops convergence. The other two close in one go.
 
-실제로 한 PR 에서 11건이 원인 넷이었다. 다섯이 모델 하나의 다른 얼굴이었고,
-셋이 재는 자리였고, 나머지 둘이 뒤의 두 부류였다. 진짜로 수리가 만든 새 결함은
-둘뿐이었다 — 나머지는 증상 자리를 기운 것이다.
+In one real PR, eleven findings had four causes. Five were faces of one model,
+three were where it measured, and the last two were the other two families.
+Only two were genuinely new defects the repairs had created — the rest were
+patches on symptom sites.
 
-위의 `지적이 짚은 자리만 고친다` 는 범위의 규칙이지 깊이의 규칙이 아니다.
-넓게 고치지 않는 것과 얕게 고치는 것은 다르고, 그 문장을 깊이에까지 적용한 것이
-그 PR 에서 라운드를 셋으로 늘린 원인이다.
+"Fix where the finding points", above, is a rule about scope, not about depth.
+Not fixing broadly and fixing shallowly are different things, and applying
+that sentence to depth is what turned that PR into three more rounds.
 
-## 끝내는 조건
+## When it ends
 
-P0 와 심각한 P1 에 새 발견이 없고 테스트가 전부 통과하면 끝낸다.
-P2 가 남아 있어도 끝낼 수 있다. 끝나면 `Deferred P2` 를 한 번 정리해
-실행 가치가 있는 것만 PR 코멘트 하나로 남긴다. 사소한 스타일·취향은 폐기한다.
+It ends when P0 and serious P1 have no new findings and every test passes. It
+can end with P2 outstanding. Once it does, go through `Deferred P2` once and
+leave only what is worth doing, as a single PR comment. Minor style and taste
+are discarded.

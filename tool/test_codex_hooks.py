@@ -118,8 +118,12 @@ def test_question_policy_before_agent_decides_to_ask(connected):
     ("git reset --hard", "", True),
     ("sed -i 's/a/b/' README.md", "", True),
     ("cat > README.md", "", True),
-    ("git status", "Check status", True),
-    ("git status", "상태 확인", False),
+    # The rule inverted with `english_progress.py`: Korean in a description is
+    # now what gets denied, and English is what passes. Codex reaches the same
+    # hook through `codex_pretool.py`, so this is where that stays proven for
+    # the other host.
+    ("git status", "Check status", False),
+    ("git status", "상태 확인", True),
 ])
 def test_installed_pretool(connected, command, description, blocked):
     answer = run_hook(connected, "PreToolUse", {

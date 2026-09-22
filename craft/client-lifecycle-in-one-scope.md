@@ -8,39 +8,45 @@ sources_withheld: true
 links: [screen-ownership-before-wiring, diagnose-from-what-ran, comments-carry-why, verify-narrow-then-wide, gate-the-exit-not-the-callers]
 ---
 
-# 새 클라이언트를 들이면 생성·공유·닫기·소유를 같이 설계한다
+# Bringing in a client means designing creation, sharing, closing and ownership
 
-규칙. 리팩터가 풀이나 연결을 든 자원을 코드베이스에 새로 들이면 — SDK 클라이언트,
-세션, 핸들 — 네 질문을 **같은 변경 안에서** 답한다. 하나만 답하고 나머지를 다음
-회차로 미루지 않는다.
+Rule. When a refactor brings a resource holding a pool or a connection into
+the codebase — an SDK client, a session, a handle — answer four questions
+**within the same change**. Do not answer one and push the rest to the next
+round.
 
-| 질문 | 정해야 하는 것 |
+| Question | What has to be decided |
 | --- | --- |
-| 생성 | 누가 **어느 문맥에서** 만드는가. 도는 루프 안인가 밖인가 |
-| 공유 | 무엇을 키로 나눠 주는가. 그 키에 **소유자가 들어 있는가** |
-| 닫기 | 누가 어디서 **무슨 이름으로** 닫는가. 실패하면 그것을 어떻게 아는가 |
-| 소유 | 그 자원은 누구 것인가. 주인이 죽으면 남은 것을 누가 거두는가 |
+| Creation | Who makes it, **in which context**. Inside the running loop or outside it |
+| Sharing | What key hands it out. Does that key **carry the owner** |
+| Closing | Who closes it, where, **under what name**. How is a failure to close noticed |
+| Ownership | Whose resource is it. When the owner dies, who collects what is left |
 
-앞의 답이 뒤의 답을 정한다. 연결 풀은 그것을 만든 루프의 것이므로 닫기의 답이
-소유를 정하고, 소유의 답이 공유를 정한다. 하나씩 답하면 매 답이 앞의 답을
-무효로 만든다. 최종 답이 "공유하지 않는다" 여도 된다. 네 질문에
-답하는 것과 기계를 넷 만드는 것은 다른 일이다.
+Each answer decides the next. A connection pool belongs to the loop that made
+it, so closing decides ownership and ownership decides sharing. Answered one
+at a time, every answer invalidates the one before. "It is not shared" is a
+fine final answer — answering four questions is not the same as building four
+mechanisms.
 
-어겼을 때. 리뷰가 회차마다 인접한 면을 하나씩 찾아 오고, 이번 회차의 수리가 다음
-회차의 결함이 된다. 되돌림이 이어지는 동안 오프라인 스위트는 내내 초록이다.
+What goes wrong. Review finds one adjacent face per round, and this round's
+repair becomes the next round's defect. Through all of it the offline suite
+stays green.
 
-## 검사가 진짜 자원을 안 들면 이 결함군은 안 보인다
+## A check that does not hold the real resource cannot see this family
 
-그래서 이 규칙의 절반은 검사에 있다. 자원을 실제로 든 객체로, 제품이 만드는 것과
-같은 문맥에서 건다. 초록을 확인 없이 믿는 것은 [[diagnose-from-what-ran]] 이
-빨강에 대해 적어 둔 실패와 같은 것이다.
+So half of this rule lives in the checks. Hang them on an object that actually
+holds the resource, in the same context production creates it. Trusting green
+without confirming it is the failure [[diagnose-from-what-ran]] wrote down
+about red.
 
-## 나란히 있는 페이지
+## The page beside it
 
-두 페이지가 말하는 것은 하나다 — 소유는 나중에 붙이는 층이 아니라,
-자원을 들일 때 같이 정하는 답이다.
+Both pages say one thing: ownership is not a layer added later, it is an
+answer decided as the resource comes in.
 
-같은 모양이 나가는 것을 막을 때도 난다. 게이트를 호출자마다 달면 리뷰가 회차마다
-남은 출구를 하나씩 찾아 온다 — [[gate-the-exit-not-the-callers]].
+The same shape appears when stopping something from going out. Put the gate on
+each caller and review finds one remaining exit per round —
+[[gate-the-exit-not-the-callers]].
 
-계약을 바꿨으면 그것을 설명하는 주석까지가 한 벌이다. — [[comments-carry-why]].
+Change a contract and the comment describing it is part of that change —
+[[comments-carry-why]].

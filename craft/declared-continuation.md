@@ -8,36 +8,36 @@ sources_withheld: true
 links: [do-the-whole-instruction, hooks-fail-open, pick-up-async-results]
 ---
 
-# 이어서 하겠다고 적었으면 그 응답에서 이어서 한다
+# Having written that it will continue, continue in that response
 
-규칙. **이번 응답에서 곧바로 하겠다**고 쓴 턴은 도구 호출 없이 끝내지 않는다.
-정말로 사용자 입력이 필요하면 무엇이 필요한지 한 줄로 묻고 끝내라. 약속만
-남기고 멈추지 마라.
+Rule. A turn that says it will do something right now, in this response, does
+not end without a tool call. If user input is genuinely needed, ask in one
+line what is needed and end there. Do not leave the promise and stop.
 
-어겼을 때. **작업이 안 도는 것보다 나쁜 것은 안 도는데 도는 줄 아는 것이다.**
-그 판단을 사용자가 대신하게 되고, 자동화의 값어치가 통째로 사라진다.
+What goes wrong. **Work believed to be running is worse than work not run.**
+The user ends up making that judgement, and the automation is worth nothing.
 
-## 4층 — `tool/declared_continuation.py`
+## Layer 4 — `tool/declared_continuation.py`
 
-Stop 훅이 마지막 어시스턴트 메시지를 보고, 조건 셋이 다 맞을 때만
-`{"decision": "block"}` 으로 되돌린다.
+A Stop hook reads the last assistant message and reverts with
+`{"decision": "block"}` only when every condition holds.
 
-| 보는 것 | 되돌리는 조건 |
+| What it reads | When it reverts |
 | --- | --- |
-| 약속 어구 | `이어서`·`계속`·`바로`·`지금`·`곧` + `하겠습니다` 류 |
-| 미루는 말 | 같은 문장에 `끝나면`·`결과가`·`알림이`·`다음에` 가 **없을 때만** |
-| 도구 호출 | 그 응답에 하나도 없을 때만 |
-| 끝맺음 | 질문(`?`)으로 끝나지 않을 때만 |
+| The promise | `이어서`·`계속`·`바로`·`지금`·`곧` with a `-겠습니다` ending, or a sentence opening `I'll`, `I will`, `Let me` |
+| Deferral | Only when the same sentence has no `끝나면`·`결과가`·`알림이`·`다음에`, and no `once`, `after`, `when`, `waiting for` |
+| Tool calls | Only when that response made none |
+| How it ends | Only when it does not end on a question (`?`) |
 
-`stop_hook_active` 가 참이면 무조건 통과시킨다. 한 번 되돌린 뒤에도 같은 문장이
-남아 있어 무한히 되돌릴 수 있다.
+A true `stop_hook_active` passes unconditionally. The sentence is still there
+after one revert, so without that it could revert forever.
 
-## 판정이 좁아야 하는 이유
+## Why the judgement has to stay narrow
 
-`hooks-fail-open` 의 논지가 여기도 같다:
-강제가 작업을 멈추면 사용자가 통째로 끈다.
+`hooks-fail-open` makes the same argument here: enforcement that stops the
+work is enforcement the user turns off entirely.
 
-## 기다리는 턴은 무엇을 기다리는지 적는다
+## A turn that waits writes down what it is waiting for
 
-되돌리는 대신 적으면 된다: 무엇을 기다리는지, 얼마나 걸리는지, 끝나면
-무엇을 할지. `pick-up-async-results` 가 그쪽 절반이다.
+Instead of being reverted, write it: what is being waited on, how long it
+takes, what happens when it lands. `pick-up-async-results` is that half.

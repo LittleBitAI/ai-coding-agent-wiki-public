@@ -8,43 +8,53 @@ sources_withheld: true
 links: [do-the-whole-instruction, run-inside-this-session]
 ---
 
-# 머지 후 정리 — 시키기 전에 한다
+# Cleanup after a merge — before being told to
 
-규칙. 머지 요청에는 머지 완료 후 정리까지 포함된다. 실제 머지를 확인한 뒤 다음 작업에
-들어가기 전에 아래를 전부 한다. 정리만 따로 승인받거나 다음 턴으로 미루지 않는다.
+Rule. A request to merge includes the cleanup that follows it. After
+confirming the merge actually landed, and before starting the next piece of
+work, do all of the below. Do not seek separate approval for the cleanup and
+do not push it to the next turn.
 
 1. `git fetch origin --prune`
-2. 깨끗하고 사용 중이 아닌 작업 폴더라면 `main` 으로 복귀하고 `git pull --ff-only`.
-   미커밋 변경이나 별도 리뷰 세션이 있는 폴더는 전환하지 않는다.
-3. 머지된 로컬 브랜치를 지운다. squash 머지면 `-d` 가 거절한다 —
-   지우기 전에 해당 PR의 머지 커밋과 내용 포함 여부를 확인한다. 미머지 변경은 보존한다
-4. 원격 브랜치를 확인한다(대개 머지가 이미 지운다)
-5. 서버가 떠 있으면 끈다: `{server_stop}` — **이 세션이 띄운 것만이다.**
-   같은 기계의 다른 프로젝트 서버가 같은 이름·같은 시각으로 보인다.
-   명령줄로 가른다 → [[run-inside-this-session]]
-6. 머지된 작업 트리의 미커밋 변경·음성 자산·런타임 데이터·검증 기록과 공유 의존성을
-   먼저 확인하고 필요한 것은 작업 트리 밖에 보존한다. junction은 대상이 아니라 링크만
-   제거한다. Orca 작업 트리는 Orca로 정리하고, 사용자가 연 독립 리뷰 세션은 유지한다.
-   스크래치를 치운다: `{scratch_dirs}`
-7. 로컬·원격 브랜치와 작업 트리를 다시 조회해 삭제한 것과 남긴 이유를 보고한다.
+2. If the working folder is clean and not in use, return to `main` and
+   `git pull --ff-only`. Do not switch a folder holding uncommitted changes or
+   a separate review session.
+3. Delete the merged local branch. After a squash merge `-d` refuses — before
+   deleting, check that PR's merge commit and confirm the content is in it.
+   Unmerged changes are preserved.
+4. Check the remote branch (the merge has usually deleted it already).
+5. Stop the server if one is up: `{server_stop}`.
+   **Only what this session started.** Another project's server on the same
+   machine looks identical by name and by timestamp. Tell them apart by
+   command line → [[run-inside-this-session]]
+6. In the merged worktree, first check for uncommitted changes, audio assets,
+   runtime data, verification records and shared dependencies, and preserve
+   outside the worktree whatever is needed. Remove the junction link, never
+   its target. Clean up Orca worktrees through Orca, and keep the independent
+   review session the user opened. Clear the scratch: `{scratch_dirs}`
+7. Query local branches, remote branches and worktrees again, and report what
+   was deleted and why anything was kept.
 
-페이지 존재만으로
-완료하지 말고 실제 머지 요청을 주입기에 넣어 본문에 이 규칙이 실리는지 확인한다.
+Do not treat the page existing as the step being done. Put a real merge
+request through the injector and confirm this rule lands in the body.
 
-어겼을 때. 죽은 브랜치가 쌓이고, 서버가 GPU 를 잡은 채 남고, 다음 세션이
-낡은 스크래치를 증거로 읽는다.
+What goes wrong. Dead branches pile up, a server sits holding the GPU, and the
+next session reads stale scratch as evidence.
 
-## 지우기 전에 확인한다
+## Confirm before deleting
 
-squash 머지된 브랜치는 tip 이 `main` 의 조상이 아니라 `git branch -d` 가 거절한다.
-`-D` 로 밀기 전에 내용이 실제로 들어갔는지 본다.
+A squash-merged branch has a tip that is not an ancestor of `main`, so
+`git branch -d` refuses. Before forcing it with `-D`, check the content
+actually landed.
 
 ```bash
 git rev-parse <branch>^{tree}
-git rev-parse <해당-PR-머지-커밋>^{tree}
-git diff --stat <branch> <해당-PR-머지-커밋>
+git rev-parse <that-PR-merge-commit>^{tree}
+git diff --stat <branch> <that-PR-merge-commit>
 ```
 
-두 트리가 같으면 내용 포함을 확인할 수 있다. 다르면 충돌 해결이나 후속 커밋을 검토하고
-원래 브랜치를 bundle 등으로 보존한 뒤 판단한다. 최신 main과 다르다는 사실만으로는
-미머지라고 단정할 수 없다. 삭제 전에 절대경로와 실제 링크 대상을 확인한다.
+Matching trees confirm the content is in. If they differ, review the conflict
+resolution or the follow-up commits, preserve the original branch as a bundle
+or similar, and then decide. Differing from the latest `main` is not by itself
+grounds for calling a branch unmerged. Before deleting, check the absolute
+path and what the link actually points at.

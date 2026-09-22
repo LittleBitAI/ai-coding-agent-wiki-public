@@ -8,83 +8,91 @@ sources_withheld: true
 links: [screen-ownership-before-wiring, ask-with-arrow-key-options, do-the-whole-instruction, run-inside-this-session]
 ---
 
-# 화면은 목적을 따르고, 손질은 순서를 따른다
+# A screen follows its purpose, and polish follows an order
 
-규칙. 화면을 만들라는 말에 **상세 페이지와 대시보드부터 짓지 마라.** 먼저 누가
-무엇을 하러 오는지를 한 줄로 적고, 그 한 줄이 고르게 한다 — 무엇을 한 화면에
-두고 무엇을 미루는가. 스케치가 서면 아래 순서대로 훑는다. 순서를 바꾸지 않고,
-네 번째에서 사용자에게 넘긴다.
+Rule. Asked to build a screen,
+**do not start with a detail page and a dashboard.**
+First write one line saying who comes here and what for, and let that line
+decide what goes on one screen and what waits. Once the sketch stands, walk
+the order below. The order does not change, and the fourth step goes to the
+user.
 
-| # | 무엇을 보나 | 무엇으로 | 통과 기준 |
+| # | What is examined | With | Passes when |
 | --- | --- | --- | --- |
-| 1 | 이 프로젝트의 목적에 맞는 화면 구성 | `DESIGN.md` · `better-layout` | 화면 목록이 목적 한 줄에서 나왔다 |
-| 2 | 패딩·폭·정렬이 일정한가, 버튼이 실제로 불리는가 | 브라우저 (`claude-in-chrome`) | 눈이 아니라 **잰 값**으로 답했다 |
-| 3 | 타이포그래피 위계 | `better-typography` | 단계가 세어지고 쓰임이 안 겹친다 |
-| 4 | 색 배합 | `better-colors` → **사용자에게 선택지로** | 사용자가 골랐다 |
-| 5 | 남은 여백 | 타이포 · 인포그래픽 | 채울 **값**이 있는 자리만 채웠다 |
+| 1 | A screen list that fits this project's purpose | `DESIGN.md` · `better-layout` | The list came out of that one line |
+| 2 | Are padding, width and alignment consistent; do the buttons fire | A browser (`claude-in-chrome`) | Answered with measurements, not with eyes |
+| 3 | Typographic hierarchy | `better-typography` | The steps can be counted and no two share a use |
+| 4 | Colour | `better-colors` → to the user, as options | The user chose |
+| 5 | The whitespace left | Typography · infographics | Only places with a value to put there were filled |
 
-걸음의 구체는 `design-pass` 스킬이 든다. 이 페이지는 왜 그 순서인가를 든다.
+The steps themselves are held by the `design-pass` skill. This page holds why
+that order.
 
-어겼을 때. 되돌리는 단위가 화면이다. 목적을 안 정하고 지으면 상세 페이지와
-대시보드는 나오는데 그 프로젝트가 무엇을 하는 곳인지는 어느 화면에도 안 보인다.
-순서를 바꾸면 앞 걸음을 다시 한다 — 색을 먼저 고르면 레이아웃이 바뀔 때 다시
-고르고, 여백을 먼저 채우면 무엇이 여백이었는지 모르게 된다.
+What goes wrong. The unit of reverting is a screen. Built without settling the
+purpose, a detail page and a dashboard appear and no screen shows what the
+project is for. Change the order and an earlier step gets redone — choose the
+colour first and it is chosen again when the layout moves; fill the whitespace
+first and what was whitespace is no longer knowable.
 
-## 순서가 그 순서인 이유
+## Why that order
 
-- 2번이 3번보다 먼저다. 위계는 화면이 실제로 서 있어야 판정된다. 정렬이
-  어긋난 채로 글자 크기를 고치면 무엇 때문에 이상한지 안 갈린다. 그리고 이
-  걸음의 판정은 소감이 아니라 값이다 — "일정해 보인다" 는 판정이 아니다.
-- 4번은 사용자 차례다. 색은 취향이고 브랜드다. 에이전트가 골라 두면 사용자가
-  다시 고르므로, 후보를 만들어 [[ask-with-arrow-key-options]] 로 넘긴다.
-  선택지마다 라벨이 아니라 결과를 적는다 — 무엇이 강조되고 무엇이 물러나는가.
-- 5번이 마지막이다. 채우는 것은 비어 있음을 확인한 뒤에 한다. 그리고 채울
-  것이 없으면 안 채운다. 자리를 메우려고 만든 숫자는 인포그래픽이 아니다.
+- Step 2 comes before step 3. Hierarchy can only be judged with the screen
+  actually standing. Adjusting sizes while the alignment is off makes it
+  impossible to tell what is wrong. And this step is judged on values, not
+  impressions — "looks consistent" is not a judgement.
+- Step 4 is the user's turn. Colour is taste and it is brand. An agent that
+  picks one has the user pick again, so build candidates and hand them over
+  with [[ask-with-arrow-key-options]]. Each option states the consequence, not
+  the label — what comes forward and what recedes.
+- Step 5 is last. Filling happens after confirming something is empty. And
+  where there is nothing to put, nothing goes in. A number invented to fill
+  space is not an infographic.
 
-다섯을 다 한다. 하나씩 시킬 때까지 기다리지 않는다 — [[do-the-whole-instruction]].
+Do all five. Do not wait to be told one at a time —
+[[do-the-whole-instruction]].
 
-## 어느 스킬을 부르나 — 용도가 정한다
+## Which skill — the use decides
 
-| 일 | 스킬 | 어디 것 |
+| Work | Skill | Whose |
 | --- | --- | --- |
-| 묶기 · 정렬 · 읽는 순서 · 점진적 공개 | `better-layout` | jakub |
-| 타이포 스케일 · 줄바꿈 · 잘림 | `better-typography` | jakub |
-| 팔레트 · 시맨틱 토큰 · 대비 | `better-colors` | jakub |
-| 반경 · 광학 정렬 · 표면 깊이 · 클릭 영역 | `better-ui` | jakub |
-| 접근성 · 키보드 · ARIA | `better-accessibility` | jakub |
-| 버튼 글자 · 오류 문구 · 빈 상태 | `better-writing` | jakub |
-| 위 여섯을 한 번에 | `better-interface` · `interface-review` | jakub |
-| 모션을 새로 만든다 | `animate` | emil |
-| 있는 모션을 평가 · 감사한다 | `review-animations` · `improve-animations` | emil |
-| 모션을 넣을 자리를 찾는다 | `find-animation-opportunities` | emil |
-| 폴리싱의 판단 기준 | `emil-design-eng` · `apple-design` | emil |
-| 시안을 여럿 놓고 고른다 | `prototype` · `variant` | 둘 다 |
+| Grouping · alignment · reading order · progressive disclosure | `better-layout` | jakub |
+| Type scale · wrapping · truncation | `better-typography` | jakub |
+| Palette · semantic tokens · contrast | `better-colors` | jakub |
+| Radius · optical alignment · surface depth · hit areas | `better-ui` | jakub |
+| Accessibility · keyboard · ARIA | `better-accessibility` | jakub |
+| Button text · error copy · empty states | `better-writing` | jakub |
+| All six at once | `better-interface` · `interface-review` | jakub |
+| Building new motion | `animate` | emil |
+| Judging or auditing existing motion | `review-animations` · `improve-animations` | emil |
+| Finding where motion belongs | `find-animation-opportunities` | emil |
+| The judgement behind polish | `emil-design-eng` · `apple-design` | emil |
+| Putting several options side by side | `prototype` · `variant` | Both |
 
-경계는 하나다. 정지한 화면은 jakub, 움직이는 것은 emil.
+One boundary: a still screen is jakub, anything that moves is emil.
 
-모션은 이 다섯 걸음 안에 없다. 움직임을 만들거나 고치는 일이면 이 과정을 돌지
-말고 emil 로 바로 간다 — 다른 일이다.
+Motion is not among these five steps. Building or fixing movement skips this
+process and goes straight to emil — it is different work.
 
-## 값은 `DESIGN.md` 가 갖는다 — 이 페이지는 형태만 든다
+## The values belong to `DESIGN.md` — this page holds only the shape
 
-여기 적힌 것은 순서와 판정 기준이다. 색·글꼴·간격의 실제 값은 프로젝트마다
-다르고, 그 값을 이 페이지에 적으면 다음 프로젝트에서 틀린다. 슬롯이 있는 이유와
-같은 이유다.
+What is written here is the order and the criteria. The actual colours, fonts
+and spacings differ per project, and writing them onto this page makes them
+wrong on the next one. The same reason slots exist.
 
-값은 프로젝트 루트의 `DESIGN.md` 가 갖는다. Google Labs 의 공개 형식이고,
-front matter 에 토큰(`colors` · `typography` · `spacing` · `rounded` ·
-`components`)을, 본문에 그렇게 고른 이유를 담는다.
+The values belong to `DESIGN.md` at the project root. It is Google Labs' open
+format: tokens in the front matter (`colors` · `typography` · `spacing` ·
+`rounded` · `components`), and the reasons in the body.
 
-- 골라 오기 — <https://getdesign.md/>
-- 형식 — <https://github.com/google-labs-code/design.md>
+- Pick one — <https://getdesign.md/>
+- The format — <https://github.com/google-labs-code/design.md>
 
-없으면 1번에서 만들고, 있으면 1번에서 읽는다. 2~5번의 판정은 전부 그 파일과의
-대조다. "페이지마다 다른 파랑" 은 취향 문제가 아니라 대조할 값이 없었다는
-뜻이다.
+If it is missing, make it in step 1; if it exists, read it in step 1. Steps 2
+to 5 are all judged against that file. "A different blue on every page" is not
+a matter of taste, it means there was nothing to judge against.
 
-## 이 페이지가 끝나는 자리
+## Where this page ends
 
-여기까지는 화면이 무엇을 보여 주는가다. 그 화면이 서버에 쓰거나 다시 읽기
-시작하면 정할 것이 셋 더 있고, 그것은 [[screen-ownership-before-wiring]] 이
-든다. 브라우저를 띄우는 자리는 [[run-inside-this-session]] 의 규칙을 그대로
-받는다 — 이 셀 안에서 띄운다.
+This far is what a screen shows. Once that screen writes to a server or reads
+back from it there are three more things to settle, and
+[[screen-ownership-before-wiring]] holds those. Opening a browser takes the
+rule from [[run-inside-this-session]] unchanged — inside this cell.

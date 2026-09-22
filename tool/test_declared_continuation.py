@@ -64,6 +64,24 @@ CASES: list[tuple[str, list[tuple[str, str]], bool, bool]] = [
     # 넓힌 뒤에도 미룸과 질문 종료는 그대로 통과해야 한다.
     ("어미는 넓지만 미룸", [("text", "리뷰 결과가 도착하면 PR 을 올리겠습니다.")], False, False),
     ("서술이지 약속이 아님", [("text", "이 값은 축약 패스를 돌립니다.")], False, False),
+    # After progress reporting flipped to English. Watching only the Korean
+    # endings switches this hook off entirely: an English promise has no ending
+    # to match, it has an opening.
+    ("영어 약속만 남김", [("text", "I'll run the remaining three gates.")], False, True),
+    ("영어 약속 뒤에 도구", [("text", "Let me run the gates."), ("tool", "Bash")], False, False),
+    ("영어 서술은 약속이 아님", [("text", "I ran the gates and all six are green.")], False, False),
+    ("영어지만 미룸", [("text", "I'll open the PR once the review lands.")], False, False),
+    ("영어 질문으로 끝남", [("text", "Which of the two should I take?")], False, False),
+    # Saying it will ask and then not asking is the same failure in English.
+    ("영어로 묻겠다고만 함", [("text", "I'll ask whether to open the PR.")], False, True),
+    (
+        "영어로 묻겠다고 하고 실제로 물음",
+        [("text", "Let me ask which one you want."), ("tool", "AskUserQuestion")],
+        False,
+        False,
+    ),
+    # Handing the turn back is not a promise, and that line ends most turns.
+    ("사용자에게 넘기는 말", [("text", "Six gates are green. Let me know if you want more.")], False, False),
 ]
 
 

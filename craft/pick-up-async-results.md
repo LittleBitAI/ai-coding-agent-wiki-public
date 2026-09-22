@@ -8,25 +8,30 @@ sources_withheld: true
 links: [codex-review-loop, declared-continuation, verify-narrow-then-wide, report-without-stopping]
 ---
 
-# 비동기 결과는 도착하면 곧바로 받는다
+# An async result is picked up the moment it lands
 
-규칙. 답을 기다리는 것을 보낼 때는 보내기 전에 감시를 걸고, 전송과 감시
-사이에서 턴을 끝내지 마라. 감시는 경로 하나가 아니라 디렉터리를 본다.
+Rule. When sending something that will answer back, arm the watch before
+sending, and do not end the turn between the send and the watch. The watch
+looks at a directory, not at one path.
 
-어겼을 때. 상대는 답했는데 아무도 안 읽는다. 사용자가 그것을 발견하고
-알려 줘야 한다 — 즉 자동화의 값어치가 통째로 사라진다.
+What goes wrong. The other side answered and nobody read it. The user has to
+find that and say so — which is the whole value of the automation, gone.
 
-## 지키는 방법
+## How to hold it
 
-- 감시를 먼저 건다. 보내고 나서 걸면 그 사이에 도착한 것을 놓친다.
-- 같은 응답에서 보낸다. 전송과 감시 사이에 턴을 끝내면 다음 턴은 사용자가
-  밀어야 시작된다. 그 "사용자가 밀어야 시작된다" 가 여기 말고 어디서 나는지는
-  [[report-without-stopping]] 이 든다 — 보고하고 멈추는 자리다.
-- 디렉터리를 본다. 상대가 옆 이름으로 파일을 쓰면 한 경로 폴링은 영원히
-  안 끝난다.
-- 끝 조건을 지어내지 마라. 배경 작업의 완료는 완료 알림으로 판정한다.
-  턴 수를 하드코딩하거나 "출력이 멎었다" 로 판정하면 틀린다.
-- 폴링 간격은 기다리는 대상에 맞춘다. 로컬 파일이면 1초, 원격 API 면 30초.
+- Arm the watch first. Armed after the send, it misses whatever arrived in
+  between.
+- Send in the same response. End the turn between send and watch and the next
+  turn only starts when the user pushes it. Where else that "only starts when
+  the user pushes it" comes from is held by [[report-without-stopping]] — the
+  place where reporting replaces progress.
+- Watch the directory. If the other side writes a file under a neighbouring
+  name, polling one path never finishes.
+- Do not invent an end condition. A background task is finished when the
+  completion notice says so. Hard-coding a number of turns, or deciding from
+  "the output stopped", is wrong.
+- Match the interval to what is being waited on: a second for a local file,
+  thirty for a remote API.
 
-그러므로 이 페이지는 절반짜리 해법이다. 나머지 절반은 감시를 거는 것 자체를
-템플릿으로 만들어, 보내는 동작이 감시 없이는 불가능하게 하는 것이다.
+So this page is half a solution. The other half is making the watch itself a
+template, so that sending is impossible without it.

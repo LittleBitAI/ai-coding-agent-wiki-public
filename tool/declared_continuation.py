@@ -25,10 +25,35 @@ _IMMEDIATE = re.compile(rf"(이어서|계속|바로|지금|곧)[^.\n]{{0,40}}\w*
 _BARE = re.compile(rf"\w*{_WILL}[.!]?$")
 
 
+# The same promise in English. The Korean patterns stay: a failed translation
+# still comes out as the Korean original, and this hook has to hold on that
+# path too.
+#
+# Korean is caught by how a sentence ends, English by how one starts. Where the
+# promise sits in the sentence is opposite in the two languages.
+_WILL_EN = r"(?:I['’]?ll|I will|I['’]?m going to|I am going to|[Ll]et me(?! know)|[Ll]et['’]?s)"
+
+_IMMEDIATE_EN = re.compile(
+    rf"\b(?:now|next|then|first|continuing|moving on)\b[^.\n]{{0,40}}\b{_WILL_EN}\b",
+    re.I,
+)
+
+# A sentence that **opens** this way is a promise for this turn. A statement
+# does not open that way: `I ran the tests` does not match, and
+# `I'll run the tests` does.
+_BARE_EN = re.compile(rf"^\s*(?:and\s+|so\s+|okay,?\s+|now\s+)?{_WILL_EN}\b", re.I)
+
+
 class PROMISE:  # noqa: N801 - 기존 호출부가 `PROMISE.search` 를 그대로 쓴다
     @staticmethod
     def search(sentence: str):
-        return _IMMEDIATE.search(sentence) or _BARE.search(sentence.rstrip())
+        clean = sentence.rstrip()
+        return (
+            _IMMEDIATE.search(sentence)
+            or _BARE.search(clean)
+            or _IMMEDIATE_EN.search(sentence)
+            or _BARE_EN.search(clean)
+        )
 
 
 # **묻겠다고 적고 안 묻는 것**이 가장 나쁜 모양이다. 일도 안 하고 질문도 안
@@ -36,9 +61,21 @@ class PROMISE:  # noqa: N801 - 기존 호출부가 `PROMISE.search` 를 그대�
 # 물었어야 하므로, 도구를 하나도 안 불렀다면 되돌린다.
 ASK_PROMISE = re.compile(rf"(여쭙|여쭈|묻|물어보|확인받|승인)\w*{_WILL}")
 
+ASK_PROMISE_EN = re.compile(
+    rf"{_WILL_EN}\s+(?:\w+\s+){{0,2}}"
+    r"(?:ask|check with you|confirm with you|get your|run (?:this|that) by you)",
+    re.I,
+)
+
 # 뒤로 미루는 말. 이것이 같은 문장에 있으면 이번 턴의 약속이 아니다.
 DEFERRED = re.compile(
     r"(끝나면|나오면|도착하면|뒤에|다음에|이후에|기다렸다가|알림이|결과가)"
+)
+
+DEFERRED_EN = re.compile(
+    r"\b(?:once|after|when|as soon as|wait(?:ing)? for|if (?:it|that|you)|"
+    r"in the next turn|next session|later)\b",
+    re.I,
 )
 
 REASON = (
@@ -122,10 +159,11 @@ def verdict(payload: dict, *, codex: bool = False) -> dict | None:
         stripped = sentence.strip()
         if not stripped or not PROMISE.search(stripped):
             continue
-        if DEFERRED.search(stripped):
+        if DEFERRED.search(stripped) or DEFERRED_EN.search(stripped):
             return None
         # 묻겠다고 한 것과 하겠다고 한 것은 되돌릴 때 시킬 일이 다르다.
-        reason = ASK_REASON if ASK_PROMISE.search(stripped) else REASON
+        asked = ASK_PROMISE.search(stripped) or ASK_PROMISE_EN.search(stripped)
+        reason = ASK_REASON if asked else REASON
         return {
             "decision": "block",
             "reason": reason.format(sentence=stripped[:200]),

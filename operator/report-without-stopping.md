@@ -5,42 +5,45 @@ triggers: ["멈추지\\s*마", "왜\\s*(자꾸\\s*)?멈추", "돌리고\\s*있",
 slots: []
 sources: []
 sources_withheld: true
-links: [korean-progress, pick-up-async-results, ask-with-arrow-key-options]
+links: [english-progress, pick-up-async-results, ask-with-arrow-key-options]
 ---
 
-# 보고는 하되 턴을 끝내지 마라
+# Report, but do not end the turn
 
-규칙. **다음에 할 일을 적었으면 같은 응답에서 그것을 시작한다.** 진행 보고는
-계속하면서 하는 것이지, 계속하는 것 대신 하는 것이 아니다.
+Rule. **Having written down what comes next, start it in the same response.**
+A progress report is something done while continuing, not instead of it.
 
-턴을 끝내도 되는 자리는 셋뿐이다.
+There are only three places where ending the turn is right.
 
-| 끝내도 되는 때 | 왜 |
+| When ending is fine | Why |
 | --- | --- |
-| 사용자만 정할 수 있는 결정이 남았다 | 어느 쪽을 골라도 일이 크게 갈린다 — [[ask-with-arrow-key-options]] |
-| 요청한 것이 **전부** 끝났다 | 더 부를 도구가 없다 |
-| 막혔다 | 무엇에 막혔는지를 이름과 이유로 적는다 |
+| A decision only the user can make is left | Either choice sends the work somewhere different — [[ask-with-arrow-key-options]] |
+| Everything asked for is finished | There is no tool left to call |
+| It is blocked | Write down what blocked it, by name and reason |
 
-이 셋이 아니면 도구를 하나 더 부른다. "다음은 ~하겠습니다" 로 끝나는 응답은
-그 자체가 위반의 신호다 — 그 문장을 쓸 수 있다는 것은 다음 도구 호출을 이미
-안다는 뜻이고, 안다면 부르면 된다.
+Anything else, call one more tool. A response ending "next I will …" is itself
+the signal of a violation: being able to write that sentence means the next
+tool call is already known, and if it is known it can be made.
 
-어겼을 때. 사용자가 진행 버튼이 된다. 자율적으로 도는 줄 알고 자리를 비운
-사이 아무것도 안 돌고 있고, 그것을 발견하는 사람도 사용자다. 자동화의 값어치가
-통째로 사라지는 모양이 [[pick-up-async-results]] 와 같다.
+What goes wrong. The user becomes the continue button. They step away
+believing it runs on its own, nothing is running, and they are also the one
+who discovers that. It is the same shape of the automation being worth nothing
+as [[pick-up-async-results]].
 
-## "결과를 공유하라" 는 "멈추라" 가 아니다
+## "Share the result" does not mean "stop"
 
-두 규칙이 함께 성립한다. 보고하지 않고 달리는 것도 위반이고,
-보고하고 멈추는 것도 위반이다. 답은 보고하고 계속하는 것 하나다.
+Both rules hold at once. Running without reporting is a violation, and
+reporting and stopping is a violation. There is one answer: report and carry on.
 
-## 머지·라운드 전송 뒤가 특히 위험하다
+## Right after a merge or a sent round is the dangerous spot
 
-그 자리에서 물을 것은 "보고할 만한가" 가 아니라 "큐에 다음이 있는가" 다.
-있으면 보고를 쓰고, 같은 응답에서 다음 도구를 부른다.
+The question there is not "is this worth reporting" but "is there a next item
+in the queue". If there is, write the report and call the next tool in the
+same response.
 
-## 승인이 필요한 것과 헷갈리지 마라
+## Do not confuse this with what needs approval
 
-푸시·PR 열기·머지는 요청이 있어야 한다. 그것은 끝내도 되는 때의 첫 줄에
-해당하므로 이 규칙과 충돌하지 않는다. 다만 그때도 "승인을 기다립니다" 만 적고
-멈추기 전에, 승인이 필요 없는 남은 일을 먼저 다 한다.
+Pushing, opening a PR and merging all need to be asked for. That falls under
+the first row above, so it does not conflict with this rule. Even then, finish
+everything that does not need approval before writing "waiting for approval"
+and stopping.

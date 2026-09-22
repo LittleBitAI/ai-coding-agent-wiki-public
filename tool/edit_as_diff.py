@@ -29,8 +29,9 @@ WRITERS = (
 # 파서가 필요한 만큼 복잡한 스크립트는 이 규칙이 애초에 막으려는 것이다.
 #
 # 대입은 줄 처음이거나 `;` 뒤다. 줄 처음만 보던 첫 판은 이 규칙이 겨냥한 바로 그
-# 모양을 놓쳤다 -- `python -c "import pathlib; p = pathlib.Path('README.md');
-# p.write_text('x')"` 는 전부 한 줄이고, 힙독 안에 같은 것을 넣어도 마찬가지다.
+# 모양을 놓쳤다 — 아래 한 줄이 통째로 한 줄이고, 힙독 안에 넣어도 마찬가지다.
+#
+#     python -c "import pathlib; p = pathlib.Path('README.md'); p.write_text('x')"
 #
 # ponytail: 리터럴 대입 한 번까지다. `for n in [...]: p = Path(n)` 처럼 인자가
 # 변수면 안 잡힌다. 그 경계를 넘는 것이 파서이고, 파서가 필요할 만큼 복잡한

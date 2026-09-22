@@ -194,6 +194,46 @@ def put_hook(settings: dict, event: str, mark: str, entry: dict) -> list[str]:
     return [f"{event} 훅 추가: {mark}"]
 
 
+# Hook scripts that were renamed: old name on the left, current one on the right.
+#
+# `put_hook` only adds and updates. So when a page renames its script the old
+# entry stays in `settings.json`, and the moment the script is deleted the hook
+# points at a file that is not there — which fails every tool call with "can't
+# open file". That is not a hypothetical; it happened while writing this.
+#
+# Only what this table names gets removed. The test for "is this ours" is the
+# same one `put_hook` uses: the script path inside the command.
+RETIRED = {"korean_progress.py": "english_progress.py"}
+
+
+def retire(settings: dict, gone: str, instead: str) -> list[str]:
+    """Drop an owned entry, but only once its replacement is already wired.
+
+    Removing the old one first would leave enforcement quietly off in between.
+    Running twice has to give the same answer, so an entry already gone is not
+    an error and not a change.
+    """
+
+    groups = settings.get("hooks", {}).get("PreToolUse", [])
+    has_new = any(
+        instead in str(h.get("command", ""))
+        for group in groups
+        for h in group.get("hooks", [])
+    )
+    if not has_new:
+        return []
+
+    changes: list[str] = []
+    for group in list(groups):
+        kept = [h for h in group.get("hooks", []) if gone not in str(h.get("command", ""))]
+        if len(kept) != len(group.get("hooks", [])):
+            changes.append(f"PreToolUse 옛 훅 제거: {gone} → {instead}")
+            group["hooks"] = kept
+        if not group.get("hooks"):
+            groups.remove(group)
+    return changes
+
+
 def merge(
     settings: dict,
     denies: list[str],
@@ -223,6 +263,10 @@ def merge(
         changes += put_hook(settings, "Stop", SYNC_MARK, sync)
     if continuation:
         changes += put_hook(settings, "Stop", CONTINUATION_MARK, continuation)
+    # Wire the new one first, retire the old one after. The other order leaves
+    # a window with no enforcement at all.
+    for gone, instead in RETIRED.items():
+        changes += retire(settings, gone, instead)
     return changes
 
 

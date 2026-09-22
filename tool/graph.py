@@ -67,8 +67,16 @@ def load_pages(project_paths: list[Path] | None = None) -> dict[str, dict]:
             line = line.strip()
             if line.startswith("# ") and not headline:
                 headline = line[2:]
-            elif line.startswith("규칙."):
-                rule = line[3:].strip()
+                continue
+            # Both spellings. While pages are being rewritten in English the
+            # two live side by side, and reading only one leaves that page's
+            # `rule` empty — which takes the map's description and the
+            # `--check` comparison with it.
+            for marker in ("규칙.", "Rule."):
+                if line.startswith(marker):
+                    rule = line[len(marker):].strip()
+                    break
+            if rule:
                 break
         pages[name] = {
             "scope": scope,

@@ -8,28 +8,72 @@ import { useEffect, useRef, useState } from 'react'
 
 import { mountGraph } from '@/graph/force'
 import '@/graph/graph.css'
-import { getGraph, type GraphData } from '@/lib/api'
+import { getGraph, renderAll, type GraphData } from '@/lib/api'
+
+/** The two fields on a node that may be rendered. Nothing else is touched:
+ *  `id` is the slug and the graph's key, and links and `graph.json` find each
+ *  other by that exact string. */
+type Wordy = { headline?: string; rule?: string }
 
 export function WikiMap() {
   const [data, setData] = useState<GraphData | null>(null)
   const [error, setError] = useState('')
+  const [korean, setKorean] = useState(false)
+  const [said, setSaid] = useState<GraphData | null>(null)
+  const [fault, setFault] = useState('')
   const host = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     getGraph()
-      .then(setData)
+      .then((graph) => {
+        setData(graph)
+        // Once the pages are English the default a person wants is Korean.
+        // Before that it would only spend requests rendering Korean as
+        // Korean. The data decides the default, not a setting.
+        const words = (graph.nodes as (typeof graph.nodes[number] & Wordy)[])
+          .map((n) => n.headline ?? '')
+          .filter(Boolean)
+        setKorean(words.length > 0 && !words.some((w) => /[가-힣]/.test(w)))
+      })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
   }, [])
 
-  // 그리는 쪽은 명령형이고 뿌리를 통째로 잡는다. 그래서 데이터가 온 뒤 한 번만
-  // 붙이고, 떠날 때 배치 루프를 멈춘다 — 안 멈추면 화면을 떠나도 계속 돈다.
+  // Headline and the one rule line. Identifiers, links and config values stay.
   useEffect(() => {
-    if (!data || !host.current) return
-    return mountGraph(host.current, data)
-  }, [data])
+    if (!korean || !data || said) return
+    let stale = false
+    const nodes = data.nodes as (typeof data.nodes[number] & Wordy)[]
+    const source = nodes.flatMap((n) => [n.headline ?? '', n.rule ?? ''])
+    renderAll(source)
+      .then((texts) => {
+        if (stale) return
+        setSaid({
+          ...data,
+          nodes: nodes.map((n, i) => ({
+            ...n,
+            headline: texts[i * 2] || n.headline,
+            rule: texts[i * 2 + 1] || n.rule,
+          })),
+        })
+      })
+      .catch(() => !stale && setFault('번역이 실패했다 — 원문으로 그린다'))
+    return () => {
+      stale = true
+    }
+  }, [korean, data, said])
+
+  const shown = korean && said ? said : data
+
+  // The drawing side is imperative and owns its root outright, so it mounts
+  // only once data exists and the layout loop is stopped on the way out.
+  // Unstopped, it keeps running after the screen is gone.
+  useEffect(() => {
+    if (!shown || !host.current) return
+    return mountGraph(host.current, shown)
+  }, [shown])
 
   if (error) return <p className="wikimap-note">지도를 못 읽었다 — {error}</p>
-  if (!data) return <p className="wikimap-note">지도를 읽는 중…</p>
+  if (!data || !shown) return <p className="wikimap-note">지도를 읽는 중…</p>
 
   const injected = data.nodes.filter((n) => n.injected).length
   const budget = data.cap ? `예산 ${data.cap.toLocaleString()}자` : '예산 없음'
@@ -67,6 +111,19 @@ export function WikiMap() {
           노드를 눌러 규칙을 펴고, 끌어서 옮기고, 휠로 확대한다. 크기는 그 규칙이 한
           턴에 싣는 글자수 — 페이지가 느는 것 자체가 비용이다. 색은 가장 세게
           강제되는 층이고, 사다리의 번호 순서와는 다르다.
+        </p>
+
+        <p className="lede">
+          <button
+            type="button"
+            onClick={() => setKorean((on) => !on)}
+            aria-pressed={korean}
+            className="rounded border border-border px-2 py-0.5 text-[12px]"
+            title="제목과 규칙 한 줄만 옮긴다. 슬러그와 설정 값은 그대로다"
+          >
+            {korean ? (said ? '한국어' : '옮기는 중') : '원문'}
+          </button>
+          {fault && <span className="ml-2 text-[12px] text-destructive">{fault}</span>}
         </p>
 
         <div className="controls">

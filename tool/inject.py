@@ -439,8 +439,9 @@ def main() -> int:
     if english:
         blocks.append(english)
     body = "\n\n---\n\n".join(blocks)
-    # 사용자 화면에 그대로 뜨는 한 줄이다. 여기만 한국어로 남는다 —
-    # `operator/korean-progress`.
+    # This one line lands on the person's screen as written. The rule inverted
+    # and this stayed Korean, because the reader here is the person.
+    # `operator/english-progress` holds that boundary.
     note = f"위키 주입: {', '.join(loaded[:6])}" if loaded else "위키: 걸린 규칙 없음"
     if trimmed:
         note += f" · 줄임 {trimmed}장"

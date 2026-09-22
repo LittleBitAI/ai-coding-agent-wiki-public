@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChannelRail } from '@/components/ChannelRail'
 import { Composer } from '@/components/Composer'
 import { Handoff } from '@/components/Handoff'
+import { Mirror } from '@/components/Mirror'
 import { Peek } from '@/components/Peek'
 import { Stream } from '@/components/Stream'
 import { Toolbar } from '@/components/Toolbar'
@@ -31,6 +32,7 @@ export type Msg = {
 }
 
 export const MAP = '__map__' // 채널이 아니라 위키 지도 탭
+export const MIRROR = '__mirror__' // the Korean mirror tab, not a channel
 
 export default function App() {
   const [channels, setChannels] = useState<Channel[]>([])
@@ -56,7 +58,11 @@ export default function App() {
       .then(([list, opts]) => {
         setChannels(list)
         setOptions(opts)
-        setActive((prev) => prev || list[0]?.id || '')
+        // `#mirror` and `#map` name a tab so a launcher can open one directly.
+        // Without it `tool/mirror.cmd` could only land on the chat and leave
+        // the person to find the tab, which is not a launcher.
+        const asked = { '#mirror': MIRROR, '#map': MAP }[location.hash] ?? ''
+        setActive((prev) => prev || asked || list[0]?.id || '')
       })
       .catch(() => setFault('서버가 안 뜬 것 같다 — tool\\chat.cmd'))
   }, [])
@@ -68,7 +74,7 @@ export default function App() {
   // 사용자가 이미 뭔가 쳤으면 덮지 않는다. 채널을 바꾸자마자 보내면 방금 친
   // 말이 빈 기록에 지워졌다 — 실제로 한 번 사라졌다.
   useEffect(() => {
-    if (!active || active === MAP) return
+    if (!active || active === MAP || active === MIRROR) return
     let stale = false
     setMessages([])
     setLegacy([])
@@ -268,6 +274,12 @@ export default function App() {
           /* 오래 `/wiki.html` 을 iframe 으로 띄웠다. 이제 같은 그래프를 여기서
              직접 그린다 — 파이썬이 HTML 을 만들고 그것을 다시 감싸던 겹이 빠진다. */
           <div className="h-full overflow-auto"><WikiMap /></div>
+        ) : active === MIRROR ? (
+          /* The mirror lives here too. It once ran as a single HTML page on a
+             stdlib server on the next port, which meant two sets of tokens,
+             two sets of components and two translation paths to keep in step
+             by hand. */
+          <Mirror />
         ) : (
           <>
             <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-card px-6 py-3">

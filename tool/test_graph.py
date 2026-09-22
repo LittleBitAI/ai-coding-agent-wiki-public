@@ -54,6 +54,32 @@ def test_아티팩트가_축을_선언한다():
     assert [n["id"] for n in data["nodes"]] == ["craft/a"]
 
 
+def test_the_rule_line_is_found_in_either_language():
+    # While pages are rewritten in English the two spellings live side by side.
+    # Reading only one leaves that page's `rule` empty, taking the map's
+    # description and the `--check` comparison with it.
+    root = Path(tempfile.mkdtemp())
+    (root / "craft").mkdir()
+    (root / "craft" / "ko.md").write_text(PAGE, encoding="utf-8")
+    (root / "craft" / "en.md").write_text(
+        PAGE.replace("# 제목", "# A title").replace("규칙. 한 줄.", "Rule. One line."),
+        encoding="utf-8",
+    )
+    # A line that merely contains the word is not the rule line.
+    (root / "craft" / "no.md").write_text(
+        PAGE.replace("규칙. 한 줄.", "이 규칙. 은 문장 가운데다."), encoding="utf-8"
+    )
+
+    import graph as g
+
+    with patch.object(g, "WIKI", root):
+        pages = g.load_pages([])
+
+    assert pages["craft/ko"]["rule"] == "한 줄."
+    assert pages["craft/en"]["rule"] == "One line."
+    assert pages["craft/no"]["rule"] == ""
+
+
 def test_붙은_저장소를_스스로_찾는다():
     # 이름을 손으로 들면 저장소가 늘 때마다 여기를 고쳐야 하고, 그것은 곧 안 고치는 것이다.
     # 어댑터가 없거나 저장소가 아닌 폴더는 빼고, 워크스페이스 설정이 깨져도 그래프는 나와야 한다.

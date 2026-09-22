@@ -40,6 +40,7 @@
     --color-foreground: var(--foreground);
     --color-background: var(--background);
     --color-faint: var(--faint);
+    --color-added: var(--added);
     --radius-sm: calc(var(--radius) * 0.6);
     --radius-md: calc(var(--radius) * 0.8);
     --radius-lg: var(--radius);
@@ -65,6 +66,10 @@
     --accent: #e6e3dd;            /* rule */
     --accent-foreground: #16181d;
     --destructive: #a83a2c;       /* warn */
+    /* The `+` side of a patch. The `-` side borrows `destructive`, but a
+       removed line is a direction, not an error, so it needed a partner.
+       This is the one place the three status colours did not cover. */
+    --added: #2f6b4f;
     --border: #d9d6d0;            /* edge */
     --input: #d9d6d0;
     --ring: #3f6b8f;
@@ -96,6 +101,7 @@
     --accent: #262b32;
     --accent-foreground: #eceae5;
     --destructive: #d9705e;
+    --added: #7fbf9a;
     --border: #2e333b;
     --input: #2e333b;
     --ring: #7fa9c9;
@@ -129,6 +135,7 @@
         --accent: #262b32;
         --accent-foreground: #eceae5;
         --destructive: #d9705e;
+        --added: #7fbf9a;
         --border: #2e333b;
         --input: #2e333b;
         --ring: #7fa9c9;

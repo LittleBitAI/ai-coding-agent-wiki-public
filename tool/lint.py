@@ -369,49 +369,53 @@ def fragile_io(wiki: Path = WIKI) -> list[tuple[str, str]]:
     return found
 
 
-# 한국어에서 `쓰는 것`·`없을 때`·`한 줄` 은 띄어 쓰되 한 호흡이다. 그 사이가
-# 줄바꿈이면 읽는 쪽이 두 번 읽는다. 폭 상한에 맞추다 여기를 끊은 자리가
-# 네 저장소에 있었고, 한글 주석 줄의 61%·54%가 표시폭 70~79칸에 몰려 있었다.
+# This replaced a Korean rule that looked for an adnominal ending followed by a
+# bound noun (`쓰는 것`, `없을 때`, `한 줄`) — a pair written with a space that
+# is one breath, and unreadable split. English has no such pair.
 #
-# 뒷말은 앞을 좁게 본다. `것` 은 그 글자로 시작하는 다른 낱말이 없어 그냥 두지만,
-# `수`·`때`·`데` 는 `수집`·`때문에`가 아닌 것을 조사로 갈라야 한다. 넓게 잡으면
-# `채우는 / 자리` 같은 평범한 수식-피수식 줄바꿈까지 짚고, 그건 판단이다.
-BOUND_NOUN = re.compile(
-    r"^(?:것"
-    r"|수(?=[\s가는도를]|$)"
-    r"|때(?=문|만|는|가|에|도|까지|$)"
-    r"|데(?=만|는|가|에|다|서|$)"
-    r"|뿐(?=[\s이만]|$)"
-    r"|만큼(?=[\s은는이]|$)"
-    r"|듯(?=[\s이하]|$)"
-    r"|터(?=[\s이는]|$))"
+# The first English version tried the obvious translation: a line ending on an
+# article, a preposition, a conjunction or an auxiliary. It found 437 places in
+# 1,515 line pairs. Almost none were defects — ending a line on `the` is
+# ordinary typesetting, and a check at 29% is not a check, it is a thing people
+# switch off.
+#
+# Measuring what actually cannot survive a line break left two shapes, and both
+# are about a span rather than a word:
+#
+#   - an inline code span cut in half. `a` and `b` on separate lines is not one
+#     span any more, and in the source it reads as two broken ones. Three in
+#     this repository, two of them written the same afternoon
+#   - a number parted from its unit: `21` on one line and `pages` on the next
+#
+# Neither needs judgement, which is why they can be counted.
+UNIT = re.compile(
+    r"^(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?"
+    r"|bytes?|chars?|characters?|lines?|rows?|columns?|pages?|files?"
+    r"|rounds?|turns?|times?|places?|cases?|items?|per)\b",
+    re.I,
 )
-COUNTER_MOD = re.compile(r"(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉|열|몇|여러|\d+)$")
-COUNTER = re.compile(r"^(?:줄|번|개|장|건|칸|가지|쪽|권|명)(?=[\s으로은는이가도만짜]|$)")
+BARE_NUMBER = re.compile(r"^\d[\d,.]*$")
 
 
-def ends_adnominal(word: str) -> bool:
-    """마지막 글자의 받침이 ㄴ·ㄹ 인가. 관형형은 전부 그렇게 끝난다.
+def orphan_tail(line: str) -> bool:
+    """Does this line end mid-span, with nothing able to close it?
 
-    `굳은`·`쓰는`·`없을`·`만든` 이 한 줄로 걸린다. 낱자를 나열하는 정규식으로는
-    `만든` 을 못 잡는다 — `만들 + ㄴ` 이 한 글자로 합쳐져 있어서, 봐야 하는 것이
-    낱자가 아니라 받침이기 때문이다.
+    Backtick parity, not a word list. An odd count means a span opened here and
+    has to reach the next line to close, and that is the break this catches.
     """
 
-    if not word:
-        return False
-    code = ord(word[-1]) - 0xAC00
-    return 0 <= code < 11172 and code % 28 in (4, 8)
+    return line.count("`") % 2 == 1
 
 
 def splits_a_phrase(before: str, after: str) -> bool:
-    """앞 줄의 마지막 낱말과 뒷 줄의 첫 낱말이 갈라놓으면 안 되는 짝인가."""
+    """Do these two lines belong on one? `before` and `after` are whole lines."""
 
-    before = before.rstrip("`*_")
-    after = after.lstrip("`*_(")
-    if ends_adnominal(before) and BOUND_NOUN.match(after):
+    if not before.strip() or not after.strip():
+        return False
+    if orphan_tail(before) and "`" in after:
         return True
-    return bool(COUNTER_MOD.search(before) and COUNTER.match(after))
+    tail, head = before.split()[-1], after.split()[0]
+    return bool(BARE_NUMBER.match(tail.strip("`*_")) and UNIT.match(head.strip("`*_,.")))
 
 
 def prose_lines(path: Path) -> list[tuple[int, str]]:
@@ -464,11 +468,11 @@ def prose_lines(path: Path) -> list[tuple[int, str]]:
 
 
 def broken_wraps(wiki: Path = WIKI) -> list[tuple[str, str, str]]:
-    """폭에 맞추려고 한 호흡을 갈라 놓은 자리. `(어디, 앞말, 뒷말)`.
+    """Where a line break split a phrase. `(where, before, after)`.
 
-    페이지 산문도 같이 본다. 규칙을 담은 문서가 그 규칙을 어기고 있던 자리가
-    실제로 다섯이었고, 그중 하나는 이 위키가 어떻게 끊어야 하는지 설명하는
-    문단이었다. 검사가 자기를 못 보는 자리는 오래 산다.
+    Page prose is read too. There were five places where the document holding
+    a rule broke that rule, and one of them was the paragraph explaining how
+    this wiki wraps. A place a check cannot see itself lives a long time.
     """
 
     targets = sorted((wiki / "tool").glob("*.py"))
@@ -481,12 +485,16 @@ def broken_wraps(wiki: Path = WIKI) -> list[tuple[str, str, str]]:
         for (number, first), (following, second) in zip(rows, rows[1:]):
             if following != number + 1:
                 continue
-            before, after = first.split(), second.split()
-            if not before or not after:
+            if not first.split() or not second.split():
                 continue
-            if splits_a_phrase(before[-1], after[0]):
+            # Whole lines, not the two words. Backtick parity is a property of
+            # the line, and the word-level version of this silently counted
+            # the tick that closed a span as one that opened it.
+            if splits_a_phrase(first, second):
                 where = path.relative_to(wiki).as_posix()
-                found.append((f"{where}:{number}", before[-1], after[0]))
+                found.append(
+                    (f"{where}:{number}", first.split()[-1], second.split()[0])
+                )
     return found
 
 

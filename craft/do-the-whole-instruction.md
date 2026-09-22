@@ -16,64 +16,70 @@ sources_withheld: true
 links: [after-merge-cleanup, declared-continuation, comments-carry-why]
 ---
 
-# 시킨 것을 끝까지 한다 — 나머지를 다시 시키게 하지 마라
+# Do the whole instruction — do not make them ask for the rest
 
-규칙. 지시가 여러 항목이면 전부 한다. 하나가 막히면 나머지를 다 하고,
-막힌 것을 이름과 이유로 말한다. 범위를 조용히 줄이지 않는다.
+Rule. When an instruction has several items, do all of them. If one is
+blocked, finish the others and name what was blocked and why. Never narrow the
+scope quietly.
 
-절반을 하고 멈추면 사용자가 나머지를 찾아
-다시 시켜야 하고, 그건 시킨 사람이 결과를 검사해야 한다는 뜻이다.
+Stopping halfway makes the user find the remainder and ask again, which means
+the person who gave the instruction is now the one inspecting the result.
 
-어겼을 때. 왕복이 두 배가 된다. 그리고 사용자가 "이번엔 뭘 빠뜨렸나" 를
-매번 확인하게 되므로, 자동화의 값어치가 사라진다.
+What goes wrong. The round trips double. And because the user has to check
+"what got left out this time" on every turn, the automation stops being worth
+having.
 
-## 한 발화가 둘을 시키면 둘 다 그 턴에 답한다
+## One utterance asking two things gets both answered in that turn
 
-지시가 여러 항목인 것은 목록일 때만이 아니다. 한 발화가 `그리고`·`또한`·`그 다음`
-으로 두 번째를 열면 그것도 여러 항목이다. 흔한 모양은 **일 하나와 질문 하나**다.
+An instruction is not multi-item only when it is a list. A sentence that opens
+a second thing with `그리고`, `또한` or `그 다음` is multi-item too. The
+common shape is one task and one question.
 
-일을 하고 질문을 안 남긴다. 질문에 답하고 일을 다음 턴으로 미루지 않는다.
-둘 다 그 턴 안에서 끝낸다. 일이 길면 답을 먼저 한 줄로 주고 일을 이어간다 —
-답을 일 뒤로 미루면 사용자가 그 턴을 읽고 다시 물어야 한다.
+Do not do the task and leave the question. Do not answer the question and push
+the task to the next turn. Both finish in the same turn. When the task is
+long, give the answer in one line first and then continue — an answer placed
+after the work makes the user read the turn and ask again.
 
-## 나란히 있는 실패 — 멈추지 말아야 할 자리에서 멈춤
+## The neighbouring failure — stopping where stopping is wrong
 
-할 일이 남았는데 보고하고 멈추는 것이 부분 수행의 다른 얼굴이다. 보고는
-진행을 대신하지 않는다.
+Reporting and stopping with work still to do is the same failure wearing
+another face. A report does not stand in for progress.
 
-## 고칠 자리를 셀 때 빠지는 것 — 주석
+## What gets missed when counting the places to fix — comments
 
-한 함수를 고치면 그 함수를 설명하던 주석까지가 한 벌이다. 코드만 고치고
-주석을 두고 오면 그 주석은 이제 없는 동작을 설명하는 문장이고, 다음 사람은
-그것을 사실로 읽는다. 무엇을 남기고 무엇을 지우는지는
-[[comments-carry-why]] 가 든다.
+Changing a function and the comment that described it are one change. Fix the
+code and leave the comment and that comment is now a sentence describing
+behaviour that no longer exists, which the next person reads as fact. What to
+keep and what to remove is held by [[comments-carry-why]].
 
-## 구별해야 하는 것
+## What has to be told apart
 
-멈추는 것이 맞는 자리가 있다.
+There are places where stopping is correct.
 
-- 사용자만 정할 수 있는 판단 → [[ask-with-arrow-key-options]]
-- 되돌리기 어렵거나 바깥으로 나가는 동작 (푸시·머지·배포·삭제)
-- 어느 가정으로 진행해도 위험하거나 틀리면 결과물이 무의미해지는 자리
+- A judgement only the user can make → [[ask-with-arrow-key-options]]
+- An action that is hard to reverse or goes outward (push, merge, deploy, delete)
+- A place where proceeding on any assumption is unsafe, or makes the result
+  worthless if the assumption is wrong
 
-그 셋이 아니면 계속한다. 나머지는 판단해서 하고, 무엇을 가정했는지 말한다.
+Anything else continues. Decide the rest, and say what was assumed.
 
-셋 다 "그 다음 걸음이 되돌릴 수 없거나 내 것이 아닌가" 를 묻는다. 게이트를
-돌리는 것, 검사를 읽는 것, 로그를 파는 것, 재현 회차를 한 번 더 도는 것은 전부
-되돌릴 수 있고 전부 내 것이다. 그러니 멈출 자리가 아니다.
+All three ask the same question: is the next step irreversible, or is it not
+mine? Running a gate, reading a check, digging through a log, doing one more
+reproduction run — all reversible, all mine. None of them is a place to stop.
 
-묻겠다고 적고 안 묻는 것이 이 실패의 최악형이다. 일도 안 했고 질문도 안
-남겼으므로, 사용자는 내가 무엇을 기다리는지조차 알 수 없다. 물을 것이 있으면
-**그 턴에서 실제로 묻는다** — 선택지로 내되, 답이 없어도 할 수 있는 일은 먼저
-하고 묻는다.
+Writing that it will ask and then not asking is the worst form of this. No
+work was done and no question was left, so the user cannot even tell what is
+being waited on. If there is something to ask, **ask in that turn** — as
+options, and with whatever does not depend on the answer already finished.
 
-## 훅이 이것을 되돌린다
+## A hook reverts this
 
-`tool/declared_continuation.py` 가 Stop 훅으로 이 모양을 막는다. 마지막 메시지가
-이번 턴의 약속으로 끝나고 도구 호출이 하나도 없으면 되돌리고, 되돌림 사유에 위
-"멈춰도 되는 자리 셋" 을 그대로 적어 준다.
+`tool/declared_continuation.py` blocks the shape as a Stop hook. If the last
+message ends on a promise for this turn and not one tool was called, it
+reverts, and the reason it gives back is the three places above, verbatim.
 
-지금은 어미
-`-겠습니다`/`-겠다`/`-겠음` 자체를 보고, 묻겠다는 약속은 따로 잡아 다른 사유를
-낸다. 짧은 목록은 반드시 바깥이 있고 그 바깥이 다음 사고다 —
-[[hooks-fail-open]] 이 같은 문장을 자기 범위에 대해 적어 두었다.
+It reads the Korean endings `-겠습니다`, `-겠다`, `-겠음` and the English
+openings that carry the same promise, and it catches a promise to ask
+separately so it can give a different reason. A short list always has an
+outside, and that outside is the next incident — [[hooks-fail-open]] wrote the
+same sentence about its own scope.

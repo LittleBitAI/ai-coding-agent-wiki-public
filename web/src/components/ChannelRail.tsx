@@ -1,7 +1,7 @@
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import type { Channel } from '@/lib/api'
-import { MAP } from '@/App'
+import { MAP, MIRROR } from '@/App'
 
 type Props = {
   channels: Channel[]
@@ -67,6 +67,19 @@ export function ChannelRail({ channels, active, busy, onPick, onReset }: Props) 
         <div className="font-heading text-[13.5px] font-semibold">위키 지도</div>
         <div className="mt-0.5 text-[11.5px] leading-snug text-muted-foreground">
           페이지·주입 비용·공동 주입을 그림으로
+        </div>
+      </button>
+
+      <button
+        onClick={() => onPick(MIRROR)}
+        className={cn(
+          'mx-2 mb-2 rounded-md px-2.5 py-2 text-left transition-colors hover:bg-sidebar-accent',
+          active === MIRROR && 'bg-sidebar-accent',
+        )}
+      >
+        <div className="font-heading text-[13.5px] font-semibold">한국어 미러</div>
+        <div className="mt-0.5 text-[11.5px] leading-snug text-muted-foreground">
+          저장소를 골라 그 세션을 한국어로
         </div>
       </button>
 

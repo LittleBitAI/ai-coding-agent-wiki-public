@@ -1,5 +1,5 @@
 {
-  "note": "tool/translate.py --check 가 읽는다. 번역한 문서마다 한 줄. 2단계 pages 걸음이 채운다. output=산출물 경로, kind=translation|rewrite|new, source=원문 경로, commit=번역 직전의 40자리 전체 SHA. rewrite 만 allow 로 보호 구간을 면제할 수 있고 그때는 why 가 필요하다. 면제는 그 종류 하나에만 걸리고 나머지는 계속 대조한다.",
+  "note": "tool/translate.py --check 가 읽는다. 번역한 문서마다 한 줄. output=산출물 경로, kind=translation|rewrite|new, source=원문 경로, commit=번역 직전의 40자리 전체 SHA. rewrite 만 allow 로 보호 구간을 면제할 수 있고 그때는 why 가 필요하다. 면제는 그 종류 하나에만 걸리고 나머지는 계속 대조한다.",
   "entries": [
     {
       "output": "craft/emphasis-is-scarce.md",
@@ -7,9 +7,163 @@
       "why": "처음부터 영어로 썼다. 대조할 한국어 원문이 없다."
     },
     {
-      "output": "craft/measure-after-the-last-change.md",
+      "output": "operator/english-progress.md",
       "kind": "new",
-      "why": "2단계에서 영어로 옮긴다. 이 PR 에서 한국어로 새로 썼으므로 대조할 이전 판이 없다."
+      "why": "korean-progress 를 대체하며 규칙이 뒤집혔다. 번역이 아니라 새 페이지이므로 대조할 원문이 없다."
+    },
+    {
+      "output": "craft/client-lifecycle-in-one-scope.md",
+      "kind": "rewrite",
+      "source": "craft/client-lifecycle-in-one-scope.md",
+      "commit": "4cda3ddd75bfb8aba93adeaec1b39ae068ebeb78"
+    },
+    {
+      "output": "craft/comments-carry-why.md",
+      "kind": "rewrite",
+      "source": "craft/comments-carry-why.md",
+      "commit": "4cda3ddd75bfb8aba93adeaec1b39ae068ebeb78",
+      "allow": ["code"],
+      "why": "줄바꿈 절이 한국어 관형형·의존명사(`쓰는 것`·`없을 때`·`한 줄`) 를 예시로 들었다. 영어에는 그 문제가 없으므로 줄 끝에 남는 관사·전치사(`the`·`of`·`and`·`to`·`is`) 로 다시 썼다. 명령·경로 스팬은 한 개도 안 사라졌다."
+    },
+    {
+      "output": "craft/declared-continuation.md",
+      "kind": "rewrite",
+      "source": "craft/declared-continuation.md",
+      "commit": "4cda3ddd75bfb8aba93adeaec1b39ae068ebeb78",
+      "allow": ["code"],
+      "why": "판정 표에 영어 약속 어구(`I'll`·`I will`·`Let me`) 와 영어 미룸 어구를 더했다. 한국어 어미 스팬은 그대로 남는다."
+    },
+    {
+      "output": "craft/destructive-git-guards.md",
+      "kind": "rewrite",
+      "source": "craft/destructive-git-guards.md",
+      "commit": "4cda3ddd75bfb8aba93adeaec1b39ae068ebeb78"
+    },
+    {
+      "output": "craft/diagnose-from-what-ran.md",
+      "kind": "rewrite",
+      "source": "craft/diagnose-from-what-ran.md",
+      "commit": "4cda3ddd75bfb8aba93adeaec1b39ae068ebeb78"
+    },
+    {
+      "output": "craft/do-the-whole-instruction.md",
+      "kind": "rewrite",
+      "source": "craft/do-the-whole-instruction.md",
+      "commit": "4cda3ddd75bfb8aba93adeaec1b39ae068ebeb78"
+    },
+    {
+      "output": "craft/error-names-the-symptom-site.md",
+      "kind": "rewrite",
+      "source": "craft/error-names-the-symptom-site.md",
+      "commit": "4cda3ddd75bfb8aba93adeaec1b39ae068ebeb78"
+    },
+    {
+      "output": "craft/gate-the-exit-not-the-callers.md",
+      "kind": "rewrite",
+      "source": "craft/gate-the-exit-not-the-callers.md",
+      "commit": "4cda3ddd75bfb8aba93adeaec1b39ae068ebeb78",
+      "allow": ["code"],
+      "why": "`sha256:앞자리` 가 `sha256:<prefix>` 로 바뀌었다. 자리표시자 이름이 한국어였던 자리다."
+    },
+    {
+      "output": "craft/hooks-fail-open.md",
+      "kind": "rewrite",
+      "source": "craft/hooks-fail-open.md",
+      "commit": "4cda3ddd75bfb8aba93adeaec1b39ae068ebeb78",
+      "allow": ["front_matter", "code"],
+      "why": "front matter 의 `links` 가 korean-progress → english-progress 로 따라왔다. code 는 산문이 인용하는 오류 문구가 영어 문장 안으로 들어가며 스팬 경계가 바뀐 것이고, 명령·경로는 그대로다."
+    },
+    {
+      "output": "craft/measure-after-the-last-change.md",
+      "kind": "rewrite",
+      "source": "craft/measure-after-the-last-change.md",
+      "commit": "4cda3ddd75bfb8aba93adeaec1b39ae068ebeb78",
+      "allow": ["code"],
+      "why": "`지적이 짚은 자리만 고친다` 라는 한국어 인용이 영어 인용으로 바뀌었다. 도구 이름과 필드 이름은 그대로다."
+    },
+    {
+      "output": "craft/pick-up-async-results.md",
+      "kind": "rewrite",
+      "source": "craft/pick-up-async-results.md",
+      "commit": "4cda3ddd75bfb8aba93adeaec1b39ae068ebeb78"
+    },
+    {
+      "output": "craft/screen-follows-the-purpose.md",
+      "kind": "rewrite",
+      "source": "craft/screen-follows-the-purpose.md",
+      "commit": "4cda3ddd75bfb8aba93adeaec1b39ae068ebeb78"
+    },
+    {
+      "output": "craft/screen-ownership-before-wiring.md",
+      "kind": "rewrite",
+      "source": "craft/screen-ownership-before-wiring.md",
+      "commit": "4cda3ddd75bfb8aba93adeaec1b39ae068ebeb78",
+      "allow": ["code"],
+      "why": "`내 세대인가` 라는 한국어 질문 인용이 영어 문장으로 바뀌었다. `alive` 같은 식별자는 그대로다."
+    },
+    {
+      "output": "craft/verify-narrow-then-wide.md",
+      "kind": "rewrite",
+      "source": "craft/verify-narrow-then-wide.md",
+      "commit": "4cda3ddd75bfb8aba93adeaec1b39ae068ebeb78"
+    },
+    {
+      "output": "operator/after-merge-cleanup.md",
+      "kind": "rewrite",
+      "source": "operator/after-merge-cleanup.md",
+      "commit": "4cda3ddd75bfb8aba93adeaec1b39ae068ebeb78",
+      "allow": ["fence", "code"],
+      "why": "bash 울타리 안의 자리표시자 `<해당-PR-머지-커밋>` 이 `<that-PR-merge-commit>` 이 됐다. 실행되는 명령(`git rev-parse`·`git diff --stat`) 은 그대로다."
+    },
+    {
+      "output": "operator/agent-delegation.md",
+      "kind": "rewrite",
+      "source": "operator/agent-delegation.md",
+      "commit": "4cda3ddd75bfb8aba93adeaec1b39ae068ebeb78",
+      "allow": ["code"],
+      "why": "셀 이름을 굵게에서 백틱으로 옮겼다 — `sol`·`astra` 는 식별자다. `orca terminal list` 와 `spawn_agent` 는 그대로다."
+    },
+    {
+      "output": "operator/ask-with-arrow-key-options.md",
+      "kind": "rewrite",
+      "source": "operator/ask-with-arrow-key-options.md",
+      "commit": "4cda3ddd75bfb8aba93adeaec1b39ae068ebeb78",
+      "allow": ["front_matter", "wikilink"],
+      "why": "`links` 와 본문 링크가 korean-progress → english-progress 로 따라왔다. 페이지 이름이 바뀌었으므로 가리키는 쪽도 바뀐다."
+    },
+    {
+      "output": "operator/codex-review-loop.md",
+      "kind": "rewrite",
+      "source": "operator/codex-review-loop.md",
+      "commit": "4cda3ddd75bfb8aba93adeaec1b39ae068ebeb78",
+      "allow": ["fence", "code"],
+      "why": "보고 형식 울타리의 `파일:줄 — 무엇이 / 언제 / 왜` 가 영어가 됐다. 리뷰어가 실제로 쓰는 한국어 문자열(`새 발견 없음`·`머지 허용`·`머지 불가`) 과 슬롯(`{review_dir}`·`{gate_cmd}`·`{live_cmd}`) 은 그대로다."
+    },
+    {
+      "output": "operator/edit-files-as-diffs.md",
+      "kind": "rewrite",
+      "source": "operator/edit-files-as-diffs.md",
+      "commit": "4cda3ddd75bfb8aba93adeaec1b39ae068ebeb78"
+    },
+    {
+      "output": "operator/name-the-build-on-screen.md",
+      "kind": "rewrite",
+      "source": "operator/name-the-build-on-screen.md",
+      "commit": "4cda3ddd75bfb8aba93adeaec1b39ae068ebeb78"
+    },
+    {
+      "output": "operator/report-without-stopping.md",
+      "kind": "rewrite",
+      "source": "operator/report-without-stopping.md",
+      "commit": "4cda3ddd75bfb8aba93adeaec1b39ae068ebeb78",
+      "allow": ["front_matter"],
+      "why": "`links` 가 korean-progress → english-progress 로 따라왔다."
+    },
+    {
+      "output": "operator/run-inside-this-session.md",
+      "kind": "rewrite",
+      "source": "operator/run-inside-this-session.md",
+      "commit": "4cda3ddd75bfb8aba93adeaec1b39ae068ebeb78"
     }
   ]
 }

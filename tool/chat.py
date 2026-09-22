@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+import webbrowser
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -31,6 +32,8 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import chat_channels  # noqa: E402
+import mirror  # noqa: E402
+import translate  # noqa: E402
 from chat_session import ChatSession, explain  # noqa: E402
 from session_state import active_page, branch_line, decisions, run  # noqa: E402
 from slack_brief import repo_url  # noqa: E402
@@ -606,6 +609,130 @@ def peek(repo: str, path: str, line: int = 1, around: int = 25) -> dict:
             "lines": rows[start - 1:end]}
 
 
+# -- translation -------------------------------------------------------------
+#
+# A door onto the phase-one translator so the screens can call it. Not a second
+# engine: the same `tool/translate.py`, and the same cache, so a sentence the
+# hooks already rendered costs the screen nothing.
+#
+# Failure returns the original. An English screen beats an empty one, and that
+# judgement already lives inside the translator.
+
+TRANSLATE_MAX = 40          # sentences per request
+TRANSLATE_CHARS = 40_000    # characters per request
+
+
+class Rendering(BaseModel):
+    texts: list[str]
+    direction: str = translate.EN_KO
+
+
+@app.post("/api/translate")
+def render(body: Rendering) -> dict:
+    """Render what a screen is about to show.
+
+    The size limits are here because the budget is shared. A screen that
+    accidentally posts a whole document burns what the hooks were going to
+    spend — one cache, one bill.
+    """
+
+    if body.direction not in (translate.KO_EN, translate.EN_KO):
+        raise HTTPException(400, "그런 방향이 없다")
+    if len(body.texts) > TRANSLATE_MAX:
+        raise HTTPException(413, f"한 번에 {TRANSLATE_MAX} 문장까지다")
+    if sum(len(t) for t in body.texts) > TRANSLATE_CHARS:
+        raise HTTPException(413, f"한 번에 {TRANSLATE_CHARS} 자까지다")
+    return {"texts": translate.translate(list(body.texts), body.direction)}
+
+
+# -- the Korean mirror --------------------------------------------------------
+#
+# What the person reads while the agent writes English. It is a reading screen,
+# but it does write one thing to the server: which repository to watch. So the
+# generation was decided before the wiring — `Station.gen` rises on every
+# switch, travels out with every payload, and a tab drops anything that does
+# not carry the number it is showing. A translation is a round trip, so an
+# answer for the old repository arriving after the switch is the normal case,
+# not the rare one.
+
+_station = mirror.Station(host="claude", poll=mirror.POLL)
+
+
+def _pointed() -> tuple[int, object, str, str]:
+    """Point at the most recent repository if nothing has been chosen yet.
+
+    Listing repositories walks directories and reads the head of each log, so
+    it happens when the mirror tab is first opened rather than when the server
+    starts. Someone who never opens the mirror never pays for it.
+    """
+
+    gen, feed, host, project = _station.now()
+    if project:
+        return gen, feed, host, project
+    found = mirror.repos(host)
+    if found:
+        _station.point(host, Path(found[0]["path"]))
+    return _station.now()
+
+
+@app.get("/api/mirror/repos")
+def mirror_repos() -> dict:
+    """Every checkout with a session. Both hosts record the real path."""
+
+    _, _, host, project = _pointed()
+    return {"here": {"host": host, "project": project},
+            "hosts": {name: mirror.repos(name) for name in sorted(mirror.HOSTS)}}
+
+
+class Point(BaseModel):
+    host: str
+    project: str
+
+
+@app.post("/api/mirror/point")
+def mirror_point(body: Point) -> dict:
+    """Move the mirror to another repository, from this server's own list.
+
+    That the screen named a path is not a reason to open it, and running on
+    the same machine does not make it one.
+    """
+
+    if body.host not in mirror.HOSTS:
+        raise HTTPException(404, "그런 호스트가 없다")
+    if body.project not in {row["path"] for row in mirror.repos(body.host)}:
+        raise HTTPException(404, "그 저장소의 세션이 없다")
+    _station.point(body.host, Path(body.project))
+    gen, _, host, project = _station.now()
+    return {"gen": gen, "host": host, "project": project}
+
+
+@app.get("/api/mirror/stream")
+def mirror_stream() -> StreamingResponse:
+    """What the mirror has rendered, and what arrives next.
+
+    Sent even when empty: it is the heartbeat as well as the data. A tab has
+    no other way to tell a quiet mirror from a dead one, and writing to a
+    closed socket is how this loop learns to stop.
+    """
+
+    def stream():
+        cursor = 0
+        seen = -1
+        while True:
+            gen, feed, host, project = _pointed()
+            if gen != seen:
+                # The repository changed. The cursor belongs to the new feed,
+                # and the screen clears itself on seeing the new `gen`.
+                cursor, seen = 0, gen
+            cursor, parts = feed.since(cursor)
+            yield sse({"gen": gen, "host": host, "project": project, "parts": parts})
+            time.sleep(mirror.BEAT)
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
+
+
 # -- 화면 -----------------------------------------------------------------
 
 @app.get("/api/graph")
@@ -694,6 +821,10 @@ def main() -> int:
     # 채팅이 아니라 남에게 셸을 주는 것이다.
     ap.add_argument("--host", choices=("127.0.0.1", "localhost"), default="127.0.0.1")
     ap.add_argument("--check", action="store_true", help="자체 점검만 하고 끝낸다")
+    # A launcher opens one screen of this app, not the app in general. The
+    # value is the fragment that names a tab — `#mirror`, `#map`, or empty for
+    # whatever the app opens on.
+    ap.add_argument("--open", default="", metavar="#탭", help="뜬 뒤 브라우저로 연다")
     args = ap.parse_args()
 
     if args.workspace:
@@ -712,7 +843,16 @@ def main() -> int:
     # 포트가 막히면 uvicorn 은 영문 한 줄을 찍고 코드 1 로 끝난다. 더블클릭한
     # 창은 그 줄을 읽기 전에 닫히고, 그래서 "켜지다가 그냥 꺼진다" 로 보인다.
     # 실제로 그렇게 한 번 꺼졌다. 무엇이 막혔고 어떻게 푸는지를 먼저 말한다.
+    url = f"http://{args.host}:{args.port}/{args.open.lstrip('/')}"
+
     if taken(args.host, args.port):
+        # A launcher asked for a screen, and the server that serves it is
+        # already up. Opening it is the whole request — telling the person to
+        # kill the process they are already using would be absurd.
+        if args.open:
+            print(f"이미 떠 있다 — {url}")
+            webbrowser.open(url)
+            return 0
         print(
             f"\n{args.port} 번 포트를 이미 누가 듣고 있다. 그래서 안 뜬다.\n\n"
             f"  누구인지 본다   netstat -ano | findstr :{args.port}\n"
@@ -722,7 +862,20 @@ def main() -> int:
         )
         return 1
 
-    print(f"http://{args.host}:{args.port}  — 끄려면 Ctrl+C")
+    if args.open:
+        # `uvicorn.run` blocks, so the browser has to be opened from a thread
+        # that waits for the port to answer. Opening first races the server
+        # and lands on a refused connection.
+        def wait_then_open() -> None:
+            for _ in range(100):
+                if taken(args.host, args.port):
+                    webbrowser.open(url)
+                    return
+                time.sleep(0.1)
+
+        threading.Thread(target=wait_then_open, daemon=True).start()
+
+    print(f"{url}  — 끄려면 Ctrl+C")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0
 

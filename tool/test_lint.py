@@ -158,11 +158,15 @@ def main() -> int:
             "인코딩 미고정",
         ),
         (
-            "주석이 관형형과 의존명사 사이에서 끊긴다",
+            # 판정이 한국어 관형형에서 잘린 스팬으로 바뀌었다. 영어에서 줄 끝의
+            # `the` 는 정상 조판이라 그 판이 1,515쌍 중 437건을 짚었다 — 29%는
+            # 검사가 아니라 끄게 되는 소음이다. 표본도 같이 바뀌어야 한다.
+            "주석의 코드 스팬이 줄바꿈에 잘린다",
             lambda p, r: _clean_tool(
                 r,
                 "wrapped.py",
-                "# 폭에 맞추려고 여기서 끊으면 읽는 쪽이 두 번 읽는\n# 것이다.\n",
+                "# Fitting the width cut the span: `subprocess.run(cmd,\n"
+                "# check=True)` is one span and now it is two.\n",
             ),
             "끊긴 줄바꿈",
         ),
@@ -170,9 +174,9 @@ def main() -> int:
             # 페이지 산문은 다른 경로로 읽는다 — front matter 를 건너뛰고 표와
             # 코드 울타리를 거른다. 그 경로가 조용히 아무것도 안 읽으면 검사는
             # 초록인 채로 남고, 그 초록이 검사가 도는 증거처럼 보인다.
-            "페이지 산문이 같은 자리에서 끊긴다",
+            "페이지 산문에서 숫자와 단위가 갈린다",
             lambda p, r: p["operator/a"].update(
-                extra="\n상한에 맞추려고 끊는 바람에 갈라진\n것이다."
+                extra="\nMeasuring the corpus gave a median across the 21\npages already here."
             ),
             "끊긴 줄바꿈",
         ),
