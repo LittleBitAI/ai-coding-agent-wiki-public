@@ -14,10 +14,11 @@ sys.path.insert(0, str(HERE))
 from inject import (  # noqa: E402
     INJECTABLE, RULE_BUDGET, SLOT, WIKI, adapter_path, budget, slots_for,
 )
+from apply import runs  # noqa: E402
 from wikilib import front_matter  # noqa: E402
 
 SCOPES = ("operator", "craft")
-HOOK_MARK = "tool/inject.py"
+HOOK_MARK = "inject.py"
 NS = "rule"          # 이 파일이 담는 축. 지식 축은 대상 저장소의 `.wiki/graph.json`
 
 # 강제 사다리. 색은 "굳은 것 → 흩어지는 것" 순서다 — 1층은 막히고 5층은 문장이다.
@@ -163,7 +164,9 @@ def read_project(path: Path, pages: dict[str, dict]) -> dict:
         for group in event
         for entry in group.get("hooks", [])
     ]
-    inject = any(HOOK_MARK in c for c in commands)
+    # 같은 질문은 한 곳에서 답한다. 담음으로 물으면 남의 `custom-tool/inject.py`
+    # 하나에 지도가 "주입이 붙어 있다" 고 말하고 규칙 수까지 같이 틀린다.
+    inject = any(runs(c, HOOK_MARK) for c in commands)
     values = slots_for(path.name, path)
 
     status: dict[str, str] = {}

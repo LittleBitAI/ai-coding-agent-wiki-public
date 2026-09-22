@@ -616,14 +616,19 @@ class Station:
 
     Switching repositories is the one thing the page asks the server to *do*,
     so the generation counter is decided here rather than bolted on later. The
-    number goes up on every switch, it travels out with every payload, and the
-    tab throws away anything that does not carry the number it is showing.
+    number goes up on every switch and drives the cursor reset, and each new
+    `Feed` carries an id the tab resets on.
+
+    There is no pinned session here on purpose. `--session` is the terminal
+    tail's answer to "several cells in one repository"; the screen's answer is
+    the picker, and it always follows the newest file. Carrying the flag here
+    as well left a guard comparing a value to itself, which a pin would have
+    ridden into every repository the person opened.
     """
 
-    def __init__(self, host: str, poll: float, session: Path | None = None) -> None:
+    def __init__(self, host: str, poll: float) -> None:
         self.lock = threading.Lock()
         self.poll = poll
-        self.session = session
         self.gen = 0
         self.host = host
         self.project: Path | None = None
@@ -640,14 +645,11 @@ class Station:
             self.gen += 1
             self.host, self.project, self.feed = host, project, Feed()
             gen, feed = self.gen, self.feed
-            # A pinned file belongs to the repo it was pinned for. Once the
-            # person picks another one, "follow the newest" is what they meant.
-            session = self.session if self.project == project else None
 
         find, _ = HOSTS[host]
         threading.Thread(
             target=pump,
-            args=(feed, lambda: find(project), session, self.poll, host,
+            args=(feed, lambda: find(project), None, self.poll, host,
                   lambda: self.gen == gen),
             daemon=True,
         ).start()

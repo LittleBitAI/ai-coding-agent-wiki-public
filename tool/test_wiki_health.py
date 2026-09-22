@@ -59,6 +59,19 @@ def test_wiring():
                 assert run("apply.py", "--project", project, "--adapter", "example", "--check").returncode == 1
         path.write_text(original, encoding="utf-8")
         assert run("apply.py", "--project", project, "--adapter", "example", "--check").returncode == 0
+
+        # 남의 UserPromptSubmit 훅이 앞에 있어도 배선은 멀쩡하다. 드리프트가
+        # 자기 훅을 이름으로 고르면 남의 명령이 `commands[0]` 이 되고, 그
+        # 안의 첫 따옴표 토큰이 "설치된 인터프리터" 로 읽혀 정상 배선에
+        # 드리프트가 뜬다. 게이트가 그것 때문에 떨어진다.
+        settings = json.loads(original)
+        settings["hooks"]["UserPromptSubmit"].insert(0, {"hooks": [{
+            "type": "command",
+            "command": '"C:/other/python.exe" "C:/other/inject.py"',
+        }]})
+        path.write_text(json.dumps(settings), encoding="utf-8")
+        assert not apply.wiring_drift(project, agents), "남의 훅이 앞에 있다고 드리프트가 아니다"
+        path.write_text(original, encoding="utf-8")
         path.unlink()
         assert run("apply.py", "--project", project, "--adapter", "example", "--check").returncode == 1
         assert not path.exists(), "검사가 설정을 썼다"

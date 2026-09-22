@@ -207,19 +207,34 @@ def main() -> int:
     # `custom-tool/` 은 `tool/` 로 끝난다.
     from apply import runs
 
-    for command, script, want, why in [
-        ("python audit.py --watch korean_progress.py", "korean_progress.py",
-         False, "이름만 대는 남의 훅"),
-        ('"py" "C:/repo/custom-tool/korean_progress.py"', "korean_progress.py",
-         False, "디렉터리 이름이 tool 로 끝나는 남의 훅"),
-        ('"py" "C:/w/tool/korean_progress.py"', "korean_progress.py",
-         True, "우리 것"),
-        ('& "py" "C:/w/tool/declared_continuation.py" --codex',
-         "declared_continuation.py", True, "Codex 가 붙이는 & 와 인자"),
-        ('"py" "C:/w/tool/inject.py" --adapter x', "sync.py",
-         False, "다른 스크립트"),
-    ]:
-        results.append(check(f"소유 판정: {why}", runs(command, script) == want, command))
+    import tempfile
+    from apply import HERE
+
+    here = HERE.as_posix()
+    # 남이 진짜로 `tool/` 안에 같은 이름의 스크립트를 갖고 있는 경우. 부모
+    # 디렉터리 이름만 보던 판정이 이것을 자기 것이라고 했다 — 세 라운드째
+    # 같은 자리다. 실제로 파일을 만들어야 재현된다.
+    with tempfile.TemporaryDirectory() as tmp:
+        theirs = Path(tmp) / "tool"
+        theirs.mkdir()
+        (theirs / "korean_progress.py").write_text("# 남의 것\n", encoding="utf-8")
+        for command, script, want, why in [
+            ("python audit.py --watch korean_progress.py", "korean_progress.py",
+             False, "이름만 대는 남의 훅"),
+            ('"py" "C:/repo/custom-tool/korean_progress.py"', "korean_progress.py",
+             False, "디렉터리 이름이 tool 로 끝나는 남의 훅"),
+            (f'"py" "{(theirs / "korean_progress.py").as_posix()}"',
+             "korean_progress.py", False, "진짜 tool/ 안에 있는 남의 스크립트"),
+            (f'"py" "{here}/korean_progress.py"', "korean_progress.py",
+             True, "우리 디렉터리, 이미 지운 스크립트"),
+            (f'& "py" "{here}/declared_continuation.py" --codex',
+             "declared_continuation.py", True, "Codex 가 붙이는 & 와 인자"),
+            ('"py" "C:/moved-away/tool/inject.py" --adapter x', "inject.py",
+             True, "옮긴 체크아웃이 남긴, 아무 데도 없는 경로"),
+            (f'"py" "{here}/inject.py" --adapter x', "sync.py",
+             False, "다른 스크립트"),
+        ]:
+            results.append(check(f"소유 판정: {why}", runs(command, script) == want, command))
 
     print()
     if all(results):

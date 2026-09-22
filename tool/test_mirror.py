@@ -240,9 +240,10 @@ def test_a_feed_can_be_told_apart_from_another_feed():
     station = M.Station("claude", poll=0.01)
     first = station.feed.id
     station.point("claude", Path("/one"))
+    second = station.feed.id
     station.point("claude", Path("/two"))
 
-    assert len({first, station.feed.id}) == 2
+    assert len({first, second, station.feed.id}) == 3
 
 
 def test_codex_prints_the_same_things():

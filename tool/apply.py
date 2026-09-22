@@ -8,7 +8,7 @@ import re
 import subprocess
 import sys
 import tomllib
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -42,20 +42,33 @@ ARGS = re.compile(r'"([^"]*)"')
 def runs(command: str, script: str) -> bool:
     """Does this command run *this wiki's* copy of `script`?
 
-    Asked of one quoted argument at a time, not of the line as a whole.
-    Containment is a different question and answering it instead cost two
-    review rounds: `python audit.py --watch korean_progress.py` names the
-    script without being ours, and `custom-tool/english_progress.py` ends in
-    `tool/english_progress.py`, which defeated a needle that was meant to be a
-    directory. Here the directory is compared as a path component, so neither
-    passes — and a checkout that moved still matches, which an absolute path
-    would not.
+    Asked of the quoted arguments, as a path, against the one directory that
+    can answer it — `HERE`. Three review rounds went to weaker answers, each
+    one a shape that looked like the path instead of being it: the bare
+    filename matched `--watch korean_progress.py`, `tool/<script>` matched
+    `custom-tool/<script>`, and comparing the parent component matched a
+    person's own `C:/project/tool/<script>`. Only this wiki's own directory
+    tells those apart, and it is known here.
+
+    The second branch is the checkout that moved. Its old entry points into a
+    directory that is gone, and that entry is precisely the one that has to be
+    re-pointed — leaving it behind is the failure this whole area exists for,
+    where a hook names a file that is not there and every tool call dies on
+    it. A path that still exists elsewhere belongs to whoever owns it.
     """
 
+    mine = (HERE / script).resolve()
     for arg in ARGS.findall(command):
-        where = PurePosixPath(arg.replace("\\", "/"))
-        if where.name == script and where.parent.name == "tool":
-            return True
+        where = Path(arg.replace("\\", "/"))
+        if where.name != script:
+            continue
+        try:
+            if where.resolve() == mine:
+                return True
+            if not where.exists() and where.parent.name == "tool":
+                return True
+        except OSError:
+            continue
     return False
 
 
@@ -361,8 +374,11 @@ def wiring_drift(project: Path, agents: tuple[str, ...] | None = None) -> list[t
     for agent in agents:
         try:
             settings = json.loads(paths[agent].read_text(encoding="utf-8")) if paths[agent].exists() else {}
+            # 자기 훅만 고른다. 남의 명령이 `commands[0]` 이 되면 그 안의 첫
+            # 따옴표 토큰이 "설치된 인터프리터" 로 읽혀, 배선이 멀쩡한데도
+            # 드리프트가 뜨고 게이트가 그것 때문에 떨어진다.
             commands = [h.get("command", "") for g in settings.get("hooks", {}).get("UserPromptSubmit", [])
-                        for h in g.get("hooks", []) if HOOK_MARK in h.get("command", "")]
+                        for h in g.get("hooks", []) if runs(h.get("command", ""), HOOK_MARK)]
             # 실행 파일은 기계별 값이다. 설치된 인터프리터를 보존해 경로 차이 소음을 피한다.
             quoted = re.match(r'(?:&\s*)?"([^"]+)"', commands[0]) if commands else None
             python = quoted[1] if quoted else sys.executable
