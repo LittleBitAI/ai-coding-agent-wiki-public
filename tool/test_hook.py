@@ -99,3 +99,40 @@ def test_user_level_install_moves_the_drift_check():
             assert apply.unwire(old) and not apply.unwire(old)
         finally:
             user.unlink(missing_ok=True)
+
+
+def test_user_level_claude_carries_no_machine_wide_deny():
+    settings = {}
+    apply.configure(settings, None, None, "C:/py.exe", "claude")
+    assert not settings.get("permissions", {}).get("deny"), "전역 deny 는 위키 없는 저장소까지 막는다"
+    pre = [h["command"] for g in settings["hooks"]["PreToolUse"] for h in g["hooks"]]
+    assert any(apply.runs(c, "deny.py") for c in pre), "차단 규칙은 디스패처 뒤 deny.py 로 간다"
+    import deny
+    blocked = deny.verdict({"tool_name": "Bash", "tool_input": {"command": "sed -i s/a/b/ x"}})
+    assert blocked and blocked["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert deny.verdict({"tool_name": "Bash", "tool_input": {"command": "git status"}}) is None
+
+
+def test_a_path_named_as_data_is_not_an_old_install():
+    with tempfile.TemporaryDirectory() as raw:
+        top = Path(raw)
+        (top / ".claude").mkdir()
+        watcher = f'"python" "audit.py" --watch "{(hook.HERE / "inject.py").as_posix()}"'
+        settings = {"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": watcher}]}]}}
+        (top / ".claude/settings.json").write_text(json.dumps(settings), encoding="utf-8")
+        assert not hook.legacy(top, "claude", "inject.py"), "남의 훅이 경로를 언급했다고 비켜서지 않는다"
+        assert not apply.unwire(settings), "남의 훅은 걷지 않는다"
+
+
+def test_check_fails_when_a_named_project_gets_nothing():
+    import shutil
+
+    if not shutil.which("claude"):
+        return
+    with tempfile.TemporaryDirectory() as raw:
+        done = subprocess.run(
+            [sys.executable, str(HERE / "setup_agents.py"), "--global", "--check",
+             "--agent", "claude", "--project", raw],
+            capture_output=True, text=True, encoding="utf-8", timeout=120,
+        )
+        assert done.returncode == 2 and "주입하지 않았다" in done.stderr, done.stdout + done.stderr

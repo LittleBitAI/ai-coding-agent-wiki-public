@@ -56,7 +56,23 @@ def legacy(top: Path, host: str, script: str) -> bool:
         text = (top / LEGACY[host]).read_text(encoding="utf-8")
     except (OSError, KeyError):
         return False
-    return (HERE / script).as_posix() in text
+    # The substring only screens. Somebody's `--watch "<wiki>/tool/inject.py"`
+    # names the path as data, so whether a command runs it is `apply.runs`'s
+    # call — imported only past the screen, since it costs a fifth of a second.
+    if (HERE / script).as_posix() not in text:
+        return False
+    from apply import dispatches, runs
+
+    try:
+        settings = json.loads(text)
+    except ValueError:
+        return False
+    return any(
+        runs(str(h.get("command", "")), script) and not dispatches(str(h.get("command", "")))
+        for groups in (settings.get("hooks") or {}).values()
+        for group in groups
+        for h in group.get("hooks", [])
+    )
 
 
 def main(argv: list[str]) -> int:

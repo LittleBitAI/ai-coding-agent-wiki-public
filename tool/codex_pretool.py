@@ -2,36 +2,19 @@
 
 # First, so the wait on the other imports and on stdin is already being watched.
 import hook_diagnostics  # noqa: F401
-from fnmatch import fnmatchcase
 import json
 from pathlib import Path
 import sys
 
 def verdict(payload: dict) -> dict | None:
-    from apply import declared
+    import deny
     import edit_as_diff
     import english_progress
     import markdown_emphasis
 
-    given = payload.get("tool_input") or {}
-    tool = payload.get("tool_name")
-    command = str(given.get("command") or "").strip()
-    denies, _ = declared()
-    # Blocking a whole tool and blocking a Bash argument pattern read the same
-    # `enforce.deny` declaration.
-    # ponytail: only the declared pattern of the direct command is matched. A
-    # nested shell or a command built at runtime gets past it, and making this
-    # a security boundary means enforcing it in Codex's execution policy.
-    for rule in denies:
-        blocked = rule == tool
-        if tool == "Bash" and rule.startswith("Bash(") and rule.endswith(")"):
-            blocked = fnmatchcase(command, rule[5:-1])
-        if blocked:
-            return {"hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": f"공유 위키의 차단 규칙: {rule}",
-            }}
+    denied = deny.verdict(payload)
+    if denied:
+        return denied
     answer = edit_as_diff.verdict(payload, Path(str(payload.get("cwd") or Path.cwd())))
     if answer:
         output = answer["hookSpecificOutput"]

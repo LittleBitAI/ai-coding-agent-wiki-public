@@ -270,13 +270,27 @@ def install_global(choice, check, projects, trust):
             for path in user_files("codex"):
                 hooks = codex_hooks(path.parent, trust and not check)
                 untrusted = [h["key"] for h in hooks if h["trustStatus"] != "trusted"]
-                print(f"Codex {path.parent}: 위키 훅 {len(hooks)}개, 미신뢰 {len(untrusted)}개")
+                # What Codex actually loaded, against what the file holds. Zero
+                # untrusted out of zero loaded is Codex not reading the file —
+                # hooks switched off, or a home it does not start from.
+                wired = sum(f'"{(WIKI / "tool/hook.py").as_posix()}"' in h.get("command", "")
+                            for gs in read_json(path).get("hooks", {}).values()
+                            for g in gs for h in g.get("hooks", []))
+                print(f"Codex {path.parent}: 위키 훅 {len(hooks)}/{wired}개 읽힘, 미신뢰 {len(untrusted)}개")
+                if len(hooks) < wired:
+                    broken.append(f"{path.parent}: Codex가 위키 훅 {wired}개 중 {len(hooks)}개만 읽는다. "
+                                  "그 홈의 config.toml [features] hooks 를 확인하세요")
                 if untrusted:
                     broken.append(f"{path.parent}: Codex 신뢰 대기 {len(untrusted)}개. "
                                   "`--trust-codex` 로 신뢰하거나 Codex /hooks 에서 검토하세요")
+    # A named project has to come out injected. The current folder is only
+    # looked at: it may be a checkout that never attached the wiki.
     for project in projects or [Path.cwd()]:
-        state = "주입됨" if probe(project) else "주입 없음 (adapter 없는 저장소거나 훅 실패)"
-        print(f"SessionStart 시험 — {project}: {state}")
+        injected = probe(project)
+        print(f"SessionStart 시험 — {project}: {'주입됨' if injected else '주입 없음'}")
+        if projects and not injected:
+            broken.append(f"{project}: SessionStart 가 아무것도 주입하지 않았다 "
+                          "(.wiki/adapter.toml 이 없거나 훅이 실패했다)")
     if broken:
         raise ValueError("전역 배선이 어긋났습니다:\n- " + "\n- ".join(broken))
     print("전역 배선 검사 완료. CLI를 업데이트한 뒤에는 `--global --check` 만 다시 돌리세요.")

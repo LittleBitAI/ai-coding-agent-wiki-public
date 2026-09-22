@@ -40,6 +40,8 @@ HOOK_MARK = "inject.py"
 SESSION_MARK = "session_state.py"
 SYNC_MARK = "sync.py"
 CONTINUATION_MARK = "declared_continuation.py"
+# Every script this wiki wires by name, besides the pages' `enforce.pretooluse`.
+OWNED = (HOOK_MARK, SESSION_MARK, SYNC_MARK, CONTINUATION_MARK, "codex_pretool.py", "deny.py")
 
 # The quoted arguments of a hook command. Our own writer emits
 # `"<python>" "<wiki>/tool/<script>"`, optionally behind `& ` for PowerShell
@@ -62,10 +64,17 @@ def script_arg(command: str) -> str | None:
     # `"<python>" "<wiki>/tool/hook.py" <host> <script>` — the user-level form.
     # The script it dispatches to is the one that counts, and it sits next to
     # the dispatcher.
-    if Path(args[1].replace("\\", "/")).name == "hook.py":
+    if dispatches(command):
         words = command.split(f'"{args[1]}"', 1)[1].split()
         return str(Path(args[1]).parent / words[1]) if len(words) >= 2 else None
     return args[1]
+
+
+def dispatches(command: str) -> bool:
+    """Is this the user-level form, `"<python>" "<...>/hook.py" <host> <script>`?"""
+
+    args = ARGS.findall(command)
+    return len(args) >= 2 and Path(args[1].replace("\\", "/")).name == "hook.py"
 
 
 def runs(command: str, script: str) -> bool:
@@ -117,8 +126,7 @@ def stale(settings: dict) -> list[str]:
     read off the string, so it is handed to the person who can tell.
     """
 
-    owned = {HOOK_MARK, SESSION_MARK, SYNC_MARK, CONTINUATION_MARK,
-             "codex_pretool.py", *declared()[1]}
+    owned = {*OWNED, *declared()[1]}
     found: list[str] = []
     for groups in (settings.get("hooks") or {}).values():
         for group in groups:
@@ -423,11 +431,17 @@ def configure(settings: dict, project: Path | None, adapter: str | None, python:
                 entry["hooks"][0]["additionalContextLimit"] = 12000
             changes += put_hook(settings, event, mark, entry)
     else:
+        pre = {s: wrap(script_entry(python, s, "진행 설명 확인")) for s in scripts}
+        if project is None:
+            # `permissions.deny` in the user settings would bind every
+            # repository on the machine. `deny.py` behind the dispatcher
+            # binds only the attached ones.
+            pre["deny.py"] = wrap(script_entry(python, "deny.py", "위키: 차단 규칙"))
         changes = merge(
             settings,
-            list(denies),
+            list(denies) if project else [],
             wrap(hook_entry(python, adapter, where)),
-            {s: wrap(script_entry(python, s, "진행 설명 확인")) for s in scripts},
+            pre,
             wrap(session_entry(python, where)),
             wrap(sync_entry(python, where)),
             wrap(continuation_entry(python)),
@@ -516,7 +530,6 @@ def user_wired(agent: str) -> bool:
         return False
 
 
-OWNED = (HOOK_MARK, SESSION_MARK, SYNC_MARK, CONTINUATION_MARK, "codex_pretool.py")
 
 
 def unwire(settings: dict) -> list[str]:
@@ -531,7 +544,7 @@ def unwire(settings: dict) -> list[str]:
     for event, groups in (settings.get("hooks") or {}).items():
         for group in list(groups):
             kept = [h for h in group.get("hooks", [])
-                    if "hook.py" in str(h.get("command", ""))
+                    if dispatches(str(h.get("command", "")))
                     or not any(runs(str(h.get("command", "")), s) for s in owned)]
             if len(kept) != len(group.get("hooks", [])):
                 changes.append(f"{event} 프로젝트 훅 제거")
