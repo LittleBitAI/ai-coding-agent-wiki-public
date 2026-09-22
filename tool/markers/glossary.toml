@@ -1,0 +1,32 @@
+# Glossary for `tool/translate.py`. Two tables, two different guarantees.
+#
+# A hash of this file is part of the translation cache key, so editing it
+# retires every translation made under the old wording instead of letting
+# stale renderings outlive the terms they were made from.
+
+# keep_korean — words that name a Korean thing. An English rendering would
+# point at something else, so these survive translation untouched. They are
+# masked as placeholders before the request, not merely asked for in the
+# prompt: a prompt is a request, a placeholder is a guarantee.
+keep_korean = [
+  "전자조달",
+  "나라장터",
+  "입찰공고",
+  "지방계약법",
+  "낙찰하한율",
+]
+
+# fixed — words this wiki has already decided the meaning of. Left to the
+# model they come back different on every call, and a rule that is named two
+# ways reads as two rules.
+[fixed]
+"위키" = "wiki"
+"지뢰" = "landmine"
+"계약" = "contract"        # page severity, never a legal contract
+"게이트" = "gate"
+"주입" = "injection"
+"발화" = "utterance"
+"훅" = "hook"
+"강제" = "enforcement"
+"근거" = "evidence"
+"사다리" = "ladder"

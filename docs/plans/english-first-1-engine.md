@@ -15,7 +15,21 @@ ko_to_en(text: str) -> str
 en_to_ko(text: str) -> str
 ```
 
-- 모델 `gemini-2.5-flash`. 키는 `GEMINI_API_KEY` 환경변수 (이미 있다)
+- 모델 `gemini-3.1-flash-lite`. 키는 `GEMINI_API_KEY` 환경변수 (이미 있다)
+
+  **실측이 계획을 고친 자리다.** 처음 적은 `gemini-2.5-flash` 는 이 계정에
+  404 다 — "no longer available to new users". `gemini-2.5-flash-lite` 도
+  같은 404 라 2.5 세대는 통째로 못 쓴다. 후보를 재 보니 짧은 문자열
+  2건 왕복이 `3.6-flash` 6.3초, `3.8-flash` 4.5초, `3.5-flash-lite` 1.2초였다.
+  lite 둘만 세 회차씩 다시 재니 중앙값이 `3.1-flash-lite` 1.17초,
+  `3.5-flash-lite` 1.00초다. **0.17초 차이로는 두 세대의 가격차를 못 산다** —
+  사용자 판단으로 `3.1-flash-lite` 에 고정했다.
+  큰 모델은 그 시간을 thinking 에 쓰는데, 보호 구간을 이미 빼낸 번역에서는
+  그것이 사는 게 없다. lite 는 `thinkingConfig` 를 400 으로 거부한다 — 끌
+  필요 없이 애초에 꺼져 있다. 발화마다 도는 경로이므로 싼 티어가 맞다.
+
+  **별칭은 안 쓴다.** `gemini-flash-latest` 는 캐시 키를 안 바꾸고 모델만
+  바꾸므로, 캐시가 지금 쓰지 않는 모델의 번역을 계속 내주게 된다.
 - **실패하면 원문을 그대로 돌려준다.** 예외도 타임아웃도 키 없음도 전부 그렇다.
   번역이 세션을 못 멈추게 한다 — `craft/hooks-fail-open`
 - `stdin`·`stdout` UTF-8 고정, `subprocess` 를 쓸 일이 있으면
