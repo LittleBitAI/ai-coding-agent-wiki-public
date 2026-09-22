@@ -15,7 +15,7 @@ links: [korean-progress, diagnose-from-what-ran]
 못 쓰게 만들어서는 안 된다.
 
 **인코딩 고정은 훅만의 규칙이 아니다 — `tool/*.py` 전부다.** 죽는 조건은 훅이라는
-것이 아니라 **stdout 이 파이프인 파이썬** 이고, CLI 도 파이프로 실행된다. 규칙의 이름이
+것이 아니라 stdout 이 파이프인 파이썬이고, CLI 도 파이프로 실행된다. 규칙의 이름이
 범위를 좁히면 그 좁힌 자리가 다음 사고다.
 
 진입점 가드는 훅만이다. 훅은 실패가 세션을 멈추니까 삼켜야 하고, CLI 는 사람이
@@ -27,7 +27,7 @@ links: [korean-progress, diagnose-from-what-ran]
 ## 지키는 방법
 
 - 진입점에서 잡는다. `main` 안의 `try` 는 그 안만 덮는다.
-- 예외는 **이름만** stderr 로 남긴다. 메시지에 한글이 섞이면 그 stderr 쓰기가
+- 예외는 이름만 stderr 로 남긴다. 메시지에 한글이 섞이면 그 stderr 쓰기가
   또 죽는다. 타입 이름은 ASCII 라 안 죽고, `UnicodeEncodeError` 한 단어면 진단에
   충분하다.
 - `stdout` 만 고치면 절반이다. `stdin` 이 깨지면 발화가 트리거에 안 맞아
@@ -37,14 +37,14 @@ links: [korean-progress, diagnose-from-what-ran]
 
 ## 셋째 얼굴 — 남의 stdout 을 읽는 자리
 
-앞의 둘은 **내가 쓰는** stdout 과 **내가 읽는** stdin 이다. 셋째는
+앞의 둘은 내가 쓰는 stdout 과 내가 읽는 stdin 이다. 셋째는
 `subprocess.run(..., capture_output=True, text=True)` 다 — 자식의 stdout 을
 읽는데, 그 디코딩도 로케일이 정한다. 자식이 UTF-8 을 내면 부모가 cp949 로
 읽다 `UnicodeDecodeError` 로 죽는다.
 
 `sys.stdout.reconfigure` 는 이것을 못 막는다. 그건 내 스트림이지 파이프가 아니다.
 
-죽는 자리도 다르다. 예외가 `subprocess` 의 리더 **스레드**에서 나고, 그 스레드는
+죽는 자리도 다르다. 예외가 `subprocess` 의 리더 스레드에서 나고, 그 스레드는
 조용히 죽고, `run.stdout` 이 `None` 이 되어 본문이 엉뚱한 줄에서 터진다 —
 `TypeError: argument of type 'NoneType' is not iterable`. 인코딩 사고가 인코딩처럼
 안 보이는 첫 자리다.
@@ -57,7 +57,7 @@ subprocess.run(cmd, capture_output=True, text=True,
 `errors="replace"` 까지가 한 벌이다. 자식이 무엇을 내든 부모가 안 죽는 것이
 목적이고, 깨진 글자 몇 개는 진단을 안 막는다.
 
-조건은 파일이 어디 있느냐가 아니다. **파이프에 붙은 파이썬**이고, 한 번 쓰고 버릴
+조건은 파일이 어디 있느냐가 아니다. 파이프에 붙은 파이썬이고, 한 번 쓰고 버릴
 스크립트도 파이프에 붙는다.
 
 ## 이제 검사가 있다 — `lint` 의 "인코딩 미고정"
@@ -99,7 +99,7 @@ PreToolUse 훅을 대상으로 하며, 모든 제어 흐름을 증명하는 분�
 
 ## 같은 문장이 진단에서도 쓰인다
 
-이 페이지의 결론 — **안 도는 것보다 나쁜 것은 안 도는데 도는 줄 아는 것이다** — 은
+이 페이지의 결론 — 안 도는 것보다 나쁜 것은 안 도는데 도는 줄 아는 것이다 — 은
 자동화만의 규칙이 아니다. 무언가가 깨진 원인을 확인 없이 정하는 자리에서 같은 모양이
 나온다: 모르는데 안다고 여기고, 그 위에서 행동한다. [[diagnose-from-what-ran]] 이 그
 쪽 얼굴이고.

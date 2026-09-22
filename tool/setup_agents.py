@@ -13,6 +13,7 @@ WIKI = Path(__file__).resolve().parents[1]
 SETTINGS = {"claude": ".claude/settings.json", "codex": ".codex/hooks.json"}
 
 
+
 def run(command, cwd):
     result = subprocess.run(command, cwd=cwd, capture_output=True, text=True,
                             encoding="utf-8", errors="replace", timeout=45,
@@ -34,7 +35,17 @@ def hook_shell(agent):
     git = shutil.which("git")
     bash = os.environ.get("CLAUDE_CODE_GIT_BASH_PATH")
     if not bash and git:
-        bash = str(Path(git).resolve().parents[1] / "bin/bash.exe")
+        # Git for Windows ships git.exe three times -- `cmd/`, `bin/` and
+        # `mingw64/bin/` -- and only the install root holds `bin/bash.exe`.
+        # One level up reaches it from `cmd/` and lands on `mingw64` from the
+        # third, which is the copy PATH points at on a machine that installed
+        # the MinGW tools. So walk up instead of assuming a depth. Three levels
+        # is the deepest of the three layouts and keeps the search inside the
+        # Git install, where a match cannot be WSL's bash.exe.
+        for parent in Path(git).resolve().parents[:3]:
+            if (parent / "bin/bash.exe").is_file():
+                bash = str(parent / "bin/bash.exe")
+                break
     if bash and Path(bash).is_file():
         return [bash, "--noprofile", "--norc", "-c"]
     raise ValueError("이 위키 버전의 Claude hooks는 Git for Windows의 Git Bash가 필요합니다. "
@@ -47,11 +58,9 @@ def install(project, choice, check, allow_dirty=False):
         raise ValueError("Python 3.11 이상이 필요합니다. 새 Python으로 이 명령을 다시 실행하세요.")
     import tomllib
 
-    try:
-        import yaml  # noqa: F401 -- apply.py를 읽기 전에 해결 방법을 안내한다.
-    except ImportError as error:
-        raise ValueError("PyYAML이 없습니다. 프로젝트 가상환경에서 python -m pip install PyYAML 후 재실행하세요. "
-                         "공용 위키 README의 팀원 설치 안내를 참고하세요.") from error
+    # 훅이 쓰는 패키지 확인은 여기 없다. `apply.py` 가 배선을 쓰기 직전에
+    # 훅이 실제로 돌 인터프리터를 찔러 본다. 여기서 한 번 더 보면 이 프로세스의
+    # 인터프리터를 보게 되는데, 그것은 훅이 돌 인터프리터가 아닐 수 있다.
     if not (wiki / "tool/apply.py").is_file():
         raise ValueError(f"위키 경로에 tool/apply.py가 없습니다: {wiki}. 완전한 위키 checkout을 사용하세요.")
     for path in (project, wiki, Path(sys.executable)):

@@ -6,6 +6,7 @@ import argparse
 import ast
 import io
 import re
+import subprocess
 import sys
 import tokenize
 from pathlib import Path
@@ -41,6 +42,12 @@ def check(
         from apply import wiring_drift
         findings += wiring_drift(wiki)
     findings += fragile_io(wiki)
+    findings += loud_emphasis(wiki)
+    # `--repo` 로 준 저장소도 본다. `repo_lint` 가 같은 검사를 들지만 그것은
+    # 대상 저장소에서 따로 도는 것이라, 허브에서 한 번에 훑을 때 안 보면
+    # "여기서는 전부 봤다" 가 거짓이 된다.
+    for repo in repos:
+        findings += loud_emphasis(repo)
     findings += missing_hook_guards(wiki, loaded)
 
     # --- 1. 끊어진 링크
@@ -227,6 +234,79 @@ def missing_hook_guards(wiki: Path, loaded: dict) -> list[tuple[str, str]]:
     return found
 
 
+def tracked_markdown(root: Path) -> list[str]:
+    """이 저장소가 자기 것이라고 보는 `.md`. 손으로 쓴 제외 목록을 안 쓴다.
+
+    처음엔 `web/`·`artifacts/`·`raw/`·`node_modules` 를 이름으로 걸렀다. 허브의
+    사정이고 대상 저장소의 사정이 아니라, 남의 저장소에서는 진짜 문서가 통째로
+    빠졌다. `node_modules-guide.md` 처럼 이름이 앞자리만 같은 파일도 같이 빠졌다.
+
+    "이 파일이 우리 것인가" 는 git 이 이미 답을 안다. 추적되는 것과 아직
+    `git add` 안 했지만 무시 대상도 아닌 것을 본다 — 생성물과 vendor 는
+    `.gitignore` 에 있으므로 빠지고, 아무도 리뷰하지 않는다.
+    """
+
+    # `-c` 는 인덱스, `-o` 는 아직 `git add` 안 한 것, `--exclude-standard` 가
+    # 무시 대상을 뺀다. `-c` 만 보면 방금 `Write` 로 만든 새 문서가 통째로 안
+    # 보이고, 그 파일에 조각 편집이 쌓이면 어느 검사도 그것을 안 보게 된다.
+    #
+    # 확장자를 pathspec 으로 안 거른다. `*.md` 는 대소문자를 가려 `UPPER.MD` 를
+    # 빼는데 훅은 소문자로 바꿔 판정하므로, 두 검사가 서로 다른 집합을 보게 된다.
+    done = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-z", "-co", "--exclude-standard"],
+        capture_output=True, check=False,
+    )
+    if done.returncode == 0:
+        names = done.stdout.decode("utf-8", "replace").split("\0")
+    else:
+        # git 저장소가 아니면 전부 본다. 이 경로는 임시 디렉터리를 쓰는 시험이다.
+        names = [p.relative_to(root).as_posix() for p in root.rglob("*")]
+    # 인덱스에 남고 작업 트리에서 지워진 것은 뺀다. 지우는 중인 파일을 못 읽었다고
+    # 보고하면 정상적인 삭제가 게이트를 빨갛게 만든다.
+    return sorted(
+        name for name in names
+        if name.lower().endswith(".md") and (root / name).is_file()
+    )
+
+
+def loud_emphasis(wiki: Path = WIKI) -> list[tuple[str, str]]:
+    """강조가 소음이 된 `.md`. 훅이 못 보는 자리를 여기서 본다.
+
+    `markdown_emphasis` 훅은 쓰기 **전에** 불리므로 `Edit` 이나 패치가 만들
+    문서를 못 본다. 그것을 예측하려 한 판이 리뷰 세 라운드 동안 입력 모양마다
+    구멍을 냈다 — 여러 hunk, `replace_all`, 백틱 네 개. 예측을 지우고 여기서
+    실제 파일을 읽는다. 읽을 것이 이미 디스크에 있으므로 틀릴 자리가 없다.
+    """
+
+    import markdown_emphasis
+
+    found = []
+    if markdown_emphasis.parser() is None:
+        # 검사를 못 돌린 것과 돌려서 깨끗한 것은 다른 일이다. 여기서 조용히
+        # 빈 목록을 돌려주면 게이트가 초록인 채로 이 규칙만 꺼져 있게 된다.
+        return [("강조 과다", markdown_emphasis.MISSING)]
+    for name in tracked_markdown(wiki):
+        path = wiki / name
+        try:
+            text = path.read_text(encoding="utf-8")
+        except Exception as error:
+            # 못 읽은 파일을 건너뛰면 "전부 봤다" 가 거짓이 된다. 이 저장소는
+            # UTF-8 로 적는 것이 규칙이므로, 못 읽은 것 자체가 발견이다.
+            found.append(("강조 과다", f"`{name}`: 읽지 못했다 ({type(error).__name__})"))
+            continue
+        try:
+            lines = markdown_emphasis.findings(text)
+        except Exception as error:  # noqa: BLE001
+            # 훅은 여기서 통과시키고 화면에 말한다. 게이트는 반대로 멈춰야
+            # 하지만, 크래시는 "이 파일 하나가 검사를 못 받았다" 가 아니라
+            # "나머지 파일도 아무도 안 봤다" 가 된다. 발견으로 바꿔 계속 본다.
+            found.append(("강조 과다", f"`{name}`: 검사가 실패했다 ({type(error).__name__})"))
+            continue
+        for line in lines:
+            found.append(("강조 과다", f"`{name}`: {line.lstrip('- ')}"))
+    return found
+
+
 def fragile_io(wiki: Path = WIKI) -> list[tuple[str, str]]:
     """stdin과 운영 도구의 텍스트 자식 출력. 테스트의 엄격한 디코딩은 유지한다."""
     found = []
@@ -386,7 +466,9 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="게이트용: 슬롯 값 차이만 종료 코드에서 제외")
     parser.add_argument(
         "--repo", action="append", type=Path, default=[],
-        help="낡은 서술 검사에 쓸 저장소. 여러 번 줄 수 있다",
+        help="같이 검진할 저장소. 낡은 서술과 그 저장소의 `.md` 강조를 본다. "
+             "무시 대상이 아닌 `.md` 는 아직 `git add` 안 한 것도 본다. "
+             "여러 번 줄 수 있다",
     )
     args = parser.parse_args()
 
@@ -409,7 +491,7 @@ def main() -> int:
     for kind, message in findings:
         kinds.setdefault(kind, []).append(message)
     for kind in (
-        "훅 배선 드리프트", "훅 가드 누락", "페이지 형식 오류", "인코딩 미고정", "끊어진 링크", "근거 없는 landmine", "낡은 서술",
+        "훅 배선 드리프트", "훅 가드 누락", "페이지 형식 오류", "인코딩 미고정", "강조 과다", "끊어진 링크", "근거 없는 landmine", "낡은 서술",
         "모순(슬롯)", "고아 페이지", "빠진 연결", "끊긴 줄바꿈",
     ):
         if kind not in kinds:

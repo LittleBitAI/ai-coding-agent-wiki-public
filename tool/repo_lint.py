@@ -113,8 +113,15 @@ def check(repo: Path) -> list[tuple[str, str]]:
         for path in sorted((repo / ".wiki").glob("**/*.md"))
         for error in metadata_errors(path)
     ]
+    # 강조 검사가 여기 있어야 그 계약이 대상 저장소에서도 성립한다.
+    # 훅은 쓰기 전에 불리므로 `Edit` 과 패치가 만들 문서를 못 본다.
+    # 그 자리를 메우는 것이 실제 파일을 읽는 이 검사이고, 허브에만 걸어 두면
+    # 설치된 저장소에서는 조각이 통과한 뒤 아무도 안 본다 —
+    # 붙었다고 적힌 강제가 실제로는 안 걸리는 그 모양이다.
+    from lint import loud_emphasis
+
     return (stale_index(repo) + dangling_pointers(repo) + misplaced_scope(repo)
-            + malformed + wiring_drift(repo))
+            + malformed + wiring_drift(repo) + loud_emphasis(repo))
 
 
 def main() -> int:

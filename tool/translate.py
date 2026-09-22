@@ -1,0 +1,598 @@
+"""translate — Gemini translation that can never cost more than the original.
+
+Every entry point fails open. A missing key, a timeout, a malformed response,
+a protected span that came back changed, or a deadline already spent all return
+the input unchanged. Callers are hooks assembling an injection: the injection
+must still go out, so a translation failure is allowed to cost the translation
+and nothing else.
+
+One thing that is not failure: the cache answers before the key is looked at.
+A hit needs no request and no key, so removing the key stops new translations
+without retracting the ones already made. Point `TRANSLATE_CACHE` somewhere
+disposable to get a run with neither.
+
+The protected-span machinery is the load-bearing part, not the prompt. Commands,
+paths, wiki links, front matter and glossary terms are lifted out of the text
+before the request and put back after, and the response is rejected outright if
+a single placeholder came back missing, duplicated or renumbered. Asking a model
+to preserve something is a request; removing it from what the model can see is
+a guarantee.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import sqlite3
+import subprocess
+import sys
+import time
+import tomllib
+import urllib.request
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent
+
+# The lite tier, because this runs on every utterance. Measured round trips for
+# two short strings: 3.6-flash 6.3s, 3.8-flash 4.5s, the lite models 1.0-1.2s.
+# The larger models spend that time thinking, which buys nothing on a
+# translation whose protected spans are already lifted out of the text. The
+# lite models reject `thinkingConfig` outright (HTTP 400) — it is already off.
+#
+# 3.1 rather than 3.5: medians over three rounds were 1.17s and 1.00s, and
+# 0.17s does not pay for the price difference between the two generations.
+#
+# Pinned on purpose. A floating alias like `gemini-flash-latest` would change
+# the model without changing the cache key, and the cache would then serve
+# translations made by a model that is no longer the one being used.
+MODEL = "gemini-3.1-flash-lite"
+ENDPOINT = (
+    "https://generativelanguage.googleapis.com/v1beta/models"
+    f"/{MODEL}:generateContent"
+)
+
+# Fallback ceiling for one request. Callers inside a hook pass a deadline
+# instead; this only applies to direct use, and it sits under the shortest
+# hook budget so a direct call can never be what blows that budget.
+TIMEOUT = 6.0
+
+# Part of the cache key. Bump it whenever SYSTEM or the request shape changes.
+# Without it the cache keeps serving text translated under a different contract,
+# and that is worse than no cache: it looks current.
+PROMPT_VERSION = "1"
+
+# Overridable because the cache answers before the key is ever looked at — a
+# hit needs no request, and no key. That is right in production and poison in a
+# test, where a run seeded by an earlier one passes for reasons it did not
+# create. Tests point this somewhere disposable.
+CACHE = Path(
+    os.environ.get("TRANSLATE_CACHE") or (ROOT / "raw" / "translate-cache.sqlite3")
+)
+GLOSSARY = HERE / "markers" / "glossary.toml"
+
+KO_EN = "ko->en"
+EN_KO = "en->ko"
+
+HANGUL = re.compile(r"[가-힣]")
+LATIN = re.compile(r"[A-Za-z]")
+
+# Sentinels from the Unicode private use area. No source document and no
+# model vocabulary produces these, so a placeholder that comes back altered
+# is proof the whole response is untrustworthy.
+OPEN, CLOSE = "", ""
+TOKEN = re.compile(rf"{OPEN}(\d+){CLOSE}")
+
+# Order is load-bearing. The outermost constructs have to be lifted first or a
+# fenced block's inner backticks get masked one at a time and the fence itself
+# never matches.
+SPANS = (
+    ("front_matter", re.compile(r"\A---\n.*?\n---\n", re.S)),  # triggers live here
+    ("fence", re.compile(r"```.*?```", re.S)),
+    ("comment", re.compile(r"<!--.*?-->", re.S)),   # the markers inject.py plants
+    ("wikilink", re.compile(r"\[\[[^\]\n]*\]\]")),  # the slug keys graph.json
+    ("linkdest", re.compile(r"\]\([^)\n]*\)")),
+    ("code", re.compile(r"`[^`\n]+`")),             # commands, paths, identifiers
+    ("slot", re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")),  # apply.py fills these
+)
+
+# Category names a manifest entry may waive for a rewritten page. Waiving one
+# exempts that category alone; everything else is still compared, because a
+# page whose rule was inverted still must not lose its commands or its links.
+KINDS = tuple(name for name, _ in SPANS) + ("keep_korean",)
+
+
+def glossary() -> tuple[tuple[str, ...], dict[str, str], str]:
+    """`(keep_korean, fixed, version)`. A missing or broken file means none.
+
+    The version is a hash of the file, not a number someone has to remember to
+    raise. It goes into the cache key, so editing the glossary retires the
+    translations that were made under the old one.
+    """
+
+    try:
+        raw = GLOSSARY.read_bytes()
+        data = tomllib.loads(raw.decode("utf-8"))
+    except Exception:
+        return (), {}, "none"
+    keep = tuple(str(x) for x in (data.get("keep_korean") or ()))
+    fixed = {str(k): str(v) for k, v in (data.get("fixed") or {}).items()}
+    return keep, fixed, hashlib.sha256(raw).hexdigest()[:12]
+
+
+def _mask(text: str, keep: tuple[str, ...]) -> tuple[str, list[str], list[str]]:
+    """`(masked, spans, kinds)`. `kinds[i]` is the category of `spans[i]`."""
+
+    spans: list[str] = []
+    kinds: list[str] = []
+    kind = ""
+
+    def take(match: re.Match[str]) -> str:
+        spans.append(match.group(0))
+        kinds.append(kind)
+        return f"{OPEN}{len(spans) - 1}{CLOSE}"
+
+    for kind, pattern in SPANS:
+        text = pattern.sub(take, text)
+    kind = "keep_korean"
+    # Longest first, so a term that contains another does not get cut in half.
+    for term in sorted(keep, key=len, reverse=True):
+        if term:
+            text = re.sub(re.escape(term), take, text)
+    return text, spans, kinds
+
+
+def protect(text: str, keep: tuple[str, ...] = ()) -> tuple[str, list[str]]:
+    """Lift every span the model must not see out of `text`."""
+
+    masked, spans, _ = _mask(text, keep)
+    return masked, spans
+
+
+def by_kind(text: str, keep: tuple[str, ...] = ()) -> dict[str, list[str]]:
+    """Every protected span, bucketed by category, for comparing two versions.
+
+    Order inside a bucket is document order, which is what makes a moved link
+    read as a difference. That is deliberate: a translation reorders sentences,
+    not commands.
+    """
+
+    _masked, spans, kinds = _mask(text, keep)
+    out: dict[str, list[str]] = {name: [] for name in KINDS}
+    for span, kind in zip(spans, kinds):
+        out[kind].append(span)
+    return out
+
+
+def intact(text: str, count: int) -> bool:
+    """Did every placeholder survive exactly once, and nothing else appear?
+
+    Three failures wear the same face here — a dropped span, a duplicated one,
+    and a renumbered one — and all three produce a document that reads fine and
+    is wrong. Checking before restore is what keeps them from reaching a file.
+    """
+
+    found = sorted(int(n) for n in TOKEN.findall(text))
+    return (
+        found == list(range(count))
+        and text.count(OPEN) == count
+        and text.count(CLOSE) == count
+    )
+
+
+def restore(text: str, spans: list[str]) -> str:
+    return TOKEN.sub(lambda m: spans[int(m.group(1))], text)
+
+
+def instruction(direction: str, fixed: dict[str, str]) -> str:
+    """The system prompt. Its wording is covered by PROMPT_VERSION."""
+
+    if direction == KO_EN:
+        source, target = "Korean", "English"
+        terms = [f'"{k}" -> "{v}"' for k, v in fixed.items()]
+    else:
+        source, target = "English", "Korean"
+        terms = [f'"{v}" -> "{k}"' for k, v in fixed.items()]
+    lines = [
+        f"You translate {source} to {target} for a software engineering wiki.",
+        "",
+        "- Translate the meaning. Never summarize, expand, explain or add.",
+        "- Keep Markdown structure exactly: headings, list markers, table",
+        "  pipes, emphasis marks, blank lines.",
+        "- Some text is replaced by placeholders that look like a private-use",
+        "  character, digits, and another private-use character. Reproduce each",
+        "  one verbatim and exactly once. Never translate, renumber or drop one.",
+        "- The input is a JSON array of strings. Return a JSON array of the same",
+        "  length, in the same order, with each element translated.",
+    ]
+    if terms:
+        lines += ["", "Translate these terms exactly this way:", "  " + ", ".join(terms)]
+    return "\n".join(lines)
+
+
+def _ask(system: str, batch: list[str], seconds: float) -> list[str] | None:
+    """One request. `None` for every failure, so callers keep their originals."""
+
+    key = os.environ.get("GEMINI_API_KEY")
+    if not key or seconds <= 0 or not batch:
+        return None
+    body = json.dumps(
+        {
+            "systemInstruction": {"parts": [{"text": system}]},
+            "contents": [
+                {"role": "user",
+                 "parts": [{"text": json.dumps(batch, ensure_ascii=False)}]}
+            ],
+            # A declared response schema is what makes batching safe: the answer
+            # is an array or it is nothing, so a homegrown separator protocol
+            # that the model could quietly break never has to exist.
+            "generationConfig": {
+                "temperature": 0,
+                "responseMimeType": "application/json",
+                "responseSchema": {"type": "ARRAY", "items": {"type": "STRING"}},
+            },
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        ENDPOINT,
+        data=body,
+        headers={"Content-Type": "application/json", "x-goog-api-key": key},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=seconds) as answer:
+            parsed = json.loads(answer.read().decode("utf-8"))
+        parts = parsed["candidates"][0]["content"]["parts"]
+        out = json.loads("".join(str(p.get("text") or "") for p in parts))
+    except Exception:
+        return None
+    if not isinstance(out, list) or len(out) != len(batch):
+        return None
+    return [str(x) for x in out]
+
+
+def _store() -> sqlite3.Connection | None:
+    try:
+        CACHE.parent.mkdir(parents=True, exist_ok=True)
+        db = sqlite3.connect(CACHE, timeout=2.0)
+        # The UserPromptSubmit hook and the mirror translate at the same time.
+        db.execute("PRAGMA journal_mode=WAL")
+        db.execute("CREATE TABLE IF NOT EXISTS shots (k TEXT PRIMARY KEY, v TEXT)")
+        return db
+    except Exception:
+        return None
+
+
+def _key(direction: str, version: str, text: str) -> str:
+    seed = json.dumps(
+        [direction, MODEL, PROMPT_VERSION, version, text], ensure_ascii=False
+    )
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()
+
+
+def worth_translating(text: str, direction: str) -> bool:
+    """Is there anything of the source language in here at all?
+
+    Skipping saves a request, but the reason it is a rule rather than an
+    optimization is that translating English to English comes back subtly
+    reworded, and reworded rules are rules nobody can diff.
+    """
+
+    if not text.strip():
+        return False
+    return bool(HANGUL.search(text)) if direction == KO_EN else bool(LATIN.search(text))
+
+
+def translate(
+    texts: list[str], direction: str = KO_EN, deadline: float | None = None
+) -> list[str]:
+    """Translate many strings in one request. Always returns len(texts) items.
+
+    `deadline` is a `time.monotonic()` value — the moment the caller's own
+    budget runs out. Everything not translated by then comes back as the
+    original, which is the whole point: the caller's output still gets built.
+    """
+
+    if not texts:
+        return []
+    try:
+        return _translate(list(texts), direction, deadline)
+    except Exception:
+        # The callers are hooks part-way through assembling an injection. Their
+        # own entry-point guard would catch this and pass the turn, which costs
+        # the whole injection rather than one translation — the failure this
+        # function exists to make impossible. So it is caught here instead.
+        return list(texts)
+
+
+def _translate(
+    texts: list[str], direction: str, deadline: float | None
+) -> list[str]:
+    keep, fixed, version = glossary()
+    out = list(texts)
+
+    wanted = [i for i, t in enumerate(texts) if worth_translating(t, direction)]
+    if not wanted:
+        return out
+
+    db = _store()
+    keys = {i: _key(direction, version, texts[i]) for i in wanted}
+    if db is not None:
+        try:
+            rows = db.execute(
+                f"SELECT k, v FROM shots WHERE k IN ({','.join('?' * len(keys))})",
+                list(keys.values()),
+            ).fetchall()
+            hit = dict(rows)
+            for i in list(wanted):
+                if keys[i] in hit:
+                    out[i] = hit[keys[i]]
+                    wanted.remove(i)
+        except Exception:
+            pass
+
+    if wanted:
+        masked: list[tuple[str, list[str]]] = [protect(texts[i], keep) for i in wanted]
+        seconds = TIMEOUT if deadline is None else max(0.0, deadline - time.monotonic())
+        answer = _ask(instruction(direction, fixed), [m for m, _ in masked], seconds)
+        if answer is not None:
+            fresh: list[tuple[str, str]] = []
+            for i, reply, (_, spans) in zip(wanted, answer, masked):
+                if not intact(reply, len(spans)):
+                    continue  # keep the original; a mangled span is not a translation
+                done = restore(reply, spans)
+                fresh.append((keys[i], done))
+                out[i] = done
+            if db is not None and fresh:
+                try:
+                    db.executemany("INSERT OR REPLACE INTO shots VALUES (?, ?)", fresh)
+                    db.commit()
+                except Exception:
+                    pass
+
+    if db is not None:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+    # Checked here, after everything, rather than at the one moment the
+    # response landed. The socket timeout bounds a single read, and restoring
+    # spans and writing the cache take time of their own — measuring at any
+    # earlier point leaves a stretch where the budget can quietly run out and
+    # the caller still gets handed a translation it no longer has room for.
+    # The work is kept: it is cached, so the next turn has it for nothing.
+    if deadline is not None and time.monotonic() > deadline:
+        return list(texts)
+    return out
+
+
+def ko_to_en(text: str, deadline: float | None = None) -> str:
+    return translate([text], KO_EN, deadline)[0]
+
+
+def en_to_ko(text: str, deadline: float | None = None) -> str:
+    return translate([text], EN_KO, deadline)[0]
+
+
+# --------------------------------------------------------------------------
+# `--check`: hold a translation against the original it was made from.
+#
+# The original lives in git, not in a snapshot directory. `raw/` is ignored, so
+# a snapshot is absent from every other clone, and a comparison that only works
+# on one machine is not a gate.
+# --------------------------------------------------------------------------
+
+BASELINE = ROOT / "docs" / "translation-baseline.json"
+REVIEW = ROOT / "raw" / "translate-review.md"
+
+# Written by hand in Korean and never translated, so they are not targets.
+SKIP = ("docs/plans/",)
+
+SCOPES = ("operator", "craft", ".wiki")
+SHA = re.compile(r"\A[0-9a-f]{40}\Z")
+
+
+def original(commit: str, path: str) -> str | None:
+    """The pinned original, read out of history. `None` when it is not there.
+
+    Bytes on purpose. A byte-exact comparison is the whole point of this check,
+    and `text=True, errors="replace"` would quietly turn a mismatch into a match.
+    """
+
+    done = subprocess.run(
+        ["git", "-C", str(ROOT), "show", f"{commit}:{path}"],
+        capture_output=True,
+        check=False,
+    )
+    if done.returncode != 0:
+        return None
+    try:
+        return done.stdout.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def baseline(path: Path) -> tuple[dict[str, dict], list[str]]:
+    """`({output: entry}, problems)`. A malformed manifest is a failure."""
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        rows = data["entries"]
+    except Exception as error:
+        return {}, [f"{path}: 읽을 수 없다 ({type(error).__name__})"]
+
+    entries: dict[str, dict] = {}
+    problems: list[str] = []
+    for row in rows:
+        name = str(row.get("output") or "")
+        kind = str(row.get("kind") or "")
+        where = name or "<output 없음>"
+        if not name or kind not in ("translation", "rewrite", "new"):
+            problems.append(f"{where}: output 과 kind(translation|rewrite|new) 가 있어야 한다")
+            continue
+        if kind != "new":
+            if not str(row.get("source") or ""):
+                problems.append(f"{where}: {kind} 에는 source 가 있어야 한다")
+            if not SHA.match(str(row.get("commit") or "")):
+                # A branch name or a short sha moves. The point of pinning is
+                # that the thing compared against cannot change under the check.
+                problems.append(f"{where}: commit 은 40자리 전체 SHA 여야 한다")
+        waived = row.get("allow") or []
+        if waived and kind != "rewrite":
+            problems.append(f"{where}: allow 는 rewrite 에서만 쓴다")
+        if any(k not in KINDS for k in waived):
+            problems.append(f"{where}: allow 는 {list(KINDS)} 중에서만 고른다")
+        if waived and not str(row.get("why") or "").strip():
+            problems.append(f"{where}: allow 를 쓰면 why 에 이유를 적는다")
+        entries[name] = row
+    return entries, problems
+
+
+def links(text: str) -> list[str]:
+    return [s[2:-2].strip() for s in by_kind(text)["wikilink"]]
+
+
+def inspect(entry: dict, keep: tuple[str, ...], root: Path | None) -> list[str]:
+    """Everything wrong with one translated file. Empty means it is sound."""
+
+    name = str(entry["output"])
+    produced = ROOT / name
+    if not produced.exists():
+        return [f"{name}: 산출물이 없다"]
+    made = produced.read_text(encoding="utf-8")
+    if not made.strip():
+        return [f"{name}: 산출물이 비었다"]
+
+    found = []
+    for slug in links(made):
+        if not any((ROOT / scope / f"{slug}.md").exists() for scope in SCOPES):
+            found.append(f"{name}: 깨진 링크 [[{slug}]]")
+
+    if entry["kind"] == "new":
+        return found  # written in English from the start; there is no original
+
+    source = str(entry["source"])
+    was = original(str(entry["commit"]), source)
+    if was is None and root is not None:
+        spare = root / source
+        was = spare.read_text(encoding="utf-8") if spare.exists() else None
+    if was is None:
+        return found + [f"{name}: 원문을 못 읽는다 ({entry['commit'][:12]}:{source})"]
+
+    waived = set(entry.get("allow") or ())
+    before, after = by_kind(was, keep), by_kind(made, keep)
+    for kind in KINDS:
+        if kind in waived:
+            continue
+        if kind == "keep_korean":
+            lost = [t for t in set(before[kind]) if t not in after[kind]]
+            if lost:
+                found.append(f"{name}: 보존 용어가 사라졌다 — {', '.join(sorted(lost))}")
+        elif before[kind] != after[kind]:
+            found.append(
+                f"{name}: {kind} 가 원문과 다르다 "
+                f"(원문 {len(before[kind])}개, 산출물 {len(after[kind])}개)"
+            )
+    return found
+
+
+def targets(given: list[str]) -> list[str]:
+    """Expand directories and globs to repo-relative Markdown paths."""
+
+    out: list[str] = []
+    for raw in given:
+        base = (ROOT / raw) if not Path(raw).is_absolute() else Path(raw)
+        found = sorted(base.rglob("*.md")) if base.is_dir() else sorted(
+            ROOT.glob(raw)
+        ) or ([base] if base.exists() else [])
+        for path in found:
+            name = path.resolve().relative_to(ROOT).as_posix()
+            if not name.startswith(SKIP) and path.suffix == ".md":
+                out.append(name)
+    return sorted(dict.fromkeys(out))
+
+
+def check(given: list[str], manifest: Path, root: Path | None, samples: int) -> int:
+    keep, _fixed, _version = glossary()
+    entries, problems = baseline(manifest)
+
+    chosen = targets(given)
+    if not chosen:
+        # Silence is the failure this guards against: a gate that checked
+        # nothing exits 0 and reads exactly like a gate that checked everything.
+        problems.append("검사 대상이 없다. 경로가 비었거나 전부 제외됐다")
+
+    for name in chosen:
+        if name not in entries:
+            problems.append(f"{name}: manifest 에 없다. 빠뜨린 것과 새 문서를 구별할 수 없다")
+        else:
+            problems += inspect(entries[name], keep, root)
+
+    print(f"# translate --check — 대상 {len(chosen)}개, manifest {len(entries)}건")
+    if root is not None:
+        print("\n**`--source-root` 로 돌렸다. 배포 게이트 통과로 세지 않는다.**")
+    print()
+    for line in problems:
+        print(f"- {line}")
+    if not problems:
+        print("결함 없음.")
+
+    if samples > 0 and chosen:
+        review(chosen[:samples])
+    return 1 if problems else 0
+
+
+def review(names: list[str]) -> None:
+    """Back-translate a few files so a person can read what the meaning became.
+
+    Never part of the exit code. Whether meaning survived is a judgement, and
+    a machine that claimed to have made it would only hide that nobody did.
+    """
+
+    made = [(ROOT / n).read_text(encoding="utf-8") for n in names]
+    back = translate(made, EN_KO, time.monotonic() + 120)
+    body = ["# 표본 역번역 — 사람이 읽는 자리다", ""]
+    for name, english, korean in zip(names, made, back):
+        body += [f"## {name}", "", "### 영어 산출물", "", english,
+                 "", "### 되돌린 한국어", "", korean, ""]
+    try:
+        REVIEW.parent.mkdir(parents=True, exist_ok=True)
+        REVIEW.write_text("\n".join(body), encoding="utf-8")
+        print(f"\n표본 역번역 {len(names)}건 → `{REVIEW.relative_to(ROOT).as_posix()}`")
+    except Exception as error:
+        print(f"\n표본 역번역을 못 썼다: {type(error).__name__}")
+
+
+def main() -> int:
+    # Output is a pipe more often than not, and the default there is cp949.
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stdin.reconfigure(encoding="utf-8")
+
+    parser = argparse.ArgumentParser(description="번역과 그 검사")
+    parser.add_argument("paths", nargs="*")
+    parser.add_argument("--check", action="store_true", help="산출물을 원문과 대조한다")
+    parser.add_argument("--manifest", type=Path, default=BASELINE)
+    parser.add_argument("--source-root", type=Path,
+                        help="커밋 전 작업 검사용 대체 원문. 게이트 통과로 안 센다")
+    parser.add_argument("--review", type=int, default=0, metavar="N",
+                        help="표본 N건을 역번역해 사람이 읽을 파일에 적는다")
+    parser.add_argument("--en-to-ko", action="store_true")
+    args = parser.parse_args()
+
+    if args.check:
+        return check(args.paths, args.manifest, args.source_root, args.review)
+
+    direction = EN_KO if args.en_to_ko else KO_EN
+    text = " ".join(args.paths) if args.paths else sys.stdin.read()
+    print(translate([text], direction, time.monotonic() + 30)[0])
+    return 0
+
+
+if __name__ == "__main__":
+    # No entry-point guard here on purpose. This is a CLI, and `hooks-fail-open`
+    # only swallows exceptions where a failure would stop a session; when a
+    # person is reading the output a traceback is the answer, not noise.
+    raise SystemExit(main())

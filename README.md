@@ -7,7 +7,7 @@ Karpathy 의 [LLM wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c1
 명세를 코딩 에이전트 쪽으로 각색했다. 원안의 원시 소스가 논문·기사라면 여기서는
 대화 로그와 실행 기록이고, 그래서 수집이 "읽고 요약"이 아니라 "세고 대조"다.
 
-**병목은 저장도 검색도 아니었다.** 적힌 것이 행동을 지배하지 못하는 것이었다.
+병목은 저장도 검색도 아니었다. 적힌 것이 행동을 지배하지 못하는 것이었다.
 그래서 이 위키는 페이지를 더 만드는 도구가 아니라, 두 가지를 하는 도구다.
 
 1. 반복 지시를 관습으로 굳힌다 — 지시문을 스킬 하나로
@@ -61,7 +61,7 @@ python tool/apply.py --project ~/PycharmProjects/<name> --write    # 쓴다
 
 `tool/setup_agents.py`는 환경·위키 버전·호스트를 검사한 다음 기존 `apply.py`로 설치·검증한다.
 프로젝트명이나 형제 폴더명에 의존하지 않으며 adapter를 허브에 복사하지 않는다.
-Python 3.11 이상·PyYAML·Git과 선택한 호스트 CLI가 필요하다.
+Python 3.11 이상·Git·`requirements-hooks.txt`의 패키지와 선택한 호스트 CLI가 필요하다.
 Windows의 이 위키 명령은 Claude에 Git Bash, Codex에 PowerShell을 사용한다.
 
 ```powershell
@@ -95,7 +95,7 @@ python tool/setup_agents.py --project "D:/팀 작업/checkout" --agent both --ch
 
 위키를 고치는 세션에도 위키가 실려야 한다.
 
-**허브도 두 agent 가 다 설치 대상이다.** Claude 만 붙이면 이 저장소에서 도는
+허브도 두 agent 가 다 설치 대상이다. Claude 만 붙이면 이 저장소에서 도는
 Codex 셀은 위키 훅이 하나도 안 걸린 채 돈다
 
 ```bash
@@ -106,7 +106,7 @@ python tool/apply.py --project . --agent codex --write   # Codex
 `.claude/` 와 `.codex/` 는 담지 않는다. 인터프리터 경로가 기계마다 다르므로
 클론한 쪽에서 이 명령을 다시 돌린다.
 
-**설치와 실행은 다른 증거다.** 위 명령이 성공했다는 것은 설정 파일이 생겼다는
+설치와 실행은 다른 증거다. 위 명령이 성공했다는 것은 설정 파일이 생겼다는
 뜻이지 호스트가 그 이벤트를 실제로 전달한다는 뜻이 아니다. Codex 는 `/hooks`
 에서 신뢰해야 돌고, 신뢰 설정은 `apply` 가 자동으로 쓰지 않는다. 걸렸는지는
 `.wiki/trajectory.jsonl` 에 그 세션의 줄이 실제로 생기는지로 확인한다.
@@ -248,14 +248,14 @@ python tool/repo_lint.py --repo ~/PycharmProjects/<name> # 붙은 저장소
 python tool/trigger_audit.py raw/census-*.jsonl          # 공유 규칙만 — 지식 축은 미측정
 ```
 
-**`trigger_audit` 의 기본은 공유 규칙만 잰다.** 지식 축(결정 기록)까지 재려면
+`trigger_audit` 의 기본은 공유 규칙만 잰다. 지식 축(결정 기록)까지 재려면
 그 저장소의 census 와 `--project` 를 같이 준다.
 
 ```bash
 python tool/trigger_audit.py raw/census-<name>.jsonl --project ~/PycharmProjects/<name>
 ```
 
-`--project` 없이 돌린 출력의 지식 축은 `0` 이 아니라 **미측정**이다.
+`--project` 없이 돌린 출력의 지식 축은 `0` 이 아니라 미측정이다.
 
 `lint` 는 구조가 썩는 자리를 잡고, census 재실행은 내용이 썩는 자리를 잡는다 —
 페이지를 썼는데도 그 실패가 안 줄었다면 산문을 다시 쓸 게 아니라 사다리를
@@ -267,7 +267,7 @@ python tool/trigger_audit.py raw/census-<name>.jsonl --project ~/PycharmProjects
 
 ## 상태
 
-**서 있는 것과 붙어 있는 것은 다르다.** 층이 다 섰다는 것은 이 저장소에 기계가
+서 있는 것과 붙어 있는 것은 다르다. 층이 다 섰다는 것은 이 저장소에 기계가
 있다는 뜻이고, 어느 저장소에 실제로 걸렸는지는 `lint --check` 만 안다.
 
 `python` 은 `yaml` 과 `tomllib` 를 읽을 수 있어야 한다. `apply` 가 훅을 쓰기

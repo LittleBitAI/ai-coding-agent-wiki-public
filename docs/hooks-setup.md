@@ -6,8 +6,10 @@
 ## 1. 위키 준비
 
 먼저 [채팅 설치 안내](chat-setup.md)에 따라 필요한 CLI에 본인 계정으로 로그인합니다.
-채팅 화면이 필요 없다면 Python 3.11 이상 환경에서 `python -m pip install PyYAML`만 준비해도 됩니다.
-아래 명령의 `python`은 PyYAML이 설치된 인터프리터여야 합니다.
+채팅 화면이 필요 없다면 Python 3.11 이상 환경에서
+`python -m pip install -r <위키경로>/requirements-hooks.txt`만 준비해도 됩니다.
+아래 명령의 `python`은 그 패키지들이 설치된 인터프리터여야 합니다.
+hooks가 쓰는 패키지는 그 파일 하나에만 적혀 있고, `setup_agents`가 설치 전에 확인합니다.
 
 위키는 경로가 유지되는 깨끗한 Git checkout을 사용합니다. 폴더 이름은 자유롭습니다.
 공백·한글 경로를 지원하지만 현재 설치 도구는 따옴표·달러·백틱·줄바꿈이 포함된 경로를 거부합니다.

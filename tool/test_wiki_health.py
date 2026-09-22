@@ -102,7 +102,13 @@ def test_measurement():
         response = run(
             "inject.py", "--adapter", "x", "--project", project,
             payload=json.dumps({"prompt": "시험 🐋", "session_id": "health-test"}, ensure_ascii=False).encode("utf-8"),
-            env={"WIKI_ROOT": str(project), "PYTHONIOENCODING": "cp949", "LOCALAPPDATA": tmp},
+            # 번역을 꺼서 잰다. `trigger_audit.measure` 는 오프라인 재생이라
+            # 번역을 못 하는데 훅은 하므로, 켜 두면 이 단언이 재는 것이
+            # 둘의 단위가 같은가가 아니라 번역이 돌았는가가 된다.
+            # 키만 빼는 것으로는 모자라다 — 캐시가 키보다 먼저 답한다.
+            env={"WIKI_ROOT": str(project), "PYTHONIOENCODING": "cp949",
+                 "LOCALAPPDATA": tmp, "GEMINI_API_KEY": "",
+                 "TRANSLATE_CACHE": str(project / "translate-cache.sqlite3")},
         )
         assert response.returncode == 0 and not response.stderr, response.stderr
         output = json.loads(response.stdout)

@@ -28,11 +28,14 @@ python tool/intersect.py raw/census-*.jsonl
 | 페이지 | 등급 |
 | --- | --- |
 | [비동기 결과는 곧바로 받는다](craft/pick-up-async-results.md) | `landmine` |
+| [강조는 희소해야 강조다](craft/emphasis-is-scarce.md) | `landmine` |
 | [시킨 것을 끝까지 한다](craft/do-the-whole-instruction.md) | `contract` |
 | [되돌릴 수 없는 git 은 차단한다](craft/destructive-git-guards.md) | `contract` |
 | [훅은 세션을 멈추지 않는다](craft/hooks-fail-open.md) | `landmine` |
 | [주석은 이유를 들고 이력은 안 든다](craft/comments-carry-why.md) | `contract` |
 | [오류 이름은 증상이 난 자리를 가리킨다](craft/error-names-the-symptom-site.md) | `landmine` |
+| [나가는 것은 출구 하나에서 막는다](craft/gate-the-exit-not-the-callers.md) | `landmine` |
+| [재는 자리는 값이 마지막으로 바뀐 뒤다](craft/measure-after-the-last-change.md) | `landmine` |
 | [화면은 목적을 따르고 손질은 순서를 따른다](craft/screen-follows-the-purpose.md) | `contract` |
 
 census 는 작동하는 규칙을 못

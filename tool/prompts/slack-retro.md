@@ -1,47 +1,51 @@
-실행기의 WIKI_ROOT·SLACK_CHANNEL 환경 변수로 아래 자리표시자를 채운다. 대상 프로젝트는 현재 작업 폴더다. 값이 없으면 보내지 말고 종료한다.
+Fill the placeholders below from the runner's WIKI_ROOT and SLACK_CHANNEL environment variables. The target project is the current working directory. If a value is missing, send nothing and exit.
 
-오늘 회고를 Slack 에 올린다. `retrospect` 스킬의 걸음을 그대로 따른다.
+Post today's retrospective to Slack, following the `retrospect` skill's steps exactly.
 
-## 1. 오늘 무엇을 했나 — 읽어라
+**Write the Slack post itself in Korean.** These instructions are English because you read them; the post is read by the team.
+
+## 1. What happened today — read it
 
 ```
 python "<WIKI_ROOT>/tool/slack_brief.py" --project . --kind retro
 ```
 
-오늘 커밋 · 변경량 · **오늘 고쳐진 세션 로그 파일 목록**이 나온다. 마지막 것이
-2번의 입력이다.
+It gives today's commits, the size of the changes, and the list of session log
+files touched today. That last one is step 2's input.
 
-## 2. 어긋난 자리를 센다 — 네 부류
+## 2. Count where things went wrong — four kinds
 
-`retrospect` 스킬의 표대로 교정 · 재입력 · 부분 수행 · 되돌림을 센다. 1번이
-짚어 준 `.jsonl` 에서 `type=user` 이면서 도구 결과가 아닌 블록이 사람이 직접
-친 말이다.
+Count corrections, re-entries, partial work and reversals, by the table in the
+`retrospect` skill. In the `.jsonl` files step 1 pointed at, a block with
+`type=user` that is not a tool result is what a person actually typed.
 
-**횟수를 대라.** "자주 그랬다" 는 회고가 아니다. 그리고 각각이 이미 위키
-페이지인지 본다 — 이미 적혀 있는데 또 어겼다면 문장이 약해서가 아니라
-문장이라서다. 그때는 산문을 고쳐 쓸 게 아니라 사다리를 올린다.
+Give the counts. "That happened a lot" is not a retrospective. Then check
+whether each one is already a wiki page — if it is written down and was broken
+anyway, the problem is not that the sentence is weak but that it is a sentence.
+That calls for climbing the ladder, not rewriting the prose.
 
-파일이 크면(수 MB) 통째로 읽지 말고 사람 발화만 뽑아서 세라.
+If a file is large (several MB), do not read it whole; pull out the human
+utterances and count those.
 
-## 3. 올린다
+## 3. Post it
 
-- 채널: `<SLACK_CHANNEL>`
-- 도구: `slack_send_message`
+- Channel: `<SLACK_CHANNEL>`
+- Tool: `slack_send_message`
 
-## 4. 같은 본문을 채널에도 넣는다
+## 4. Put the same body into the channel record
 
-Slack 에 올린 본문을 그대로 파일 하나에 쓰고(`.tmp/brief.md` 같은 임시 경로), 이 명령으로 `#retro` 채널 기록에 넣는다. 서버가 안 떠 있어도 된다.
+Write the body you posted to Slack into one file (a temporary path such as `.tmp/brief.md`), and put it into the `#retro` channel record with this command. The server does not have to be running.
 
 ```
 python "<WIKI_ROOT>/tool/chat_post.py" --project . --channel retro --source retro --file <그 파일>
 ```
 
-## 규칙
+## Rules
 
-- **파일을 고치지 마라.** 무엇을 페이지로 올릴지는 사람이 고른다. 이 실행은
-  선택지로 물어볼 수 없으니, 후보만 `*제안*` 으로 적고 끝낸다.
-- 잘한 일을 나열하지 않는다. 회고의 값어치는 어긋난 자리에 있다.
-- 사고 하나에 페이지 하나를 만들자고 하지 마라. 한 저장소에서만 난 것은
-  대부분 그 저장소의 `CLAUDE.md` 로 간다.
-- 어긋난 자리가 없으면 없다고 한 줄로 올린다. 채울 것을 찾지 마라.
-- 열다섯 줄 안쪽.
+- Change no files. A person picks what becomes a page. This run cannot ask
+  with options, so write the candidates under `*제안*` and stop there.
+- Do not list what went well. A retrospective's value is in what went wrong.
+- Do not propose one page per incident. Something that happened in one
+  repository alone usually belongs in that repository's `CLAUDE.md`.
+- If nothing went wrong, post one line saying so. Do not go looking for filler.
+- Fifteen lines or fewer.
