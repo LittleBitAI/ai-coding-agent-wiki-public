@@ -231,10 +231,33 @@ def main() -> int:
              "declared_continuation.py", True, "Codex 가 붙이는 & 와 인자"),
             ('"py" "C:/moved-away/tool/inject.py" --adapter x', "inject.py",
              True, "옮긴 체크아웃이 남긴, 아무 데도 없는 경로"),
+            ('"python" "tool/inject.py"', "inject.py",
+             False, "대상 프로젝트의 상대경로 훅"),
+            ('"python" "tool/korean_progress.py"', "korean_progress.py",
+             False, "상대경로 — 지운 이름이어도 남의 것"),
             (f'"py" "{here}/inject.py" --adapter x', "sync.py",
              False, "다른 스크립트"),
         ]:
             results.append(check(f"소유 판정: {why}", runs(command, script) == want, command))
+
+        # 판정이 `apply.py` 를 어디서 돌렸는지에 따라 달라지면 안 된다.
+        # 허브 루트에서 돌리면 `tool/inject.py` 가 `HERE/inject.py` 로
+        # 풀려서 남의 훅이 우리 것이 됐다.
+        import os
+
+        was = Path.cwd()
+        try:
+            os.chdir(HERE.parent)
+            here_says = runs('"python" "tool/inject.py"', "inject.py")
+            os.chdir(tmp)
+            there_says = runs('"python" "tool/inject.py"', "inject.py")
+        finally:
+            os.chdir(was)
+        results.append(check(
+            "소유 판정: 작업 디렉터리를 안 탄다",
+            here_says is False and there_says is False,
+            f"허브에서 {here_says}, 다른 곳에서 {there_says}",
+        ))
 
     print()
     if all(results):

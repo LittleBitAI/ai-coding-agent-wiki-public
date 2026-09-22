@@ -55,12 +55,19 @@ def runs(command: str, script: str) -> bool:
     re-pointed — leaving it behind is the failure this whole area exists for,
     where a hook names a file that is not there and every tool call dies on
     it. A path that still exists elsewhere belongs to whoever owns it.
+
+    A relative path is never ours. This writer only ever emits an absolute
+    one, so `"python" "tool/inject.py"` in a project's settings was written by
+    someone else and is run relative to wherever the host starts the hook.
+    Resolving it here would measure it against this process's working
+    directory instead — and from the hub root that lands on `HERE`, which made
+    the answer depend on where `apply.py` happened to be run from.
     """
 
     mine = (HERE / script).resolve()
     for arg in ARGS.findall(command):
         where = Path(arg.replace("\\", "/"))
-        if where.name != script:
+        if where.name != script or not where.is_absolute():
             continue
         try:
             if where.resolve() == mine:

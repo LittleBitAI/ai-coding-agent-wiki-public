@@ -208,7 +208,10 @@ def read_project(path: Path, pages: dict[str, dict]) -> dict:
                     else f"adapters/{path.name}.toml") if values else "",
         "inject": inject,
         "deny": len([d for d in deny]),
-        "hooks": len([c for c in commands if HOOK_MARK not in c]),
+        # 주입기를 빼고 센 나머지 훅. 무엇이 주입기인지는 `inject` 와 같은
+        # 질문이므로 같은 답을 쓴다 — 담음으로 세면 남의 `inject.py` 훅이
+        # 개수에서 빠져 지도가 실제보다 적게 말한다.
+        "hooks": len([c for c in commands if not runs(c, HOOK_MARK)]),
         "corpus": len(corpus),
         "missing": missing,
         "status": status,
