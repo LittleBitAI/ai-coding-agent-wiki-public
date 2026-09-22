@@ -10,6 +10,7 @@ Nothing here touches a real session directory or a network.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -102,8 +103,8 @@ def test_two_worktrees_sharing_a_leaf_name_do_not_share_a_log(tmp_path):
     """
 
     root = tmp_path / "projects"
-    for flat in ("C--a-pollock", "C--b-pollock"):
-        (root / flat).mkdir(parents=True)
+    claude_log(root / "C--a-pollock", "a.jsonl", tmp_path / "a" / "pollock")
+    claude_log(root / "C--b-pollock", "a.jsonl", tmp_path / "b" / "pollock")
     wanted = tmp_path / "somewhere" / "pollock"
     wanted.mkdir(parents=True)
 
@@ -113,16 +114,50 @@ def test_two_worktrees_sharing_a_leaf_name_do_not_share_a_log(tmp_path):
     assert found.name.endswith("-pollock")  # it is still the name it would have
 
 
-def test_the_tail_fallback_still_answers_when_only_one_matches(tmp_path):
-    """The fallback exists for an environment where the flattening differs."""
+def test_the_tail_fallback_answers_when_the_log_says_it_belongs(tmp_path):
+    """The fallback exists for an environment where the flattening differs.
+
+    Two candidates share the tail. The log's own `cwd` is what picks between
+    them — being the only match would not have been evidence of anything.
+    """
 
     root = tmp_path / "projects"
-    only = root / "flattened-some-other-way-demo"
-    only.mkdir(parents=True)
+    project = tmp_path / "elsewhere" / "demo"
+    project.mkdir(parents=True)
+    claude_log(root / "flattened-another-way-demo", "a.jsonl", tmp_path / "other" / "demo")
+    mine = root / "flattened-some-way-demo"
+    claude_log(mine, "a.jsonl", project / "web")  # a cell opened in a subfolder
+
+    assert S.folder(project, root) == mine
+
+
+def test_a_lone_candidate_that_belongs_to_another_checkout_is_not_taken(tmp_path):
+    """Being the only `-demo` directory on the machine is not evidence.
+
+    `C:\\old\\demo` is gone from nobody's disk but the caller is asking about
+    `D:\\new\\demo`. Handing the one match over gave the census, the retro and
+    the Slack brief another repository's conversation to read, and every one
+    of them reported on it as though it were this one's.
+    """
+
+    root = tmp_path / "projects"
+    claude_log(root / "C--old-demo", "a.jsonl", tmp_path / "old" / "demo")
+    asked = tmp_path / "new" / "demo"
+    asked.mkdir(parents=True)
+
+    found = S.folder(asked, root)
+
+    assert not found.is_dir()   # no log for this checkout, and it says so
+    assert found.parent == root
+
+
+def test_a_candidate_with_no_log_at_all_proves_nothing(tmp_path):
+    root = tmp_path / "projects"
+    (root / "flattened-another-way-demo").mkdir(parents=True)
     project = tmp_path / "elsewhere" / "demo"
     project.mkdir(parents=True)
 
-    assert S.folder(project, root) == only
+    assert not S.folder(project, root).is_dir()
 
 
 # --------------------------------------------------------------------------
@@ -150,13 +185,22 @@ def test_a_worktree_says_which_repository_it_is_of(tmp_path):
         "--allow-empty", "-m", "one")
     git(repo, "worktree", "add", "-b", "side", str(tmp_path / "barb"))
 
-    root, branch = S.checkout(repo)
+    top, root, branch = S.checkout(repo)
+    assert Path(top) == repo.resolve()
     assert Path(root) == repo.resolve()
     assert branch == "main"
 
-    root, branch = S.checkout(tmp_path / "barb")
-    assert Path(root) == repo.resolve()   # the same repository, not another one
+    top, root, branch = S.checkout(tmp_path / "barb")
+    assert Path(top) == (tmp_path / "barb").resolve()   # its own root
+    assert Path(root) == repo.resolve()                 # but the same repository
     assert branch == "side"
+
+    # A cell opened inside the worktree answers with the worktree, which is
+    # what stops `web/` becoming an entry of its own.
+    (tmp_path / "barb" / "web").mkdir()
+    top, root, _ = S.checkout(tmp_path / "barb" / "web")
+    assert Path(top) == (tmp_path / "barb").resolve()
+    assert Path(root) == repo.resolve()
 
 
 def test_a_clone_with_no_commit_is_still_a_repository(tmp_path):
@@ -170,14 +214,15 @@ def test_a_clone_with_no_commit_is_still_a_repository(tmp_path):
     repo.mkdir()
     git(repo, "init", "-b", "main")
 
-    root, branch = S.checkout(repo)
+    top, root, branch = S.checkout(repo)
 
+    assert Path(top) == repo.resolve()
     assert Path(root) == repo.resolve()
     assert branch == ""  # nothing is checked out yet, and `HEAD` is not a name
 
 
 def test_a_directory_that_is_not_a_checkout_says_so(tmp_path):
-    assert S.checkout(tmp_path) == ("", "")
+    assert S.checkout(tmp_path) == ("", "", "")
 
 
 # --------------------------------------------------------------------------
@@ -188,24 +233,30 @@ def test_a_directory_that_is_not_a_checkout_says_so(tmp_path):
 def test_every_checkout_with_a_session_is_offered(tmp_path, monkeypatch):
     """The picker's whole list. A checkout appears once, under its latest session."""
 
-    day = tmp_path / "2026" / "09" / "22"
-    for name, cwd in (
-        ("rollout-a.jsonl", tmp_path / "work"),
-        ("rollout-b.jsonl", tmp_path / "work" / "web"),  # a subfolder of the same repo
-        ("rollout-c.jsonl", tmp_path / "other"),
-    ):
-        rollout(day, name, cwd)
-        cwd.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(S, "codex_homes", lambda: [tmp_path])
+    work, other = tmp_path / "work", tmp_path / "other"
+    for repo in (work, other):
+        repo.mkdir()
+        git(repo, "init", "-b", "main")
+    (work / "web").mkdir()
 
-    rows = S.checkouts("codex")
+    day = tmp_path / "logs" / "2026" / "09" / "22"
+    stale = rollout(day, "rollout-a.jsonl", work)
+    fresh = rollout(day, "rollout-b.jsonl", work / "web")  # a cell in a subfolder
+    rollout(day, "rollout-c.jsonl", other)
+    os.utime(stale, (0, 1_000_000))       # the repo's own session is the older one
+    os.utime(fresh, (0, 2_000_000))
+    monkeypatch.setattr(S, "codex_homes", lambda: [tmp_path / "logs"])
 
-    assert {row["path"] for row in rows} == {
-        str(tmp_path / "work"),
-        str(tmp_path / "work" / "web"),
-        str(tmp_path / "other"),
-    }
-    assert all(row["name"] for row in rows)
+    rows = {row["path"]: row for row in S.checkouts("codex")}
+
+    # `work/web` is not a third checkout. `codex_session` has always counted a
+    # subfolder as the repo above it, and the list now says the same thing.
+    assert set(rows) == {str(work.resolve()), str(other.resolve())}
+    assert all(row["name"] for row in rows.values())
+    # Merged onto the newest of the two, not whichever the walk reached last.
+    # `at` is what sorts the picker and what the screen falls back to, so the
+    # repo worked in five minutes ago must not sink below one left last week.
+    assert rows[str(work.resolve())]["at"] == 2_000_000
 
 
 def test_a_deleted_worktree_leaves_the_listing_when_it_leaves_the_disk(

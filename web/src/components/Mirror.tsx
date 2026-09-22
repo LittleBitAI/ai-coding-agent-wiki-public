@@ -144,10 +144,10 @@ export function Mirror() {
             </SelectValue>
           </SelectTrigger>
           <SelectContent>
-            {grouped.map(([repoName, rows]) => (
-              <SelectGroup key={repoName}>
+            {grouped.map(([repo, rows]) => (
+              <SelectGroup key={repo}>
                 <SelectLabel className="font-mono text-[11px] text-faint">
-                  {repoName || '저장소 밖'}
+                  {rows[0].repoName || '저장소 밖'}
                 </SelectLabel>
                 {rows.map((repo) => (
                   <SelectItem key={repo.path} value={repo.path}>
@@ -228,15 +228,19 @@ const firstOf = (where: Mirrors | null, host: string) =>
 
 /** The checkouts of one repository, together, newest repository first.
  *
+ *  Grouped on the repository's path, labelled with its name. Those are not
+ *  the same key: `C:\client-a\shop` and `D:\client-b\shop` are two
+ *  repositories with one name, and grouping on the name merged them into a
+ *  single `shop` — losing exactly the distinction this list exists to draw.
+ *
  *  Insertion order carries the sort the server already did, so the repository
  *  worked in most recently stays at the top and its worktrees sit under it. */
 function groupByRepo(repos: Repo[]): [string, Repo[]][] {
   const by = new Map<string, Repo[]>()
   for (const repo of repos) {
-    const key = repo.repoName || ''
-    const rows = by.get(key)
+    const rows = by.get(repo.repo)
     if (rows) rows.push(repo)
-    else by.set(key, [repo])
+    else by.set(repo.repo, [repo])
   }
   return [...by]
 }

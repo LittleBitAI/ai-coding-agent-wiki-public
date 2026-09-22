@@ -126,29 +126,43 @@ def git(path: Path, *args: str) -> list[str]:
     return done.stdout.strip().splitlines()
 
 
-def checkout(path: Path) -> tuple[str, str]:
-    """`(the repository this checkout is of, the branch it has out)`.
+def checkout(path: Path) -> tuple[str, str, str]:
+    """`(this checkout's own root, the repository it is of, its branch)`.
 
+    Two different roots, and the difference is the whole point. `--show-toplevel`
+    is *this* checkout — a cell opened in `web/` answers with the worktree
+    above it, which is how a subdirectory stops being a separate entry.
     `--git-common-dir` is the main clone's `.git` seen from any worktree of it,
     which is the one thing that answers "the same repository" without a
     registry to consult — and the registries disagree: `git worktree list`
     covers only what this clone knows, Orca's covers the machine.
 
-    `("", "")` for a directory git does not answer for. A scratchpad folder and
-    `C:\\Windows` both turn up in the log directory, and neither is a checkout.
+    The order of the three is not cosmetic. `rev-parse` answers in argument
+    order and stops at the first it cannot, so a clone with no commit yet
+    prints both paths and only then fails on `HEAD`.
+
+    `("", "", "")` for a directory git does not answer for. A scratchpad folder
+    and `C:\\Windows` both turn up in the log directory, and neither is a
+    checkout.
     """
 
     lines = git(path, "rev-parse", "--path-format=absolute",
-                "--git-common-dir", "--abbrev-ref", "HEAD")
+                "--show-toplevel", "--git-common-dir", "--abbrev-ref", "HEAD")
     if not lines:
-        return "", ""
-    common = Path(lines[0])
-    root = common.parent if common.name == ".git" else common
+        return "", "", ""
+    # git answers in its own spelling — forward slashes on Windows. These get
+    # compared against paths the hosts wrote into their logs and shown on a
+    # screen next to them, so they come back in the one form.
+    top = str(Path(lines[0]).resolve())
+    repo = ""
+    if len(lines) > 1:
+        common = Path(lines[1]).resolve()
+        repo = str(common.parent if common.name == ".git" else common)
     # `HEAD` is what `--abbrev-ref` says for a detached or still-unborn one.
     # That is not a branch name, and printing it next to a repository reads as
     # though the checkout were on a branch called HEAD.
-    branch = lines[1] if len(lines) > 1 and lines[1] != "HEAD" else ""
-    return str(root), branch
+    branch = lines[2] if len(lines) > 2 and lines[2] != "HEAD" else ""
+    return top, repo, branch
 
 
 # --------------------------------------------------------------------------
@@ -165,19 +179,33 @@ def folder(project: Path, root: Path = SESSIONS) -> Path:
     are two hyphens at the front.
 
     When that rule does not hold, the directories are searched by the tail of
-    their name — but only while exactly one matches. The leaf name of a
-    worktree is not unique: two repositories each had a `pollock`, and a
-    fallback that took the first match would hand one repository's session to
-    the other's mirror.
+    their name — and then the candidate has to *prove* it. The leaf name of a
+    worktree is not unique: two repositories each had a `pollock`. Worse, one
+    matching name is no evidence either — the only `-demo` directory on the
+    machine can belong to `C:\\old\\demo` while the caller is asking about
+    `D:\\new\\demo`, and handing it over silently gives the census, the retro
+    and the Slack brief another repository's conversation to read.
+
+    So the log says who it belongs to. Every record carries the `cwd` the
+    session ran in, and a candidate is taken only when its own newest log
+    names this checkout. Nothing matching that means there is no log for this
+    checkout, which is a different sentence from "I could not tell which", and
+    the honest one.
     """
 
     flat = str(project.resolve()).replace(":", "-").replace("\\", "-").replace("/", "-")
     exact = root / flat
     if exact.is_dir() or not root.is_dir():
         return exact
-    tail = f"-{project.resolve().name}"
-    found = [p for p in sorted(root.glob("*")) if p.is_dir() and p.name.endswith(tail)]
-    return found[0] if len(found) == 1 else exact
+    here = project.resolve()
+    tail = f"-{here.name}"
+    for candidate in sorted(root.glob("*")):
+        if not candidate.is_dir() or not candidate.name.endswith(tail):
+            continue
+        latest = newest(candidate.glob("*.jsonl"))
+        if latest is not None and under(claude_cwd(latest), here):
+            return candidate
+    return exact
 
 
 def claude_cwd(path: Path) -> Path | None:
@@ -300,6 +328,12 @@ def checkouts(host: str) -> list[dict]:
     worktree of. Both hosts stamp the real path into the log, so the paths are
     not guesses; what is and is not still there is `is_dir`, and which
     repository a row belongs to is git's answer, not a parsed path.
+
+    One row per *checkout*, not per directory a cell happened to open in.
+    Cells get opened in `web/` all the time, and `codex_session` has always
+    counted that as the same checkout — a listing that showed it separately
+    offered the same cell twice under two names and disagreed with the finder
+    sitting next to it.
     """
 
     seen: dict[str, float] = {}
@@ -322,17 +356,22 @@ def checkouts(host: str) -> list[dict]:
                 continue
             seen[str(where)] = max(seen.get(str(where), 0.0), latest.stat().st_mtime)
 
-    rows = []
+    rows: dict[str, dict] = {}
     for path, when in sorted(seen.items(), key=lambda row: -row[1]):
         if not Path(path).is_dir():
             continue  # the worktree was deleted; its log was not
-        repo, branch = checkout(Path(path))
-        rows.append({
-            "path": path,
-            "name": Path(path).name,
+        top, repo, branch = checkout(Path(path))
+        # Keyed by the checkout, not by where the cell was opened. Coming in
+        # newest first means the first arrival already holds the latest time.
+        key = top or path
+        if key in rows:
+            continue
+        rows[key] = {
+            "path": key,
+            "name": Path(key).name,
             "at": when,
             "repo": repo,
             "repoName": Path(repo).name if repo else "",
             "branch": branch,
-        })
-    return rows
+        }
+    return list(rows.values())
