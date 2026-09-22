@@ -230,10 +230,16 @@ def main() -> int:
     # Citing Korean is not writing Korean, and the backtick is what says so.
     # A check that stops correct work is the one that gets switched off, so
     # the false-positive side is asserted as hard as the true-positive side.
+    # The doubled span is here and not in `lint.py`'s own comment, because
+    # written there this check reads it and goes red on itself. It is how
+    # CommonMark writes a citation that contains a backtick, and a one-
+    # backtick regex erased its two opening marks as an empty span and left
+    # the Korean standing in the open.
     tick = chr(96)
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         _clean_tool(root, "cited.py", f"# The marker {tick}왜.{tick} is parsed.\n")
+        _clean_tool(root, "run.py", f"# The marker {tick*2}왜.{tick*2} is parsed.\n")
         _clean_tool(
             root,
             "cited_doc.py",
@@ -275,15 +281,37 @@ def main() -> int:
     if not ok:
         failed.append("표지 없는 한국어 미탐")
 
-    # The line number names the line the Korean is on, not the `def` above
-    # the docstring. Preserving the line structure while masking is what this
-    # is for, and it was preserved for two rounds without being used.
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        _clean_tool(root, "where.py", 'def f():\n    """English first.\n    한국어 산문이다.\n    """\n')
-        where = korean_prose(root)
-    ok = where == [("tool/where.py:5", "한국어 산문이다.")]
-    print(f"  {'통과 ' if ok else '실패 '} 발견이 그 줄을 가리킨다     → {where or '없음'}")
+    # The line number names the line the Korean is on — not the `def` above
+    # the docstring, and not a line that exists only after the literal is
+    # evaluated. A docstring is read as source for exactly this reason: `\n`
+    # written as an escape is one line on the page and two in the value, and
+    # two implicitly joined literals are two lines on the page and one in the
+    # value. Both pointed the reader somewhere they had to go looking.
+    slash = chr(92)
+    where = {
+        "a plain docstring": (
+            'def f():\n    """English first.\n    한국어 산문이다.\n    """\n', 5,
+        ),
+        "an escape, not a line": (
+            'def f():\n    """English' + slash + 'n한국어"""\n', 4,
+        ),
+        "two literals joined": (
+            'def f():\n    ("English "\n     "한국어")\n', 5,
+        ),
+        "a parenthesis on the line above": (
+            'def f():\n    (\n        """한국어 산문이다."""\n    )\n', 5,
+        ),
+    }
+    lines = []
+    for label, (source, line) in where.items():
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _clean_tool(root, "where.py", source)
+            found = korean_prose(root)
+        lines.append((label, [at for at, _text in found] == [f"tool/where.py:{line}"]))
+    ok = all(hit for _label, hit in lines)
+    print(f"  {'통과 ' if ok else '실패 '} 발견이 그 줄을 가리킨다     → "
+          f"{[label for label, hit in lines if not hit] or f'{len(lines)}/{len(lines)}'}")
     if not ok:
         failed.append("발견 줄 번호 어긋남")
 

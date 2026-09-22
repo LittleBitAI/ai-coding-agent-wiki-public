@@ -18,6 +18,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import markdown_emphasis  # noqa: E402
 from wikilib import (  # noqa: E402
     SCOPES, WIKI, git_ok, links_of, metadata_errors, pages, resolve,
 )
@@ -213,21 +214,68 @@ HANGUL = re.compile(r"[가-힣]")
 # A backtick carries no other meaning in a comment. Writing one says "this is
 # a string, not my sentence", which is the distinction being asked about.
 #
-# The span stops at a line break. A span that wraps is already a finding of
-# its own (`끊긴 줄바꿈`), so nothing legitimate crosses one, and confining it
-# bounds what an unmatched backtick can swallow to its own line instead of a
-# whole docstring.
-CITED = re.compile(r"`[^`\n]*`")
+# What a code span *is* comes off a CommonMark parse, not off a regex here.
+# The one-backtick regex that replaced the quote rule refused a Korean
+# citation written in a doubled span: it erased the two opening backticks as
+# an empty span, erased the two closing ones the same way, and left the
+# Korean between them looking like prose. `test_lint` has the input, where it
+# can be written without being read as one itself. A doubled span is how
+# CommonMark writes a citation containing a backtick, so the delimiter run
+# that stage 2 deferred as a suggestion turned into a gate refusing correct
+# work the moment backticks became the only marker left.
+# `markdown_emphasis` learned this over six rounds of a hand-written
+# scanner and wrote down the conclusion; there is no reason to spend them
+# again one module over.
+#
+# The parse runs per line. A span that wraps is already a finding of its own
+# (`끊긴 줄바꿈`), so nothing legitimate crosses a line break, and one line at
+# a time is what makes the position exact — a span left open cannot reach past
+# its own line, and an unclosed backtick simply forms no span, which leaves
+# the Korean beside it visible rather than hidden.
+CODE = "code_inline"
 
 
-def blank(match: re.Match[str]) -> str:
-    """Replace a citation with spaces, keeping the line structure intact.
+def docstring(node) -> ast.Constant | None:
+    """The string literal a docstring is, or `None` where there is none.
 
-    The position of what is left has to survive, or the finding cannot say
-    which line it is on.
+    `ast.get_docstring` is not used, because what comes back from it is the
+    evaluated value and this check needs the source. Implicitly joined
+    literals arrive here as one `Constant` spanning every line they were
+    written on, which is what makes the line count come out right.
     """
 
-    return "".join("\n" if c == "\n" else " " for c in match.group(0))
+    body = getattr(node, "body", None)
+    if not body or not isinstance(body[0], ast.Expr):
+        return None
+    value = body[0].value
+    ok = isinstance(value, ast.Constant) and isinstance(value.value, str)
+    return value if ok else None
+
+
+def spoken(line: str) -> str:
+    """One line with its code spans taken out — the author's own words.
+
+    The leading `#` and the indentation go first. Four spaces in front of a
+    docstring line is an indented code block to CommonMark, and that would
+    read the whole line as quoted and hide everything on it.
+    """
+
+    md = markdown_emphasis.parser()
+    if md is None:
+        # Never a quiet skip. "No Korean prose" must not be able to mean
+        # "nothing was read" — `craft/hooks-fail-open` applies to hooks that
+        # must not block a person's edit; a check that gates the repository
+        # fails loudly instead.
+        raise RuntimeError(markdown_emphasis.MISSING)
+
+    def said(token) -> str:
+        if token.type == CODE:
+            return ""
+        if token.children:
+            return " ".join(said(kid) for kid in token.children)
+        return token.content if token.type == "text" else ""
+
+    return " ".join(said(token) for token in md.parse(line.lstrip().lstrip("#")))
 
 
 def korean_prose(wiki: Path = WIKI) -> list[tuple[str, str]]:
@@ -241,18 +289,20 @@ def korean_prose(wiki: Path = WIKI) -> list[tuple[str, str]]:
     the citations landed at 0.40 to 0.47, in among real violations. A second
     read ordinary quotation marks as citation and spent three review rounds
     adding members to that set before an unmatched `"` hid a violation
-    outright. See `CITED` for why the backtick is the whole rule.
+    outright. See `spoken` for why the backtick is the whole rule and why a
+    parser, not a regex, decides where one begins.
 
     Read through `ast` and `tokenize` rather than by matching `#` against raw
     lines. A regex on `#` sees no docstring at all, and that is exactly how
     this was reported complete while 104 lines were still Korean: the
     measurement answered a narrower question than the claim made.
 
-    The unit is one comment or one whole docstring, never a line. Splitting
-    first was an artifact of wanting a line number to report, and it cut the
-    text before the question was asked. A comment happens to be one line; a
-    docstring is one text. The line number comes back out of the offset
-    inside the piece, which is what `blank` preserves the shape for.
+    A docstring is read as **source**, through `get_source_segment`, not as
+    the value `get_docstring` evaluates. The value is not the text on the
+    page: `\\n` written as an escape is one source line and two evaluated
+    ones, two implicitly joined literals are two source lines and one
+    evaluated one, and either way the reported line pointed somewhere the
+    reader has to go looking. Source text counts lines the way the file does.
     """
 
     directory = wiki / "tool"
@@ -273,12 +323,14 @@ def korean_prose(wiki: Path = WIKI) -> list[tuple[str, str]]:
         for node in ast.walk(tree):
             if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
                                  ast.AsyncFunctionDef)):
-                doc = ast.get_docstring(node, clean=False)
-                if doc:
-                    # The string literal's own line, not the `def` above it.
-                    # `clean=False` keeps the text line for line, so line `n`
-                    # of the docstring is line `n` of the file from here.
-                    pieces.append((node.body[0].lineno, doc))
+                literal = docstring(node)
+                if literal is None:
+                    continue
+                # The literal's own line, not the `def` above it and not the
+                # `Expr` that may open on an earlier line with a parenthesis.
+                segment = ast.get_source_segment(source, literal)
+                if segment:
+                    pieces.append((literal.lineno, segment))
         try:
             for token in tokenize.generate_tokens(io.StringIO(source).readline):
                 if token.type == tokenize.COMMENT:
@@ -287,11 +339,9 @@ def korean_prose(wiki: Path = WIKI) -> list[tuple[str, str]]:
             continue
 
         for at, piece in pieces:
-            bare = CITED.sub(blank, piece)
-            for n, line in enumerate(bare.splitlines()):
-                if HANGUL.search(line):
-                    shown = piece.splitlines()[n].strip()
-                    found.append((f"tool/{path.name}:{at + n}", shown[:60]))
+            for n, line in enumerate(piece.splitlines()):
+                if HANGUL.search(spoken(line)):
+                    found.append((f"tool/{path.name}:{at + n}", line.strip()[:60]))
     return found
 
 
