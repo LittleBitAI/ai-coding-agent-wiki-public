@@ -237,14 +237,68 @@ def test_the_scan_follows_git_rather_than_a_hand_written_exclusion_list(
     assert "vendor/skip.md" not in seen, "무시 대상까지 봤다"
 
 
-def test_both_bold_spellings_count_and_inline_code_does_not() -> None:
-    """`__` 만 쓰면 규칙을 통째로 빠져나갈 수 있었다. 반대로 인라인 코드 안의
-    별표는 문자인데 강조로 세어 마크다운을 설명하는 산문을 거부했다."""
+def test_a_new_file_is_seen_before_it_is_staged(tmp_path: Path) -> None:
+    """`Write` 로 만든 직후의 문서가 안 보이면 그 파일은 검사 밖에 산다.
 
-    under = "# t\n\n" + "\n\n".join(f"{n} 번째 __강조__." for n in range(9)) + "\n"
-    assert findings(under), "`__bold__` 가 안 세어졌다"
+    인덱스만 보면 새 문서는 `git add` 전까지 아무 검사도 안 거치고, 그 사이에
+    조각 편집이 쌓이면 훅도 lint 도 그것을 못 본다. 대문자 확장자도 같다 —
+    훅은 소문자로 바꿔 판정하는데 pathspec 은 대소문자를 가렸다.
+    """
 
-    assert findings("`**a**` and `**b**`", whole=False) == []
+    import lint
+
+    for args in (["init", "-q"], ["config", "user.email", "t@e.com"],
+                 ["config", "user.name", "t"]):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True,
+                       capture_output=True)
+    noisy = "# 제목\n\n" + "\n\n".join(f"{n} 번째 **강조**." for n in range(9)) + "\n"
+    (tmp_path / "new.md").write_text(noisy, encoding="utf-8")
+    (tmp_path / "UPPER.MD").write_text(noisy, encoding="utf-8")
+
+    assert lint.tracked_markdown(tmp_path) == ["UPPER.MD", "new.md"]
+
+
+def test_a_file_deleted_from_the_worktree_is_not_a_finding(tmp_path: Path) -> None:
+    """지우는 중인 파일을 못 읽었다고 보고하면 정상적인 삭제가 게이트를 막는다."""
+
+    import lint
+
+    for args in (["init", "-q"], ["config", "user.email", "t@e.com"],
+                 ["config", "user.name", "t"]):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True,
+                       capture_output=True)
+    (tmp_path / "gone.md").write_text("# t\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "gone.md"], check=True,
+                   capture_output=True)
+    (tmp_path / "gone.md").unlink()
+
+    assert lint.tracked_markdown(tmp_path) == []
+    assert lint.loud_emphasis(tmp_path) == []
+
+
+def test_the_counter_is_about_asterisks_and_says_so() -> None:
+    """`__` 를 세려면 CommonMark 의 구분자 규칙을 구현해야 한다.
+
+    한 라운드가 `foo__bar__baz` 오탐을 찾았고, 그 규칙의 다음 절이 다음 라운드다.
+    이 검사가 막으려는 습관은 `**` 로 쓰인다. `__` 는 모호하지 않은 자리 —
+    블록 첫머리의 라벨 — 에서만 본다.
+    """
+
+    snake = "# t\n\n" + "\n\n".join(f"{n} 번째 foo__bar__baz." for n in range(9)) + "\n"
+    assert findings(snake) == [], "식별자를 강조로 셌다"
+
+    assert findings("__Rule.__ text"), "블록 첫머리의 `__` 라벨은 잡아야 한다"
+    assert findings("**Rule.** text"), "`**` 라벨도 그대로 잡아야 한다"
+
+
+def test_inline_code_is_not_counted() -> None:
+    """코드 안의 별표는 문자다. 세면 마크다운을 설명하는 산문이 거부된다."""
+
+    tick = chr(96)
+    assert findings(f"{tick}**a**{tick} and {tick}**b**{tick}", whole=False) == []
+    assert findings(f"{tick * 2}{tick}**a**{tick} and {tick}**b**{tick}{tick * 2}",
+                    whole=False) == []
+    assert findings("**a** and **b**", whole=False), "코드 밖은 그대로 센다"
 
 
 def test_a_markdown_file_that_cannot_be_read_is_a_finding(tmp_path: Path) -> None:

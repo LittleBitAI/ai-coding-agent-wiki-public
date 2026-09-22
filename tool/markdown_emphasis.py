@@ -30,9 +30,13 @@ MOVE_TO = re.compile(r"^\*\*\* Move to: (.+)$", re.M)
 # or more backticks or tildes, then an info string.
 FENCE = re.compile(r"^ {0,3}(?P<run>`{3,}|~{3,})(?P<info>.*)$")
 
-# Both spellings Markdown renders as bold. Counting only `**` left `__` as a
-# way out of the rule that nobody had to argue for.
-BOLD = re.compile(r"\*\*(.+?)\*\*|__(.+?)__", re.S)
+# `**` only, on purpose. Counting `__` too meant implementing CommonMark's
+# delimiter rules, because `foo__bar__baz` is a plain identifier and not
+# emphasis — and one round of review found exactly that false positive. Every
+# further clause of those rules is another round. The habit this exists to
+# stop is written with `**`; `__` is covered where it is unambiguous, at the
+# start of a block, by LABEL below.
+BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
 
 # Inline code, lifted before counting. Asterisks inside it are characters, not
 # emphasis, and counting them refused correct prose about Markdown itself.
@@ -41,7 +45,10 @@ CODE = re.compile(r"`+[^`\n]*`+")
 # A paragraph label: the line opens with a short bolded run ending in a period
 # or a colon. This repo's own pages write those plain -- `규칙.`, `어겼을 때.` --
 # and bolding them puts emphasis on the scaffolding instead of the content.
-LABEL = re.compile(r"^\s*\*\*[^*\n]{1,24}[.:]\*\*")
+# Both spellings are safe here and nowhere else. A label opens a block, so a
+# run of underscores at the start of a line cannot be the middle of a word —
+# the one place `__` is unambiguous without CommonMark's delimiter rules.
+LABEL = re.compile(r"^\s*(\*\*[^*\n]{1,24}[.:]\*\*|__[^_\n]{1,24}[.:]__)")
 
 # Above this share of prose lines, emphasis is no longer marking exceptions.
 # Not taken from the pages in this repo: several of them are already past it,
@@ -157,7 +164,7 @@ def findings(text: str, whole: bool = True) -> list[str]:
     if twice:
         found.append(f"- 한 줄에 굵게가 둘 이상인 줄이 {twice}개 있다")
 
-    wrapped = sum(1 for m in BOLD.finditer(body) if "\n" in (m.group(1) or m.group(2)))
+    wrapped = sum(1 for m in BOLD.finditer(body) if "\n" in m.group(1))
     if wrapped:
         found.append(f"- 줄바꿈을 건너뛰는 굵게가 {wrapped}곳 있다")
 

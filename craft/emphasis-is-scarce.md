@@ -58,6 +58,18 @@ same check in each target repository, which is where `sync` calls it on Stop.
 A file it cannot read is itself a finding: skipping one quietly would make
 "every `.md` passes" false while the gate stayed green.
 
+## What the counter counts
+
+`**bold**`, outside fences, tables, front matter and inline code. Not `__bold__`
+— counting that means implementing CommonMark's delimiter rules, because
+`foo__bar__baz` is an identifier and not emphasis, and every further clause of
+those rules is another round of review. The habit this exists to stop is
+written with asterisks. `__` is checked in the one place it cannot be the
+middle of a word: a label opening a block.
+
+This is a scanner, not a Markdown parser, and the line is drawn where a scanner
+can still be right.
+
 ## What neither of them refuses
 
 - Whether a given phrase deserves emphasis. That is taste, and a hook that

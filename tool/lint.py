@@ -245,16 +245,27 @@ def tracked_markdown(root: Path) -> list[str]:
     생성물과 vendor 는 어차피 무시 대상이고, 아무도 리뷰하지 않는다.
     """
 
+    # `-c` 는 인덱스, `-o` 는 아직 `git add` 안 한 것, `--exclude-standard` 가
+    # 무시 대상을 뺀다. `-c` 만 보면 방금 `Write` 로 만든 새 문서가 통째로 안
+    # 보이고, 그 파일에 조각 편집이 쌓이면 어느 검사도 그것을 안 보게 된다.
+    #
+    # 확장자를 pathspec 으로 안 거른다. `*.md` 는 대소문자를 가려 `UPPER.MD` 를
+    # 빼는데 훅은 소문자로 바꿔 판정하므로, 두 검사가 서로 다른 집합을 보게 된다.
     done = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "-z", "--", "*.md"],
+        ["git", "-C", str(root), "ls-files", "-z", "-co", "--exclude-standard"],
         capture_output=True, check=False,
     )
     if done.returncode == 0:
-        return sorted(
-            name for name in done.stdout.decode("utf-8", "replace").split("\0") if name
-        )
-    # git 저장소가 아니면 전부 본다. 이 경로는 임시 디렉터리를 쓰는 시험이다.
-    return sorted(p.relative_to(root).as_posix() for p in root.rglob("*.md"))
+        names = done.stdout.decode("utf-8", "replace").split("\0")
+    else:
+        # git 저장소가 아니면 전부 본다. 이 경로는 임시 디렉터리를 쓰는 시험이다.
+        names = [p.relative_to(root).as_posix() for p in root.rglob("*")]
+    # 인덱스에 남고 작업 트리에서 지워진 것은 뺀다. 지우는 중인 파일을 못 읽었다고
+    # 보고하면 정상적인 삭제가 게이트를 빨갛게 만든다.
+    return sorted(
+        name for name in names
+        if name.lower().endswith(".md") and (root / name).is_file()
+    )
 
 
 def loud_emphasis(wiki: Path = WIKI) -> list[tuple[str, str]]:
