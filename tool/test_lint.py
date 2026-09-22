@@ -10,7 +10,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from lint import check  # noqa: E402
+from lint import check, korean_prose  # noqa: E402
 
 PAGE = """---
 scope: {scope}
@@ -186,6 +186,24 @@ def main() -> int:
             ),
             "끊긴 줄바꿈",
         ),
+        (
+            # A comment written in Korean. This check exists because the
+            # completion claim was asserted from a regex over `#` lines that
+            # counted no docstring at all.
+            "주석이 한국어로 적혀 있다",
+            lambda p, r: _clean_tool(r, "korean.py", "# 이 주석은 한국어 산문이다.\n"),
+            "주석이 한국어다",
+        ),
+        (
+            # The same, in a docstring rather than a comment. A regex on `#`
+            # sees nothing here, which is exactly how 104 lines stayed under a
+            # green gate.
+            "docstring 이 한국어로 적혀 있다",
+            lambda p, r: _clean_tool(
+                r, "korean_doc.py", 'def f():\n    """이 설명은 한국어다."""\n',
+            ),
+            "주석이 한국어다",
+        ),
     ]
 
     print(f"\n결함을 하나씩 심는다 ({len(checks)}건)\n")
@@ -208,6 +226,40 @@ def main() -> int:
     print(f"\n  {'통과 ' if passed else '실패 '} 선언하면 지나가는가        → {sorted(after) or '없음'}")
     if not passed:
         failed.append("선언 무시")
+
+    # Citing Korean is not writing Korean, in every quote a person types.
+    #
+    # The first version of check 9 knew backticks and double quotes, so a
+    # comment citing a marker with single quotes was blocked by the gate. A
+    # check that stops correct work is the one that gets switched off, so the
+    # false-positive side gets asserted as hard as the true-positive side.
+    tick = chr(96)
+    cited = {
+        "backticks": f"# The marker {tick}왜.{tick} is parsed.",
+        "double quotes": '# The marker "왜." is parsed.',
+        "single quotes": "# The marker '왜.' is parsed.",
+        "curly double": "# The marker “왜.” is parsed.",
+        "curly single": "# The marker ‘왜.’ is parsed.",
+        "a possessive beside a citation": "# The page's rule cites '왜.' and stops.",
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        for n, (label, source) in enumerate(cited.items()):
+            _clean_tool(root, f"cited{n}.py", source + "\n")
+        quiet = korean_prose(root)
+    print(f"  {'통과 ' if not quiet else '실패 '} 인용은 안 잡는다            → {quiet or '없음'}")
+    if quiet:
+        failed.append("인용 오탐")
+
+    # And an apostrophe is not a quote. Two of them in one line read as a
+    # pair and would swallow the Korean between, which is a miss.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _clean_tool(root, "apostrophes.py", "# It doesn't parse 왜. and won't either.\n")
+        caught = korean_prose(root)
+    print(f"  {'통과 ' if caught else '실패 '} 아포스트로피는 인용이 아니다 → {caught or '없음'}")
+    if not caught:
+        failed.append("아포스트로피 미탐")
 
     print()
     if failed:

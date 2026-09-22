@@ -193,7 +193,22 @@ HANGUL = re.compile(r"[가-힣]")
 # A Korean example being quoted, as opposed to a comment written in Korean.
 # An example is delimited — backticks or quotes — because that is how a
 # comment shows the reader it is pointing at a string rather than speaking.
-CITED = re.compile(r'`[^`\n]*`|"[^"\n]*"|“[^”\n]*”')
+#
+# Every quote a person actually types, not the subset that came to mind. The
+# first version knew backticks and double quotes, and a comment citing `'왜.'`
+# with single quotes was blocked by the gate as if it were Korean prose. A
+# list of delimiters is the same mistake as a list of verbs: what sits outside
+# the short list is the next incident.
+# The straight single quote carries an apostrophe as well as a quote, and an
+# apostrophe does not open anything. `doesn't parse 왜. and won't` has two of
+# them, and read as a pair they swallow the Korean between — a miss, which is
+# the failure that produced this check in the first place. A quote mark with a
+# letter on both sides is inside a word.
+CITED = re.compile(
+    r"`[^`\n]*`"
+    r"|[\"“][^\"”\n]*[\"”]"
+    r"|(?<![A-Za-z])['‘][^'’\n]*['’](?![A-Za-z])"
+)
 
 
 def korean_prose(wiki: Path = WIKI) -> list[tuple[str, str]]:
