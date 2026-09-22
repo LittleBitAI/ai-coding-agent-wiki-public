@@ -246,6 +246,31 @@ def test_a_feed_can_be_told_apart_from_another_feed():
     assert len({first, second, station.feed.id}) == 3
 
 
+def test_a_read_that_lands_inside_a_korean_character_does_not_break_it(tmp_path):
+    """The poll stops wherever the writer was, which is routinely mid-character.
+
+    `가` is three bytes. Decoding each chunk as it arrives turns a read that
+    took one of them into `�` permanently — the damage is already in the
+    string being carried over when the rest lands. What the person typed is
+    the one thing the mirror must not alter, so the tail stays bytes and only
+    whole lines are decoded.
+    """
+
+    line = json.dumps({"type": "queue-operation", "operation": "enqueue",
+                       "content": "가"}, ensure_ascii=False).encode("utf-8") + b"\n"
+    cut = line.index("가".encode("utf-8")) + 1  # inside the character
+    log = tmp_path / "session.jsonl"
+    log.write_bytes(line[:cut])
+
+    steps = M.follow(lambda: log, log, poll=0, announce=lambda _p: None)
+    first = next(steps)
+    log.write_bytes(line)
+    second = next(steps)
+
+    assert first == []
+    assert [record["content"] for record in second] == ["가"]
+
+
 def test_codex_prints_the_same_things():
     records = [
         codex({"type": "UserMessage", "content": [{"type": "text", "text": "진행해라"}]}),

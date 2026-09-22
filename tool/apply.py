@@ -50,18 +50,18 @@ def runs(command: str, script: str) -> bool:
     person's own `C:/project/tool/<script>`. Only this wiki's own directory
     tells those apart, and it is known here.
 
-    The second branch is the checkout that moved. Its old entry points into a
-    directory that is gone, and that entry is precisely the one that has to be
-    re-pointed — leaving it behind is the failure this whole area exists for,
-    where a hook names a file that is not there and every tool call dies on
-    it. A path that still exists elsewhere belongs to whoever owns it.
-
     A relative path is never ours. This writer only ever emits an absolute
     one, so `"python" "tool/inject.py"` in a project's settings was written by
     someone else and is run relative to wherever the host starts the hook.
     Resolving it here would measure it against this process's working
     directory instead — and from the hub root that lands on `HERE`, which made
     the answer depend on where `apply.py` happened to be run from.
+
+    There is no guess for a path that is simply missing. An earlier draft
+    claimed a dangling `<...>/tool/<script>` as this wiki's old location, and
+    a person's hook on a mapped drive that is offline for a minute is the same
+    string. Nothing in the command separates those two, so nothing here tries;
+    `stale` reports them instead and the person decides.
     """
 
     mine = (HERE / script).resolve()
@@ -72,11 +72,44 @@ def runs(command: str, script: str) -> bool:
         try:
             if where.resolve() == mine:
                 return True
-            if not where.exists() and where.parent.name == "tool":
-                return True
         except OSError:
             continue
     return False
+
+
+def stale(settings: dict) -> list[str]:
+    """Hooks naming one of this wiki's scripts at a path that is not there.
+
+    Never removed, only said out loud. Moving the wiki leaves exactly this
+    behind: the old entry names a file that is gone, the host runs it on every
+    tool call, python exits 2, and the session stops being able to do
+    anything. That happened here once. But the same line is also a colleague's
+    hook on a share that is temporarily unreachable, and deleting that is
+    destroying their settings over a network blip. Which one it is cannot be
+    read off the string, so it is handed to the person who can tell.
+    """
+
+    owned = {HOOK_MARK, SESSION_MARK, SYNC_MARK, CONTINUATION_MARK,
+             "codex_pretool.py", *declared()[1]}
+    found: list[str] = []
+    for groups in (settings.get("hooks") or {}).values():
+        for group in groups:
+            for entry in group.get("hooks", []):
+                command = str(entry.get("command", ""))
+                for arg in ARGS.findall(command):
+                    where = Path(arg.replace("\\", "/"))
+                    if where.name not in owned or not where.is_absolute():
+                        continue
+                    try:
+                        if where.exists() or where.resolve() == (HERE / where.name).resolve():
+                            continue
+                    except OSError:
+                        continue
+                    found.append(
+                        f"훅이 없는 파일을 가리킨다: {where.as_posix()}. "
+                        "이 위키를 옮겼다면 그 항목을 지워라. 남의 훅이면 그대로 둬라"
+                    )
+    return found
 
 
 def declared() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
@@ -398,6 +431,7 @@ def wiring_drift(project: Path, agents: tuple[str, ...] | None = None) -> list[t
                         HERE.as_posix() in h.get("command", "") for h in group.get("hooks", [])
                     ):
                         changes.append(f"{event} 위키 훅에 제한 matcher가 있다")
+            changes += stale(settings)
             findings.extend(("훅 배선 드리프트", f"{agent}: {change}") for change in changes)
         except (OSError, ValueError, TypeError, AttributeError, KeyError):
             findings.append(("훅 배선 드리프트", f"{agent}: 설정을 읽을 수 없다"))

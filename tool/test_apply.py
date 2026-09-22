@@ -229,8 +229,8 @@ def main() -> int:
              True, "우리 디렉터리, 이미 지운 스크립트"),
             (f'& "py" "{here}/declared_continuation.py" --codex',
              "declared_continuation.py", True, "Codex 가 붙이는 & 와 인자"),
-            ('"py" "C:/moved-away/tool/inject.py" --adapter x', "inject.py",
-             True, "옮긴 체크아웃이 남긴, 아무 데도 없는 경로"),
+            ('"py" "Z:/team/tool/inject.py" --adapter x', "inject.py",
+             False, "끊긴 드라이브 위의 남의 훅 — 없는 경로는 안 가진다"),
             ('"python" "tool/inject.py"', "inject.py",
              False, "대상 프로젝트의 상대경로 훅"),
             ('"python" "tool/korean_progress.py"', "korean_progress.py",
@@ -258,6 +258,28 @@ def main() -> int:
             here_says is False and there_says is False,
             f"허브에서 {here_says}, 다른 곳에서 {there_says}",
         ))
+
+    # 없는 경로를 가진 훅은 지우지 않고 말한다. 위키를 옮긴 흔적일 수도,
+    # 잠깐 끊긴 공유 드라이브 위의 남의 훅일 수도 있고 명령만 보고는
+    # 구별이 안 된다. 지우는 쪽을 고르면 남의 설정을 네트워크 한 번
+    # 끊겼다고 부순다.
+    from apply import stale
+
+    ghost = {"hooks": {"PreToolUse": [{"hooks": [
+        {"type": "command", "command": '"py" "Z:/team/tool/inject.py"'},
+    ]}]}}
+    said = stale(ghost)
+    results.append(check("없는 경로를 가진 훅을 말한다", len(said) == 1, str(said)))
+    results.append(check(
+        "말하되 안 지운다",
+        len(ghost["hooks"]["PreToolUse"][0]["hooks"]) == 1,
+        str(ghost),
+    ))
+    results.append(check(
+        "멀쩡한 자기 훅은 안 말한다",
+        stale({"hooks": {"UserPromptSubmit": [hook]}}) == [],
+        str(stale({"hooks": {"UserPromptSubmit": [hook]}})),
+    ))
 
     print()
     if all(results):

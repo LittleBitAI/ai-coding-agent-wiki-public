@@ -480,12 +480,12 @@ def follow(pick, session: Path | None = None, poll: float = POLL, announce=None)
 
     if announce is None:
         announce = lambda path: print(f"── {path.name}", flush=True)  # noqa: E731
-    path, offset, tail = session, 0, ""
+    path, offset, tail = session, 0, b""
     while True:
         if path is None or not path.exists():
             found = pick()
             if found != path:
-                path, offset, tail = found, 0, ""
+                path, offset, tail = found, 0, b""
                 if path is not None:
                     announce(path)
         if path is None:
@@ -501,12 +501,12 @@ def follow(pick, session: Path | None = None, poll: float = POLL, announce=None)
             continue
 
         if size < offset:
-            offset, tail = 0, ""
+            offset, tail = 0, b""
         if size == offset:
             if session is None:
                 found = pick()
                 if found is not None and found != path:
-                    path, offset, tail = found, 0, ""
+                    path, offset, tail = found, 0, b""
                     announce(path)
                     continue
             yield []
@@ -523,9 +523,19 @@ def follow(pick, session: Path | None = None, poll: float = POLL, announce=None)
             yield []
             continue
 
-        tail += chunk.decode("utf-8", errors="replace")
-        *whole, tail = tail.split("\n")
-        yield [r for r in (parse(line) for line in whole) if r is not None]
+        # Split the bytes, then decode whole lines. A poll lands wherever the
+        # writer happened to be, which is routinely inside a Korean character —
+        # three bytes, and a read that takes one of them. Decoding the chunk
+        # first turns that character into `�` permanently, because by the time
+        # the rest arrives the damage is already in the string being carried
+        # over. `\n` cannot appear inside a multi-byte sequence, so splitting
+        # first is safe and the partial tail stays bytes until it is a line.
+        tail += chunk
+        *whole, tail = tail.split(b"\n")
+        yield [
+            r for r in (parse(line.decode("utf-8", errors="replace")) for line in whole)
+            if r is not None
+        ]
 
 
 # --------------------------------------------------------------------------
