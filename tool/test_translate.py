@@ -7,6 +7,7 @@ below asserts on the *unchanged* input rather than on a translation.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -125,30 +126,53 @@ def test_a_missing_key_returns_the_input_unchanged(
     assert T.ko_to_en("훅이 조용히 죽는다") == "훅이 조용히 죽는다"
 
 
-def test_the_key_comes_from_the_env_file_only_when_no_variable_is_set(
+def test_the_env_file_outranks_the_variable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Beside the repository first, and empty is an answer rather than a gap.
+    """The specific statement beats the general one, and a blank is a statement.
 
-    A machine-wide variable is inherited by every other project on the box,
-    which is how one Gemini bill came to cover four of them. `.env` keeps this
-    key where the thing spending it lives. An explicitly empty variable has to
-    stay empty: it is how a test says "make no requests", and reading the file
-    there would hand a real key to a suite written to stay offline.
+    A machine-wide variable is inherited by every project on the box, which is
+    how one Gemini bill came to cover four of them. Letting it win here would
+    mean the file could be written, look right, and never once be read. It
+    stays as whatever those other projects need; this key lives in the file.
+
+    An empty line in the file still wins. Falling through to the variable
+    there answers a half-filled `.env` with the shared key, and the split
+    reads as done while the bill stays merged — the one failure this whole
+    change exists to end.
     """
 
     envfile = tmp_path / ".env"
     envfile.write_text('OTHER=x\nGEMINI_API_KEY="from-file"\n', encoding="utf-8")
     monkeypatch.setattr(T, "ENV", envfile)
 
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "from-variable")
     assert T.api_key() == "from-file"
 
-    monkeypatch.setenv("GEMINI_API_KEY", "from-variable")
+    envfile.write_text("GEMINI_API_KEY=\n", encoding="utf-8")
+    assert T.api_key() == ""
+
+    monkeypatch.setattr(T, "ENV", tmp_path / "absent")
     assert T.api_key() == "from-variable"
 
-    monkeypatch.setenv("GEMINI_API_KEY", "")
-    assert T.api_key() == ""
+
+def test_the_env_file_can_be_pointed_away_for_a_test_run(tmp_path: Path) -> None:
+    """The knob the suites' money rides on, checked in a fresh process.
+
+    `ENV` is resolved at import, so the two suites that spawn `inject.py` can
+    only disarm the file through the environment. If this stopped working they
+    would not go red. They would go quietly online and start spending, which
+    is the one way this file's arrangement fails without saying so.
+    """
+
+    decoy = tmp_path / "decoy.env"
+    decoy.write_text("GEMINI_API_KEY=pointed-away\n", encoding="utf-8")
+    done = subprocess.run(
+        [sys.executable, "-c", "import translate; print(translate.api_key())"],
+        capture_output=True, text=True, encoding="utf-8", cwd=str(HERE),
+        env={**os.environ, "TRANSLATE_ENV": str(decoy)},
+    )
+    assert done.stdout.strip() == "pointed-away", done.stderr
 
 
 def test_a_cached_entry_is_served_without_a_key(

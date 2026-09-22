@@ -133,6 +133,7 @@ def test_measurement():
             # Removing the key is not enough — the cache answers first.
             env={"WIKI_ROOT": str(project), "PYTHONIOENCODING": "cp949",
                  "LOCALAPPDATA": tmp, "GEMINI_API_KEY": "",
+                 "TRANSLATE_ENV": str(project / "absent.env"),
                  "TRANSLATE_CACHE": str(project / "translate-cache.sqlite3")},
         )
         assert response.returncode == 0 and not response.stderr, response.stderr

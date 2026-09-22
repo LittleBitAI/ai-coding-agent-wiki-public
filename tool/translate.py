@@ -81,12 +81,12 @@ GLOSSARY = HERE / "markers" / "glossary.toml"
 # this file could not answer about itself. `ROOT` comes from `__file__`, so a
 # hook fired from inside someone else's repository still finds this file.
 #
-# An environment variable still wins when one is set, because that is how CI
-# and a throwaway shell hand over a key. Set but empty is not the same as
-# unset: it is an explicit "run with no key", which is what the suites use to
-# keep a test run from making real requests. Falling through to `.env` there
-# would put the money back that those tests exist to save.
-ENV = ROOT / ".env"
+# Overridable for the same reason `CACHE` is. Once a real `.env` sits in the
+# checkout, a suite run there reaches a live key, and the two tests that spawn
+# `inject.py` say in their own comments that a live key makes them slow, flaky
+# and expensive. Emptying the variable stopped suppressing anything the moment
+# the file outranked it, so the file is what a test now has to point away.
+ENV = Path(os.environ.get("TRANSLATE_ENV") or (ROOT / ".env"))
 
 KO_EN = "ko->en"
 EN_KO = "en->ko"
@@ -228,11 +228,21 @@ def instruction(direction: str, fixed: dict[str, str]) -> str:
 
 
 def api_key() -> str:
-    """The key to spend on one request, or `""` when there is none to spend."""
+    """The key to spend on one request, or `""` when there is none to spend.
 
-    given = os.environ.get("GEMINI_API_KEY")
-    if given is not None:
-        return given.strip()
+    The file beside the repository outranks the machine's environment, which
+    is the reverse of what dotenv does by default. That default exists so a
+    shell can override a development placeholder; this file is not a
+    placeholder but a statement that the wiki's translations are billed to a
+    key of their own. The variable is the general case and this is the
+    specific one, so the specific one wins — and the variable is left as
+    whatever every other project on this machine still needs it to be.
+
+    A line that is present wins even when its value is empty. Falling through
+    to the environment there would answer a half-filled `.env` with the shared
+    key, and the split would read as done while the bill stayed merged.
+    """
+
     try:
         for line in ENV.read_text(encoding="utf-8").splitlines():
             name, sep, value = line.partition("=")
@@ -240,7 +250,7 @@ def api_key() -> str:
                 return value.strip().strip("\"'")
     except Exception:
         pass
-    return ""
+    return (os.environ.get("GEMINI_API_KEY") or "").strip()
 
 
 def _ask(system: str, batch: list[str], seconds: float) -> list[str] | None:

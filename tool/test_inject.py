@@ -104,11 +104,11 @@ def build(decisions: int, rule_budget: int | None, repo_budget: int | None,
         # slow, flaky and expensive. The English rendering itself is measured
         # below, by the dedicated tests, with a fake translator.
         #
-        # Emptied rather than removed. `translate.api_key` falls through to
-        # the `.env` beside the repository when the variable is absent
-        # entirely, so removing it picks a real key up from there and makes
-        # the very round trip this comment exists to prevent. An empty value
-        # is the explicit "run with no key".
+        # `TRANSLATE_ENV` is what actually disarms it. The `.env` beside the
+        # repository outranks the variable, so once a real one exists in the
+        # checkout, emptying the variable suppresses nothing and this helper
+        # goes back to spending money. The variable is emptied as well, for
+        # the fallback the file no longer covers.
         #
         # The cache is redirected to a temporary one too. Emptying the key is
         # not enough on its own: the cache answers before the key is
@@ -118,6 +118,7 @@ def build(decisions: int, rule_budget: int | None, repo_budget: int | None,
             "WIKI_ROOT": str(wiki),
             "PYTHONIOENCODING": "utf-8",
             "GEMINI_API_KEY": "",
+            "TRANSLATE_ENV": str(root / "absent.env"),
             "TRANSLATE_CACHE": str(root / "translate-cache.sqlite3"),
         },
     )
