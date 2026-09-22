@@ -69,17 +69,21 @@ def build(decisions: int, rule_budget: int | None, repo_budget: int | None) -> s
          "--project", str(project)],
         input=json.dumps({"prompt": f"{WORD} 를 쓴다", "session_id": "t"}),
         capture_output=True, text=True, encoding="utf-8",
-        # 키를 빼서 번역을 fail-open 시킨다. 안 빼면 이 헬퍼를 부를 때마다
+        # 키를 비워서 번역을 fail-open 시킨다. 안 비우면 이 헬퍼를 부를 때마다
         # 실제 Gemini 왕복이 일어나 스위트가 느려지고 흔들리고 돈이 든다.
         # 영어본 자체는 아래 전용 시험이 가짜 번역기로 잰다.
         #
-        # 캐시도 임시로 돌린다. **키를 빼는 것만으로는 모자란다** — 캐시가
+        # **빼는 게 아니라 비운다.** `translate.api_key` 는 변수가 아예 없을
+        # 때 저장소 옆 `.env` 로 내려간다 — 빼면 거기서 진짜 키를 주워 이
+        # 주석이 막으려던 왕복이 그대로 일어난다. 빈 값은 "키 없이 돌려라"다.
+        #
+        # 캐시도 임시로 돌린다. **키를 비우는 것만으로는 모자란다** — 캐시가
         # 키보다 먼저 답하므로, 앞선 회차가 이 발화를 캐시해 뒀으면 키 없이도
         # 번역이 성공한다. 실제로 그렇게 이 시험이 한 번 빨갰다.
-        env={k: v for k, v in os.environ.items() if k != "GEMINI_API_KEY"}
-        | {
+        env=dict(os.environ) | {
             "WIKI_ROOT": str(wiki),
             "PYTHONIOENCODING": "utf-8",
+            "GEMINI_API_KEY": "",
             "TRANSLATE_CACHE": str(root / "translate-cache.sqlite3"),
         },
     )
