@@ -209,6 +209,15 @@ def test_only_a_command_that_runs_the_dispatcher_is_ours():
         apply.configure(wired, None, None, "C:/Program Files/Python 3/python.exe", agent)
         assert all(apply.ours(h["command"]) for gs in wired["hooks"].values() for g in gs for h in g["hooks"]), \
             "우리가 쓴 명령은 공백 있는 인터프리터 경로여도 전부 우리 것이다"
+    # Trust goes by identity: exactly the commands this install writes.
+    mine = apply.installed("codex", sys.executable)
+    commands = {c for _e, c in mine}
+    assert len(mine) == 5 and all(apply.ours(c) for c in commands)
+    for stranger in (f'"C:/other.exe" "{path}" codex inject.py',                 # another program
+                     f'"{sys.executable}" "{path}" codex setup_agents.py --global',  # never wired
+                     f'& "{sys.executable}" "{path}" codex inject.py --codex'):     # a flag we never add there
+        assert stranger not in commands, stranger
+    assert ("Stop", next(c for e, c in mine if e == "SessionStart")) not in mine, "이벤트까지 같아야 한다"
     narrowed = {"hooks": {"PreToolUse": [{"matcher": "Read", "hooks": [
         {"type": "command", "command": watcher}]}]}}
     assert not apply.restricted(narrowed), "남의 훅의 matcher 로 설치를 거절하지 않는다"

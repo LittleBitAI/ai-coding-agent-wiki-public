@@ -189,14 +189,17 @@ def codex_hooks(home, trust):
     it, only for commands that run this checkout's `hook.py`, and through
     Codex's own config writer rather than by editing its file.
     """
-    from apply import ours
+    from apply import installed
     from chat_local import CodexServer
 
-    # `ours`, not a substring: `audit.py --watch "<wiki>/tool/hook.py"` names
-    # the dispatcher as data, and trusting it would vouch for someone else's code.
+    # Exactly what this install wrote, event and command both. Anything that
+    # merely names or resembles the dispatcher is somebody else's code, and
+    # trusting it would vouch for that code.
+    mine = {(event[0].lower() + event[1:], command)
+            for event, command in installed("codex", sys.executable)}
     with CodexServer(env={"CODEX_HOME": str(home)}, cwd=WIKI) as server:
         listed = lambda: [h for d in server.request("hooks/list", {"cwds": [str(WIKI)]})["data"]  # noqa: E731
-                          for h in d["hooks"] if ours(h["command"])]
+                          for h in d["hooks"] if (h["eventName"], h["command"]) in mine]
         hooks = listed()
         pending = {h["key"]: {"trusted_hash": h["currentHash"]} for h in hooks if h["trustStatus"] != "trusted"}
         if trust and pending:
@@ -230,7 +233,7 @@ def install_global(choice, check, projects, trust):
         if any(char in str(path) for char in ('"', '$', '`', '\n', '\r')):
             raise ValueError(f"셸 인용이 지원하지 않는 문자가 경로에 있습니다: {path}")
     os.environ["WIKI_ROOT"] = str(WIKI)
-    from apply import configure, keep_denies, ours, read_json, restricted, unusable, unwire, user_files
+    from apply import configure, installed, keep_denies, read_json, restricted, unusable, unwire, user_files
 
     missing = unusable(sys.executable)
     if missing:
@@ -299,8 +302,9 @@ def install_global(choice, check, projects, trust):
                 # What Codex actually loaded, against what the file holds. Zero
                 # untrusted out of zero loaded is Codex not reading the file —
                 # hooks switched off, or a home it does not start from.
-                wired = sum(ours(h.get("command", ""))
-                            for gs in read_json(path).get("hooks", {}).values()
+                expected = installed("codex", sys.executable)
+                wired = sum((event, h.get("command", "")) in expected
+                            for event, gs in read_json(path).get("hooks", {}).items()
                             for g in gs for h in g.get("hooks", []))
                 print(f"Codex {path.parent}: 위키 훅 {len(hooks)}/{wired}개 읽힘, 미신뢰 {len(untrusted)}개")
                 if len(hooks) < wired:

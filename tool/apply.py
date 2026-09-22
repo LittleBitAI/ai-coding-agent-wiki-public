@@ -534,13 +534,28 @@ def restricted(settings: dict) -> list[str]:
                 mine(str(h.get("command", ""))) for h in group.get("hooks", []))]
 
 
-def ours(command: str) -> bool:
-    """Is this command, in full, one our writer emits for this checkout's `hook.py`?
+def installed(agent: str, python: str) -> set[tuple[str, str]]:
+    """`(event, command)` for exactly the user-level hooks this install writes.
 
-    Asking about pieces of it — the second quoted argument, a path somewhere
-    in it — let `echo "python" "<wiki>/tool/hook.py"; <anything>` through, and
-    `--trust-codex` vouches for whatever it matches. So the whole command has
-    to have our exact shape: an optional `& `, a quoted interpreter with
+    What trust is granted against. A shape, however tight, also admits
+    `"C:/other.exe" "<wiki>/tool/hook.py" …` and `hook.py codex setup_agents.py`
+    — commands this installer never wrote. Equality with its own output does not.
+    """
+
+    wired: dict = {}
+    configure(wired, None, None, python, agent)
+    return {(event, h["command"]) for event, groups in wired["hooks"].items()
+            for g in groups for h in g["hooks"]}
+
+
+def ours(command: str) -> bool:
+    """Does this command, in full, have the shape our writer gives the dispatcher?
+
+    For recognising our hooks inside settings (`restricted`), whatever
+    interpreter they were installed with. It is a shape, not an identity —
+    trust is granted against `installed()` instead. Asking about pieces of the
+    command let `echo "python" "<wiki>/tool/hook.py"; <anything>` through, so
+    the whole of it has to match: an optional `& `, a quoted interpreter with
     nothing a shell expands inside, the dispatcher, a host, one of this
     wiki's scripts, and bare flags. Nothing else may follow.
     """
