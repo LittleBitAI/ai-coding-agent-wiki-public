@@ -1,4 +1,8 @@
-"""채널 정의와 고를 수 있는 것들 — 프로젝트 · 모델 · effort."""
+"""The channel definitions and what can be chosen — project, model, effort.
+
+The labels and preambles here are read by a person on screen, so they stay
+Korean.
+"""
 
 from __future__ import annotations
 
@@ -17,8 +21,8 @@ WIKI = Path(__file__).resolve().parent.parent
 LOCAL = settings()
 WORKSPACE = (WIKI / Path(LOCAL.get("workspace", "..")).expanduser()).resolve()
 
-# CLI 가 `--model` 에서 이름으로 받는 것들. 빈 값은 플래그를 안 붙인다는 뜻이고,
-# 그러면 CLI 의 기본 모델이 쓰인다.
+# What the CLI accepts by name in `--model`. An empty value means the flag is
+# not passed at all, which leaves the CLI on its own default model.
 MODELS = [
     {"id": "", "label": "Claude 기본", "note": "Claude CLI 가 정한 것"},
     {"id": "opus", "label": "Opus", "note": "제일 세다. 제일 느리다"},
@@ -27,7 +31,7 @@ MODELS = [
     {"id": "fable", "label": "Fable", "note": ""},
 ]
 
-# `--effort` 가 받는 다섯. 위로 갈수록 더 오래 생각하고 더 많이 쓴다.
+# The five `--effort` takes. Further up thinks longer and costs more.
 EFFORTS = [
     {"id": "", "label": "기본", "note": "CLI 가 정한 것"},
     {"id": "low", "label": "low", "note": "빠른 사실 확인"},
@@ -42,7 +46,11 @@ ANSWER_PROMPT = (WIKI / "tool/prompts/chat-answer.md").read_text(encoding="utf-8
 
 @lru_cache(maxsize=1)
 def codex_models() -> list[dict]:
-    """설치된 Codex의 공개 모델 목록. 서버 수명 동안 캐시하며 실패는 캐시하지 않는다."""
+    """The installed Codex's public model list.
+
+    Cached for the life of the server. A failure is not cached — caching one
+    would make a CLI that came back up look permanently broken.
+    """
     proc = subprocess.Popen(
         [*cli_command("codex"), "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
@@ -114,11 +122,12 @@ def codex_models() -> list[dict]:
 
 
 def projects() -> list[dict]:
-    """고를 수 있는 저장소. 워크스페이스에서 `.git` 이 있는 것만.
+    """The repositories that can be chosen: whatever in the workspace has a `.git`.
 
-    목록을 손으로 안 든다 — 저장소가 늘 때마다 여기를 고치는 것은
-    곧 안 고치는 것이다. 어댑터가 있는 것은 표시해 준다. 그 저장소는 위키가 이미 붙어 있어
-    훅과 주입이 도는 자리다.
+    The list is not held by hand — editing this every time a repository is
+    added means not editing it. The ones with an adapter are marked, because
+    those already have the wiki attached and are where the hooks and the
+    injection actually run.
     """
 
     known = {p.stem for p in (WIKI / "adapters").glob("*.toml")}
@@ -135,7 +144,8 @@ def projects() -> list[dict]:
 
 
 def repo_for(name: str) -> Path | None:
-    """이름으로 저장소 경로. 워크스페이스 밖은 안 준다 — 화면에서 온 값이다."""
+    """A repository path by name. Never outside the workspace — this value came
+    from the screen."""
 
     if not name:
         return None

@@ -1,4 +1,9 @@
-"""chat — Claude/Codex로 근거를 찾고, 독립 호출로 쉬운 설명을 만든다."""
+"""chat — find the grounds with Claude or Codex, then explain them plainly.
+
+The explanation comes from a separate call, so that finding the answer and
+saying it simply are never the same turn. Everything that reaches the screen
+is read by a person and stays Korean.
+"""
 
 from __future__ import annotations
 
@@ -20,10 +25,11 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-# 윈도우에서 `mimetypes` 는 레지스트리를 읽고, 거기서 `.js` 가 흔히
-# `text/plain` 이다. 그러면 `<script type="module">` 을 브라우저가 조용히
-# 거부한다 — 콘솔에 아무것도 안 남고 화면만 빈다. 실제로 그렇게 한 번 비었다.
-# 타입은 요청 때 조회하므로 임포트 뒤에 등록해도 늦지 않다.
+# On Windows `mimetypes` reads the registry, where `.js` is commonly
+# `text/plain`. The browser then refuses `<script type="module">` silently:
+# nothing in the console, just an empty screen. It really did go blank that
+# way once. The type is looked up per request, so registering it after the
+# imports is not too late.
 mimetypes.add_type("application/javascript", ".js")
 mimetypes.add_type("text/css", ".css")
 mimetypes.add_type("application/json", ".json")
@@ -54,10 +60,11 @@ _busy: set[str] = set()
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    """서버가 내려가면 자식도 내린다. 안 그러면 `claude.exe` 가 쌓인다.
+    """When the server goes down the children go with it, or `claude.exe` piles up.
 
-    Ctrl+C 나 정상 종료에서만 돈다. 강제 종료(작업 관리자·킬)에는 못 걸리므로
-    그때는 자식이 남는다 — 어떤 언어로도 못 잡는 자리다.
+    Runs on Ctrl+C and on an ordinary shutdown. A forced kill — Task Manager,
+    `kill` — never reaches this, and the children survive it. No language
+    catches that one.
     """
 
     yield
@@ -71,7 +78,8 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="wiki chat", lifespan=lifespan)
 
 
-# 프로젝트 선택은 모든 채널이 공유한다. 문맥과 모델 설정은 프로젝트·채널별이다.
+# Every channel shares the project selection. The conversation and the model
+# settings are per project and per channel.
 _config: dict[tuple[str, str], dict] = {}
 _project: str | None = None
 
@@ -111,15 +119,18 @@ def config(cid: str) -> dict:
 
 
 def session(cid: str) -> ChatSession:
-    """채널의 살아 있는 대화. 없으면 띄운다.
+    """A channel's live conversation, started if there is none.
 
-    채널 소개는 시스템 프롬프트로 간다. 첫 턴으로 태웠더니 그 한 턴이 2분을
-    먹었고(모델이 소개를 읽고 파일을 뒤진다) 실제 물음의 답은 6초였다.
+    The channel's introduction goes in as a system prompt. Sent as the first
+    turn it took two minutes — the model reads the introduction and starts
+    going through files — against six seconds for the actual question.
 
-    죽은 프로세스는 **새 객체로 갈지 않는다.** 갈면 그 객체가 들고 있던
-    `session_id` 가 같이 버려지고, 그러면 `--resume` 이 걸릴 자리가 없어서
-    모델·effort 를 바꿀 때마다 대화가 조용히 사라진다. 실제로 그랬다 —
-    응답은 `kept: True` 인데 세션 id 가 갈렸다. 되살리는 것은 `ensure` 가 한다.
+    A dead process is never swapped for a new object. Swapping it throws away
+    the `session_id` that object was holding, leaving `--resume` nothing to
+    attach to, and then the conversation disappears quietly on every model or
+    effort change. That is exactly what happened: the response said
+    `kept: True` while the session id had been replaced. Reviving it is
+    `ensure`'s job.
 
     다른 프로젝트로 갔다 돌아와도 같은 프로젝트·채널의 객체를 다시 쓴다.
     """
@@ -133,7 +144,8 @@ def session(cid: str) -> ChatSession:
             repo = repo_of(cid)
             chat = ChatSession(repo, system=chat_channels.ANSWER_PROMPT + "\n\n" + channel.preamble,
                                model=cfg["model"], effort=cfg["effort"])
-            # 서버 재시작도 문맥 지우기가 아니다. 명시적 초기화 뒤의 같은 CLI만 재개한다.
+            # Restarting the server is not clearing the conversation either.
+            # Only the same CLI, after an explicit reset, is resumed.
             for row in reversed(recall(cid, include_context=True)):
                 if row.get("role") == "context":
                     break
@@ -146,8 +158,9 @@ def session(cid: str) -> ChatSession:
         return chat
 
 
-# -- 기록 -----------------------------------------------------------------
-# DB 를 안 쓴다. 혼자 쓰는 localhost 에서 jsonl 한 줄이 못 하는 것이 없다.
+# -- Records ----------------------------------------------------------------
+# No database. On a localhost one person uses, there is nothing a line of
+# jsonl cannot do.
 
 def remember(cid: str, role: str, text: str, error: str = "", **extra) -> None:
     LOGS.mkdir(parents=True, exist_ok=True)
@@ -188,7 +201,7 @@ class Config(BaseModel):
 
 @app.get("/api/options")
 def options() -> dict:
-    """화면이 고를 수 있는 것 전부."""
+    """Everything the screen can choose between."""
 
     codex, error = [], ""
     try:
@@ -206,7 +219,8 @@ def channels() -> list[dict]:
         {"id": c.id, "label": c.label, "blurb": c.blurb,
          "live": session_key(c.id) in _sessions and _sessions[session_key(c.id)].alive,
          "model_name": _sessions[session_key(c.id)].model_name if session_key(c.id) in _sessions else "",
-         # 답에 나오는 SHA 를 커밋 링크로 만들 때 쓴다. 리모트가 없으면 빈 값.
+         # Used to turn a SHA in an answer into a commit link. Empty with no
+         # remote.
          "remote": repo_url(repo_of(c.id)),
          **config(c.id)}
         for c in chat_channels.CHANNELS
@@ -215,7 +229,8 @@ def channels() -> list[dict]:
 
 @app.post("/api/config/{cid}")
 def configure(cid: str, body: Config) -> dict:
-    """프로젝트는 전체 채널에, 모델·effort는 선택한 프로젝트의 채널에 적용한다."""
+    """The project applies to every channel; the model and effort apply to the
+    channels of the selected project."""
     global _project
 
     if cid not in chat_channels.BY_ID:
@@ -240,7 +255,8 @@ def configure(cid: str, body: Config) -> dict:
         if cid in _busy or (switched and _busy):
             raise HTTPException(409, "답변 생성이 끝난 뒤 설정을 바꿔 주세요")
         if switched:
-            # 기록 중인 턴이 없을 때만 바꾼다. 디스크 쓰기 실패 시 선택도 그대로다.
+            # Changed only while no turn is being recorded. If the disk write
+            # fails, the selection stays where it was too.
             LOGS.mkdir(parents=True, exist_ok=True)
             path = LOGS / "project.json"
             temporary = path.with_suffix(".tmp")
@@ -310,16 +326,19 @@ def say(cid: str, body: Say) -> StreamingResponse:
         simple_meta = {}
         try:
             remember(cid, "user", text)
-            # 관련 규칙의 표시용 대조이며 실제 호스트 주입 확인은 아니다.
+            # A display-time match against the relevant rules. Not a check
+            # that the host actually injected anything.
             pages = hits_for(cid, text)
             if pages:
                 yield sse({"kind": "hits", "text": "", "pages": pages})
             for ev in session(cid).say(text):
                 if ev.kind == "delta":
                     answer.append(ev.text)
-                # 한도·API 오류는 `done` 에 error=True 로 온다. 본문이 아니라 오류다.
-                # 부분 답과 따로 들지 않으면 되살렸을 때 왜 끊겼는지가 사라진다 —
-                # 세션 한도에 걸린 회고가 "세겠습니다" 한 줄로만 남았다.
+                # A quota or API error arrives on `done` with `error=True`. It
+                # is an error, not an answer. Held together with the partial
+                # answer instead of separately, the reason for the cut-off is
+                # gone when the conversation is restored — a retro that hit a
+                # session limit survived as the single line "세겠습니다".
                 if ev.kind == "done" and ev.meta.get("error"):
                     failed = ev.text or "완료된 답변이 없습니다"
                     yield sse({"kind": "error", "text": failed, **ev.meta})
@@ -379,7 +398,7 @@ def sse(payload: dict) -> str:
     return "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
 
 
-# -- 트리거 히트 ------------------------------------------------------------
+# -- Trigger hits -----------------------------------------------------------
 
 def repo_of(cid: str) -> Path:
     repo = chat_channels.repo_for(project())
@@ -389,7 +408,11 @@ def repo_of(cid: str) -> Path:
 
 
 def hits_for(cid: str, text: str) -> list[str]:
-    """표시용 트리거 대조. 실제 호스트 주입의 증거가 아니며 훅을 재실행하지 않는다."""
+    """A display-time trigger match.
+
+    Not evidence that the host injected anything, and it does not re-run the
+    hook.
+    """
     from inject import label, match_pages, pages
     repo = repo_of(cid)
     try:
@@ -398,7 +421,7 @@ def hits_for(cid: str, text: str) -> list[str]:
         return []
 
 
-# -- 어긋났다 ---------------------------------------------------------------
+# -- That was wrong ---------------------------------------------------------
 
 class Mark(BaseModel):
     kind: str            # 교정 · 재입력 · 부분수행 · 되돌림
@@ -412,11 +435,13 @@ KINDS = ("교정", "재입력", "부분수행", "되돌림")
 
 @app.post("/api/mark/{cid}")
 def mark(cid: str, body: Mark) -> dict:
-    """틀린 그 순간에 사람이 표시한다. census 형식 그대로 쌓인다.
+    """A person marks it at the moment it was wrong, in the census's own format.
 
-    census 는 세션 수십 개가 쌓여야 말하고, 표지 정규식의 편향을 탄다. 틀린
-    순간에 사람이 부류를 찍으면 둘 다 없다. `raw/corrections.jsonl` 은 census
-    출력과 같은 열(session · order · at · chars · text)을 갖고 `kind` 가 더 있다.
+    A census only speaks once dozens of sessions have piled up, and it rides
+    on the bias of its marker regexes. A person naming the category at the
+    moment it went wrong has neither problem. `raw/corrections.jsonl` carries
+    the same columns as the census output — session, order, at, chars, text —
+    plus `kind`.
     """
 
     if cid not in chat_channels.BY_ID:
@@ -441,15 +466,16 @@ def mark(cid: str, body: Mark) -> dict:
     return {"ok": True, "total": order + 1}
 
 
-# -- 인계 -------------------------------------------------------------------
+# -- Handover ---------------------------------------------------------------
 
 @app.post("/api/handoff/{cid}")
 def handoff(cid: str) -> dict:
-    """다음 세션에 붙일 프롬프트. census 가 20회 센 요청이다.
+    """The prompt to hand the next session. A request the census counted 20 times.
 
-    기계가 셀 수 있는 것만 든다 — 브랜치 · 열린 계획 · 최근 결정 · 미커밋 변경 ·
-    이 채널의 마지막 대화. "다음에 무엇을" 은 사람이 한 줄 더한다. 그 한 줄을
-    기계가 지으면 틀린 것을 자신 있게 넘긴다.
+    It carries only what a machine can count — the branch, the open plans, the
+    recent decisions, the uncommitted changes, this channel's last exchange.
+    The "what next" line is added by a person. A machine writing that line
+    hands the next session something wrong, confidently.
     """
 
     if cid not in chat_channels.BY_ID:
@@ -489,7 +515,7 @@ def handoff(cid: str) -> dict:
     return {"text": "\n".join(lines)}
 
 
-# -- 결정 -------------------------------------------------------------------
+# -- Decisions --------------------------------------------------------------
 
 class Decide(BaseModel):
     candidate: str
@@ -497,11 +523,12 @@ class Decide(BaseModel):
 
 
 def oneshot(repo: Path, prompt: str, system: str, tools: str, timeout: int = 600) -> dict:
-    """버튼 한 번에 한 턴. 쓰기가 허용되는 유일한 경로다.
+    """One turn per button press. The only path on which writing is allowed.
 
-    채널 프로세스는 Edit·Write 가 없다 — 브라우저에서 열리는 것이 파일을 고치면
-    원격 셸이다. 이 함수는 사람이 버튼을 눌러 **이 후보 하나**를 지목했을 때만
-    돌고, 무엇이 바뀌었는지를 돌려준다. 버튼이 곧 허가다.
+    The channel processes have no `Edit` and no `Write` — something opened in
+    a browser that edits files is a remote shell. This function runs only when
+    a person pressed a button naming one candidate, and it returns what
+    changed. The button is the permission.
     """
 
     cmd = ["claude", "-p", prompt, "--output-format", "json",
@@ -518,9 +545,10 @@ def oneshot(repo: Path, prompt: str, system: str, tools: str, timeout: int = 600
         return {"text": f"{type(exc).__name__}: {exc}", "error": True}
 
 
-# 에이전트에게 그대로 건너가는 지시문이다. 주석이 아니라 실행 문자열이라
-# 주석을 영어로 옮기는 것만으로는 안 바뀐다. 다만 이 실행의 **결과 설명**은
-# 웹 화면으로 돌아가므로 한국어로 적게 한다.
+# An instruction that goes to the agent as written. It is an executed string
+# rather than a comment, so turning the comments English does not touch it.
+# What it says about the result of that run goes back to the web screen, so
+# that part is written in Korean.
 WIKI_WRITER = (
     "You write one wiki page. Handle only the single candidate you were given. "
     "Follow `SCHEMA.md`'s 'page minimum structure' exactly — front matter with "
@@ -546,9 +574,10 @@ CLAUDE_MD_WRITER = (
 
 @app.post("/api/decide/{cid}")
 def decide(cid: str, body: Decide) -> dict:
-    """회고 후보 하나의 운명. `retrospect` 스킬 5번 걸음이 여기서 닫힌다.
+    """What becomes of one retro candidate. The `retrospect` skill's step 5.
 
-    스킬은 '선택지로 물어라' 고 적었는데 헤드리스는 못 묻는다. 이 앱은 묻는다.
+    The skill says to ask with options, and a headless run cannot ask. This
+    app can.
     """
 
     if cid not in chat_channels.BY_ID:
@@ -573,10 +602,11 @@ def decide(cid: str, body: Decide) -> dict:
         return result
 
     if body.target == "claude_md":
-        # 없으면 안 만든다. 산문으로 "다른 곳은 건드리지 마라" 라고만 했더니
-        # CLAUDE.md 가 없는 저장소에서 **위키 페이지를 대신 고쳤다.** 이 위키의
-        # 논지 그대로다 — 산문은 안 지켜지고 지켜지는 것은 막히는 것이다.
-        # 그래서 여기서 먼저 막고, 허용 도구도 그 파일 하나로 좁힌다.
+        # Not created if it is missing. Told only in prose to "touch nothing
+        # else", a repository without a CLAUDE.md had its wiki pages edited
+        # instead. That is this wiki's own argument back at it: prose is not
+        # followed, and what is followed is what blocks. So it is blocked here
+        # first, and the allowed tools are narrowed to that one file.
         if not (repo / "CLAUDE.md").exists():
             return {"text": f"`{repo.name}` 에는 `CLAUDE.md` 가 없다. "
                             "다른 파일을 대신 고치지 않았다.", "error": True}
@@ -588,11 +618,11 @@ def decide(cid: str, body: Decide) -> dict:
     raise HTTPException(400, "target 은 wiki · claude_md · drop 중 하나")
 
 
-# -- 파일 들여다보기 ---------------------------------------------------------
+# -- Looking inside a file --------------------------------------------------
 
 @app.get("/api/file")
 def peek(repo: str, path: str, line: int = 1, around: int = 25) -> dict:
-    """인용된 `경로:줄` 을 눌렀을 때 그 자리를 보여 준다. 저장소 밖은 안 준다."""
+    """Show the place a quoted `path:line` points at. Never outside the repository."""
 
     base = chat_channels.repo_for(repo)
     if base is None:
@@ -736,15 +766,16 @@ def mirror_stream() -> StreamingResponse:
                                       "X-Accel-Buffering": "no"})
 
 
-# -- 화면 -----------------------------------------------------------------
+# -- The screen -------------------------------------------------------------
 
 @app.get("/api/graph")
 def wiki_graph() -> FileResponse:
-    """정책 그래프. `graph.py` 가 낸 `graph.json` 을 그대로 준다.
+    """The policy graph: `graph.json` as `graph.py` produced it.
 
-    오래 여기서 `wiki.html` 을 통째로 줬다. 그러면 파이썬이 화면을 만들고 이
-    앱이 그것을 iframe 으로 감싸는 두 겹이 되고, 같은 그래프를 그리는 코드가 두
-    벌이 된다. 서버는 자료만 주고 그리는 것은 화면이 한다.
+    For a long time this served a whole `wiki.html` instead. That made two
+    layers — Python building a screen and this app wrapping it in an iframe —
+    and two copies of the code that draws the same graph. The server hands
+    over the data and the screen does the drawing.
     """
 
     page = chat_channels.WIKI / "graph.json"
@@ -772,7 +803,7 @@ else:
 
 
 def taken(host: str, port: int) -> bool:
-    """그 포트에 이미 누가 듣고 있나."""
+    """Is somebody already listening on that port?"""
 
     with socket.socket() as probe:
         probe.settimeout(0.5)
@@ -780,10 +811,11 @@ def taken(host: str, port: int) -> bool:
 
 
 def demo() -> None:
-    """모델·effort 를 바꿔도 대화가 남는가. 한 번 조용히 안 남았던 자리다.
+    """Does the conversation survive a model or effort change? It once did not.
 
-    HTTP 를 안 태운다. 버그는 `session()` 이 죽은 프로세스를 새 객체로 갈아서
-    `session_id` 를 버린 것이었고, 그건 이 두 함수만 불러도 재현된다.
+    No HTTP. The bug was `session()` swapping a dead process for a new object
+    and throwing the `session_id` away, and calling these two functions is
+    enough to reproduce it.
 
         python tool/chat.py --check
     """
@@ -817,17 +849,19 @@ def demo() -> None:
 def main() -> int:
     import uvicorn
 
-    # 포트 안내도 자체 점검 출력도 한글이다. 인코딩을 환경에 안 맡긴다 —
-    # 이 저장소가 cp949 한 글자에 여덟 번 데인 자리다.
+    # The port notice and the self-check output are both Korean. The encoding
+    # is not left to the environment — this repository has been burned by one
+    # cp949 character eight times.
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
     ap = argparse.ArgumentParser()
-    # 8000 은 이 기계에서 다른 프로젝트가 잡고 있다 (어댑터에 적혀 있다).
+    # 8000 is taken on this machine by another project, as its adapter says.
     ap.add_argument("--port", type=int, default=8787)
     ap.add_argument("--workspace", type=Path, help="프로젝트들이 들어 있는 폴더")
-    # 127.0.0.1 에 묶는다. 이 서버는 인증이 없고, 인증 없이 LAN 에 여는 것은
-    # 채팅이 아니라 남에게 셸을 주는 것이다.
+    # Bound to 127.0.0.1. This server has no authentication, and opening it to
+    # the LAN without any is not offering a chat, it is handing someone a
+    # shell.
     ap.add_argument("--host", choices=("127.0.0.1", "localhost"), default="127.0.0.1")
     ap.add_argument("--check", action="store_true", help="자체 점검만 하고 끝낸다")
     # A launcher opens one screen of this app, not the app in general. The
@@ -840,7 +874,8 @@ def main() -> int:
         chat_channels.WORKSPACE = args.workspace.expanduser().resolve()
     if not chat_channels.WORKSPACE.is_dir():
         ap.error("프로젝트 폴더가 없습니다. --workspace로 실제 폴더를 지정하세요.")
-    # 위키 자신을 가리키면 그 아래에 저장소가 없어 목록이 위키 한 장으로 조용히 줄어든다.
+    # Pointed at the wiki itself, there are no repositories underneath and the
+    # list quietly shrinks to the wiki alone.
     if chat_channels.WORKSPACE == chat_channels.WIKI:
         ap.error("프로젝트 폴더가 위키 자신입니다. 프로젝트들이 들어 있는 상위 폴더를 지정하세요: "
                  f"{chat_channels.WIKI.parent}")
@@ -849,9 +884,10 @@ def main() -> int:
         demo()
         return 0
 
-    # 포트가 막히면 uvicorn 은 영문 한 줄을 찍고 코드 1 로 끝난다. 더블클릭한
-    # 창은 그 줄을 읽기 전에 닫히고, 그래서 "켜지다가 그냥 꺼진다" 로 보인다.
-    # 실제로 그렇게 한 번 꺼졌다. 무엇이 막혔고 어떻게 푸는지를 먼저 말한다.
+    # With the port taken, uvicorn prints one English line and exits 1. A
+    # double-clicked window closes before that line can be read, so it looks
+    # like the thing starts and then just dies. It really did once. Say what
+    # is blocked and how to clear it, first.
     url = f"http://{args.host}:{args.port}/{args.open.lstrip('/')}"
 
     if taken(args.host, args.port):
