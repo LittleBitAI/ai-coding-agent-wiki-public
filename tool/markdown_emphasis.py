@@ -43,15 +43,32 @@ MOVE_TO = re.compile(r"^\*\*\* Move to: (.+)$", re.M)
 # says what a hooks install needs. It is not optional: a
 # missing parser is reported, never quietly skipped, because "every `.md`
 # passes" must not be able to mean "no `.md` was read".
-# 화면의 복구 명령은 그대로 붙여 넣어 돌아야 한다. 그러려면 셋이 다 맞아야 한다.
-# 경로는 절대경로여야 하고 — 훅의 작업 디렉터리는 대상 저장소이고 이 파일은 허브에
-# 있다 — 따옴표로 감싸야 하며 — 이 저장소는 공백 경로를 지원한다고 적어 두었다 —
-# 인터프리터는 `python` 이 아니라 훅이 실제로 돌고 있는 이것이어야 한다.
-MISSING = (
-    "markdown-it-py 가 없어 강조 검사를 돌리지 못했다 — "
-    f'`"{sys.executable}" -m pip install -r '
-    f'"{Path(__file__).resolve().parents[1] / "requirements-hooks.txt"}"`'
-)
+HOOKS_TXT = Path(__file__).resolve().parents[1] / "requirements-hooks.txt"
+
+
+def recovery(python: str, needs: Path = HOOKS_TXT) -> str:
+    """The install command as a reader can actually run it.
+
+    Four things have to be true at once, and each of them was a review finding
+    on its own. The path is absolute, because a hook's working directory is the
+    target repository while this file lives in the hub. It is quoted, because
+    this repo says it supports paths with spaces. The interpreter is the one
+    that will run the hook, not whatever `python` resolves to. And the shell
+    is named, because PowerShell will not run a quoted string in command
+    position -- it needs `&`, which cmd and bash do not take.
+
+    This lives here rather than in `apply`, which also prints it, because this
+    module has to be able to say it on an interpreter that is missing the very
+    packages the message is about. `wikilib` imports `yaml`; this imports the
+    standard library and nothing else.
+    """
+
+    return (f'`& "{python}" -m pip install -r "{needs}"`'
+            " (PowerShell. cmd·bash 는 앞의 `&` 를 뺀다)")
+
+
+MISSING = ("markdown-it-py 가 없어 강조 검사를 돌리지 못했다 — "
+           + recovery(sys.executable))
 
 _PARSER: object | None = None
 
@@ -100,11 +117,16 @@ TAG = re.compile(r"^<\s*([a-zA-Z][-a-zA-Z0-9]*)")
 
 
 def standalone(raw: str) -> bool:
-    """Does this inline tag put something on the page by itself?"""
+    """Does this inline tag put something on the page by itself?
+
+    The void list and nothing else. A trailing `/>` looks like it should mean
+    the same and does not: HTML has no self-closing syntax for ordinary
+    elements, so `<span/>` opens a span and the bold after it is still inside
+    it — a review round confirmed that against a real HTML parse.
+    """
 
     name = TAG.match(raw)
-    return bool(name) and (
-        name.group(1).lower() in VOID or raw.rstrip().endswith("/>"))
+    return bool(name) and name.group(1).lower() in VOID
 
 # Above this share of prose lines, emphasis is no longer marking exceptions.
 # Not taken from the pages in this repo: several of them are already past it,
@@ -201,6 +223,16 @@ def scan(text: str) -> tuple[int, int, list[str], int, int]:
         # what makes a bold run a label rather than mid-sentence emphasis.
         first = True
         for child in children:
+            # A newline the bold covers, wherever it is written. Judged off the
+            # same fact `kept` is counted from -- the token still has it -- so
+            # the two cannot drift apart. Hanging this on one token type did
+            # drift: a multi-line inline tag was handled and a multi-line image
+            # was not, and the second was already being subtracted from the
+            # residue, so nothing caught it at all.
+            if child.content and "\n" in child.content:
+                for frame in opens:
+                    frame["broken"] = True
+
             if child.type in ("softbreak", "hardbreak"):
                 for frame in opens:
                     frame["broken"] = True
@@ -221,14 +253,8 @@ def scan(text: str) -> tuple[int, int, list[str], int, int]:
                 if opens:
                     opens[-1]["parts"].append(inner)
             elif child.type == "html_inline":
-                # A tag written across lines carries the newline itself, and
-                # the bold holding it holds a line break as surely as one
-                # holding a soft break.
-                if "\n" in child.content:
-                    for frame in opens:
-                        frame["broken"] = True
-                # Its source is never label text. Whether it ends the run of
-                # nothing-seen-yet is a separate question, and both blanket
+                # A tag's source is never label text. Whether it ends the run
+                # of nothing-seen-yet is a separate question, and both blanket
                 # answers were review findings: counting every tag as visible
                 # let `<span>**Rule.**</span>` through, counting none as
                 # visible refused `<img src=x> **Rule.**`.

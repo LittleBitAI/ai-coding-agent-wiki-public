@@ -141,9 +141,14 @@ def test_an_inline_tag_is_not_part_of_the_label(tmp_path: Path) -> None:
     # But a tag that renders something of its own is content, and the bold
     # after it is mid-sentence emphasis. Treating every tag as invisible
     # refused this, which is correct prose.
-    for tag in ("<img src=x>", "<br>", "<input type=text>", "<span/>"):
+    for tag in ("<img src=x>", "<br>", "<input type=text>"):
         after = f"{tag} **규칙.** 훅은 세션을 멈추지 않는다.\n"
         assert markdown_emphasis.scan(after)[2] == [], tag
+
+    # `<span/>` is not one of them. HTML has no self-closing syntax for
+    # ordinary elements, so that opens a span and the bold is inside it --
+    # reading the slash as "closed" made this a miss.
+    assert markdown_emphasis.scan("<span/> **규칙.** 이다.")[2] == ["규칙."]
 
 
 def test_a_code_span_outside_the_bold_does_not_convict_it(tmp_path: Path) -> None:
@@ -172,6 +177,15 @@ def test_a_code_span_outside_the_bold_does_not_convict_it(tmp_path: Path) -> Non
 
     beside = ("**" + tick + "one" + tick + "** <span\nclass=x>text</span>")
     assert findings(beside, whole=False) == []
+
+    # Any token still carrying a newline, not one named type. Hanging the
+    # verdict on `html_inline` while `kept` subtracted every such token meant
+    # a multi-line image inside a bold was subtracted and then judged by
+    # nothing at all.
+    picture = "**![alt\ntext](x)** 뒤."
+    assert any("줄바꿈을 품은" in line for line in findings(picture, whole=False))
+    assert findings("**" + tick + "one" + tick + "** ![alt\ntext](x)",
+                    whole=False) == []
 
 
 def test_fragments_are_not_stitched_into_a_paragraph(tmp_path: Path) -> None:
@@ -681,8 +695,32 @@ def test_wiring_refuses_an_interpreter_without_the_parser(tmp_path: Path) -> Non
     assert "markdown-it-py" in done.stdout
     assert "requirements-hooks.txt" in done.stdout
     # Paths with spaces are supported, so the printed command has to survive
-    # being pasted as written.
-    assert f'"{sys.executable}" -m pip install -r "' in done.stdout
+    # being pasted as written -- quoted, and in a form PowerShell will run.
+    assert f'& "{sys.executable}" -m pip install -r "' in done.stdout
+    assert "PowerShell" in done.stdout
+
+
+def test_a_missing_interpreter_is_answered_not_raised() -> None:
+    """A wrong `--python` gets the explanation, not a traceback.
+
+    `unusable()` handled a child that ran and failed but not a path that could
+    not be run at all, so naming a nonexistent interpreter crashed the install
+    with `FileNotFoundError` instead of saying what was wrong.
+    """
+
+    import apply
+
+    assert apply.unusable(r"C:\definitely-missing-python.exe")
+
+    done = subprocess.run(
+        [sys.executable, "-X", "utf8", str(HERE / "apply.py"),
+         "--project", str(HERE.parent), "--check",
+         "--python", r"C:\definitely-missing-python.exe"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=False,
+    )
+    assert done.returncode == 2, done.stdout + done.stderr
+    assert "Traceback" not in done.stderr
 
 
 def test_the_probe_covers_the_stdlib_and_the_version_floor() -> None:

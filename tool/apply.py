@@ -14,6 +14,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from inject import WIKI, adapter_path, slots_for  # noqa: E402
+from markdown_emphasis import recovery  # noqa: E402
 from wikilib import front_matter  # noqa: E402
 
 # `requirements-hooks.txt` 의 배포 이름과 임포트 이름. pip 이름으로는 설치
@@ -332,8 +333,13 @@ def unusable(python: str) -> list[str]:
                    f"except Exception:\n    bad.append({name!r})\n")
     script += "print('\\n'.join(bad))\n"
 
-    done = subprocess.run([python, "-c", script], capture_output=True,
-                          encoding="utf-8", errors="replace")
+    try:
+        done = subprocess.run([python, "-c", script], capture_output=True,
+                              encoding="utf-8", errors="replace")
+    except OSError as error:
+        # 경로가 아예 없거나 실행할 수 없는 것도 이 함수가 답할 일이다.
+        # 여기서 터지면 사용자는 설명 대신 트레이스백을 받는다.
+        return [f"실행할 수 없다 ({type(error).__name__})"]
     if done.returncode:
         # 인터프리터가 이 검사조차 못 돌리면 그것이 답이다.
         return [f"{python} 을 못 돌린다"]
@@ -374,9 +380,7 @@ def main() -> int:
     if missing:
         needs = WIKI / "requirements-hooks.txt"
         print(f"`{args.python}` 이 {', '.join(missing)} 를 못 읽는다. 훅이 조용히 죽는다.")
-        # 경로에 공백이 있을 수 있다. 이 저장소는 공백 경로를 지원한다고
-        # 적어 두었으므로, 화면에 뜨는 복구 명령은 따옴표째 나간다.
-        print(f'`"{args.python}" -m pip install -r "{needs}"` 를 돌리거나'
+        print(f"{recovery(args.python, needs)} 를 돌리거나"
               " `--python` 으로 다른 인터프리터를 대라.")
         return 2
 

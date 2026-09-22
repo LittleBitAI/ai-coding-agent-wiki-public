@@ -89,11 +89,18 @@ a code span, which turned it into a space and is the only one that cannot be
 counted directly. What is left over after counting the first two is charged to
 a bold only when every code span in the block is inside it.
 
+A bold holds a line break when a break token is inside it, or when any token
+inside it still carries one — judged off the same fact the counting uses, so
+the two cannot drift apart. Naming one token type instead let a multi-line
+image be subtracted from the residue and then judged by nothing.
+
 An inline tag never joins a label's text, because a label is what the reader
 sees. Whether it ends the run of nothing-seen-yet is a separate question with a
 separate answer: a void element renders something by itself, so a bold behind
 `<img>` is mid-sentence emphasis, while a bold behind `<span>` still opens its
-block. Both blanket answers were review findings.
+block. Both blanket answers were review findings. The void list decides it and
+a trailing slash does not — HTML has no self-closing syntax for ordinary
+elements, so `<span/>` opens a span like any other.
 
 The parser is checked where the wiring is written — `apply.py`, which both
 documented installs go through — and it probes the interpreter the hooks will
@@ -101,6 +108,12 @@ run under, not the one doing the installing. It checks the version floor and
 the stdlib that floor brings, not only the package list: swapping the probe for
 that list once dropped `tomllib`, and a 3.10 interpreter passed as a target for
 hooks that import it.
+
+The command it prints is one a reader can run: absolute, quoted for paths with
+spaces, naming the interpreter that will run the hook rather than whatever
+`python` resolves to, and prefixed with `&` for PowerShell with a note for the
+shells that do not take it. Each of those four was its own review finding, so
+one function writes it and both the hook and `apply` print that.
 
 `markdown-it-py` is in `requirements-hooks.txt`, the one file that says what a
 hooks install needs and which the chat and dev requirements both pull in. It is
