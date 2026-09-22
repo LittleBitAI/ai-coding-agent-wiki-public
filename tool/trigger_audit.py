@@ -1,4 +1,9 @@
-"""실제 주입 함수를 재사용해 비용과 발화 대조표를 낸다. 오탐 점수는 내지 않는다."""
+"""Reuse the real injection functions to produce a cost and utterance table.
+
+It does not score false positives — whether a rule belonged in a turn is a
+judgement, and a number claiming to have made it would only hide that nobody
+did.
+"""
 
 from __future__ import annotations
 
@@ -15,12 +20,14 @@ from inject import (
 
 
 def measure(prompt: str, available: list, rule_limit=None, repo_limit=None) -> dict:
-    """렌더링된 블록의 크기. 헤더·출처·구분자는 뺀다.
+    """The size of the rendered block, without the header, source or separator.
 
-    **번역 전 크기다.** `inject` 는 대상 저장소의 `.wiki/` 본문을 영어로 옮긴
-    뒤에 렌더링하므로, 번역이 성공한 턴의 `trajectory.cost` 는 이 값보다 크다.
-    여기서 같은 수를 내려면 발화마다 왕복을 해야 하고, 그건 census 재생의
-    값어치를 없앤다. 두 수를 비교할 때는 이 차이를 빼고 봐라.
+    This is the size before translation. `inject` renders a target
+    repository's `.wiki/` body after turning it English, so on a turn where
+    the translation succeeded `trajectory.cost` is larger than this. Matching
+    the two would mean a round trip per utterance, which is exactly what
+    replaying a census is for avoiding. Subtract this difference before
+    comparing the numbers.
     """
     matched = match_pages(prompt, available)
     rules, decisions, rule, repo, _trimmed = render_parts(matched, rule_limit, repo_limit)
@@ -31,7 +38,7 @@ def measure(prompt: str, available: list, rule_limit=None, repo_limit=None) -> d
 
 
 def census_paths(patterns: list[str]) -> list[Path]:
-    """PowerShell은 네이티브 명령의 와일드카드를 확장하지 않는다."""
+    """PowerShell does not expand a wildcard for a native command."""
     paths = []
     for pattern in patterns:
         found = sorted(glob.glob(pattern))

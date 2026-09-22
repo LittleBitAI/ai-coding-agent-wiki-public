@@ -1,4 +1,4 @@
-"""harvest — 이미 있는 기록에서 결정을 캐낸다."""
+"""harvest — dig decisions out of records that already exist."""
 
 from __future__ import annotations
 
@@ -12,11 +12,13 @@ from pathlib import Path
 MAX_WHY = 400      # 이유를 몇 자까지 담을 것인가
 MAX_WHAT = 260
 
-# 도메인 표. (이름, 브랜치·제목에서 찾을 표시, 그 도메인을 부르는 트리거)
+# The domain table: (name, what to look for in a branch or title, the
+# triggers that call that domain in).
 #
-# 순서가 중요하다. 위에서부터 처음 걸리는 것을 쓰므로, 좁은 것이 먼저 와야
-# 한다. 여기에 없는 PR 은 도메인이 없고, 도메인이 없으면 주입되지 않는다 —
-# 트리거 없이 파일만 남는 것이 억지로 흔한 낱말에 거는 것보다 낫다.
+# Order matters. The first match from the top wins, so the narrow entries
+# come first. A PR that is in none of them has no domain, and no domain means
+# it is never injected — a file with no trigger is better than a trigger
+# forced onto a common word.
 DOMAINS: list[tuple[str, tuple[str, ...], list[str]]] = [
     ("vision", ("vision", "screen", "frame", "화면", "시각", "프레임"),
      ["화면", "vision", "프레임", "스크린", "캡처", "공유"]),
@@ -24,9 +26,9 @@ DOMAINS: list[tuple[str, tuple[str, ...], list[str]]] = [
      ["기억", "memory", "회상", "mem0", "저장소.{0,4}기억"]),
     ("tts", ("tts", "qwen", "voice", "audio", "음성", "발화"),
      ["tts", "qwen", "음성", "목소리", "합성", "재생"]),
-    # `프롬프트` 와 `응답` 은 홀로 두면 안 된다. "사용자 프롬프트를 작성해줘"
-    # (세션 인계문)와 "대화 프롬프트"(제품)가 같은 낱말이고 앞엣것이 훨씬
-    # 잦다. 복합어로만 건다.
+    # `프롬프트` and `응답` must not stand alone. "사용자 프롬프트를 작성해줘"
+    # (a session handover) and "대화 프롬프트" (the product) are the same word,
+    # and the first is far more common. Only the compounds are matched.
     ("dialogue", ("dialogue", "response", "prompt", "persona", "gemini",
                   "openai", "대화", "응답", "프롬프트"),
      ["대화\\s*(모델|프롬프트|응답|생성)", "응답\\s*(정책|수리|스키마)",
@@ -41,10 +43,11 @@ DOMAINS: list[tuple[str, tuple[str, ...], list[str]]] = [
 
 
 def commits(repo: Path, limit: int) -> list[dict]:
-    """커밋 메시지에서 결정을 읽는다. PR 이 없는 저장소를 위한 것.
+    """Read decisions out of commit messages, for a repository with no PRs.
 
-    이 저장소들의 커밋 메시지는 PR 본문과 같은 모양을 갖는다 — 제목 한 줄과
-    무엇·왜가 적힌 본문. 그래서 같은 추출기가 그대로 통한다.
+    Commit messages in these repositories have the same shape as a PR body —
+    one title line, then a body saying what and why. So the same extractor
+    works unchanged.
     """
 
     sep = "\x1e"
@@ -100,14 +103,17 @@ def section(body: str, name: str) -> str:
 
 
 def _prose(block: str) -> str:
-    """한 문단에서 마크다운 제목 줄을 걷고 한 줄로 만든다. 남는 게 없으면 빈 문자열."""
+    """Strip markdown heading lines from a paragraph and flatten it to one line.
+
+    An empty string when nothing is left.
+    """
 
     lines = [ln for ln in block.splitlines() if not re.match(r"\s*#{1,6}\s", ln)]
     return " ".join(" ".join(lines).split())
 
 
 def squeeze(text: str, limit: int) -> str:
-    """굵게와 목록 기호를 걷고 문장 단위로 자른다."""
+    """Strip bold and list markers, then cut on sentence boundaries."""
 
     text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
     text = re.sub(r"^[-*]\s+", "", text, flags=re.M)
@@ -120,13 +126,13 @@ def squeeze(text: str, limit: int) -> str:
 
 
 def triggers_for(title: str, branch: str) -> tuple[str, list[str]]:
-    """이 결정이 어느 도메인의 것인가, 그리고 그 도메인을 부르는 말.
+    """Which domain this decision belongs to, and the words that call it in.
 
-    결정을 부르는 것은 낱말이 아니라 주제다. 제목에서 낱말을 뽑으면
-    `세션`·`어떻게`·`메모리`·`요약` 같은 흔한 말이 걸리고, 그건 그 결정과
-    아무 상관이 없다. 그래서 도메인 하나를 정하고 그 도메인의 말에만 건다.
-    도메인은 이 저장소들이 PR 을 가르는 단위이기도 하다 — 두 도메인은 같은
-    PR 을 공유하지 않는다.
+    What calls a decision in is a subject, not a word. Pulling words out of
+    the title catches common ones — `세션`, `어떻게`, `메모리`, `요약` — that
+    have nothing to do with the decision. So one domain is chosen and only
+    that domain's words are attached. A domain is also the unit these
+    repositories split PRs along: two domains never share a PR.
     """
 
     text = f"{branch} {title}".lower()
@@ -137,15 +143,19 @@ def triggers_for(title: str, branch: str) -> tuple[str, list[str]]:
 
 
 def _marks(text: str, mark: str) -> bool:
-    """표지가 낱말로 서 있는가.
+    """Does this marker stand as a word of its own?
 
-    부분문자열로 보면 짧은 ASCII 표지가 낱말 **안에서** 걸린다 -- `ci` 가
-    `de-ci-sion` 에, `turn` 이 `re-turn` 에, `frame` 이 `frame-work` 에. 그리고
-    도메인이 붙으면 트리거도 붙고, `inject.py` 는 트리거가 있으면 규칙처럼
-    주입하므로 오분류는 상관없는 세션마다 그 기록을 띄운다.
+    Read as a substring, a short ASCII marker matches inside a word — `ci` in
+    `de-ci-sion`, `turn` in `re-turn`, `frame` in `frame-work`. A domain
+    brings triggers with it and `inject.py` injects anything with triggers
+    like a rule, so a misclassification surfaces that record in every
+    unrelated session.
 
-    한글 표지는 낱말 경계가 없으므로 그대로 포함으로 본다. 좁히는 쪽으로만
-    바뀌므로, 이 변경이 놓치는 것은 애초에 낱말로 서 있지 않던 표지뿐이다.
+    A Korean marker is matched by containment instead. It is routinely a
+    compound with a particle attached, which a regex word boundary does not
+    see, so requiring one would drop markers that really are standing as
+    words. The change only narrows, so what it misses is a marker that was
+    never standing as a word in the first place.
     """
 
     if not mark.isascii():
@@ -158,37 +168,42 @@ def record(pr: dict) -> tuple[str, str]:
     date = str(pr.get("mergedAt") or "")[:10] or "0000-00-00"
     title = " ".join(str(pr.get("title") or "").split())
     branch = str(pr.get("headRefName") or "")
-    # GitHub 은 본문을 CRLF 로 돌려준다. 아래 폴백이 `\n\n` 으로 문단을 가르므로,
-    # 정규화를 빼면 CRLF 본문은 통째로 한 덩어리가 되어 `왜` 가 늘 비고 `무엇` 은
-    # 본문 전체를 잘라 담는다. PR #95 의 기록이 정확히 그렇게 나왔다.
+    # GitHub returns the body with CRLF. The fallback below splits paragraphs
+    # on `\n\n`, so without this normalisation a CRLF body is one single block:
+    # `왜` comes out empty every time and `무엇` swallows a truncated copy of
+    # the whole body. The record for PR #95 came out exactly like that.
     body = str(pr.get("body") or "").replace("\r\n", "\n").replace("\r", "\n")
 
     what = squeeze(section(body, "변경 요약"), MAX_WHAT)
     why = squeeze(section(body, "변경 이유"), MAX_WHY)
     if not (what or why):
-        # 절 제목이 없는 커밋 메시지. 첫 문단이 무엇, 나머지가 왜다.
+        # A commit message with no section headings. The first paragraph is
+        # the what and the rest is the why.
         #
-        # **제목 줄은 재료가 아니다.** 이 저장소들의 PR 본문은 거의 다 마크다운
-        # 제목으로 시작하므로, 첫 덩어리를 그대로 담으면 `무엇. ## 결론` 이 기록이
-        # 된다. 2026-09-10 의 131~135 가 전부 그렇게 나갔다. 덩어리째 버리지 않고
-        # 제목 *줄* 만 걷는 이유는, 제목과 본문 사이에 빈 줄이 없으면 둘이 한
-        # 덩어리라 통째로 버리면 본문까지 잃기 때문이다.
+        # A heading line is not material. Almost every PR body in these
+        # repositories opens with a markdown heading, so taking the first
+        # block as it stands makes the record read `무엇. ## 결론`. Records
+        # 131 to 135 on 2026-09-10 all went out that way. Only the heading
+        # *line* is stripped rather than the block, because with no blank line
+        # between heading and body the two are one block and dropping it would
+        # take the body with it.
         blocks = [_prose(b) for b in body.split("\n\n")]
         blocks = [b for b in blocks if b]
         what = squeeze(blocks[0], MAX_WHAT) if blocks else ""
         why = squeeze(" ".join(blocks[1:]), MAX_WHY) if len(blocks) > 1 else ""
     domain, trig = triggers_for(title, branch or title)
 
-    # 번호를 이름에 넣는다. 브랜치 이름만 쓰면 재사용된 이름끼리 겹쳐 나중
-    # 것이 앞엣것을 조용히 덮는다.
+    # The number goes in the filename. On the branch name alone, a reused name
+    # collides and the later record quietly overwrites the earlier one.
     slug = re.sub(r"[^a-z0-9]+", "-", (branch or pr.get("sha", "")).lower()).strip("-")
     name = f"{date}-{number:03d}-{slug or 'commit'}"[:74]
 
     lines = [
         "---",
         "scope: project",
-        # 도메인이 없으면 주입 대상이 아니다. 파일로는 남아 검색과 세션 시작
-        # 요약에 쓰이지만, 흔한 낱말에 억지로 걸지는 않는다.
+        # No domain means it is never injected. The file still exists for
+        # search and for the session-start summary, but it is not forced onto
+        # a common word to give it a trigger.
         "severity: contract" if (why and trig) else "severity: preference",
         f"triggers: {json.dumps(trig, ensure_ascii=False)}",
         f"domain: {domain}" if domain else "domain: ''",
@@ -213,7 +228,8 @@ def record(pr: dict) -> tuple[str, str]:
 
 
 def main() -> int:
-    # 출력이 파이프로 가면 기본이 cp949 다. 인코딩을 환경에 안 맡긴다.
+    # Down a pipe the default here is cp949. The encoding is not left to the
+    # environment.
     sys.stdout.reconfigure(encoding="utf-8")
 
     parser = argparse.ArgumentParser(description="PR 본문에서 결정 기록을 캐낸다")
