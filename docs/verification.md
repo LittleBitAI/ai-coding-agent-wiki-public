@@ -1,73 +1,103 @@
-# 공개 사본 검증 기록
+# Verification record for the public copy
 
-## 2026-09-17 기능 수정 반영
+## 2026-09-17 — functional changes applied
 
-프로젝트 선택을 다섯 채널이 공유하고, 대화·기록은 프로젝트와 채널별로 보존하도록
-수정했다. 외부 브리핑도 프로젝트를 지정한다. 질문 규칙은 일반 발화에도 전달하며
-Claude Code와 Codex의 도구를 구별한다. 공백이 있는 adapter 이름의 훅 인용도 수정했다.
+The project selection became shared across all five channels, and
+conversations and records are now kept per project and per channel. External
+briefings name a project too. The question rule is delivered on ordinary
+utterances as well and distinguishes Claude Code's tool from Codex's. Hook
+quoting for an adapter name containing a space was also fixed.
 
-- 자동 검사 129개, 별도 실행형 검사 10개, Ruff와 위키 lint 통과.
-- 프런트엔드 lint와 TypeScript·Vite 빌드 통과. 기존 lint·번들·테스트 클라이언트 경고는 남아 있다.
-- 원본과 핵심 Python 구현·프런트엔드 및 규칙의 등급·트리거·차단 설정을 대조했다.
-  공개본 전용 설치 안내·가상 adapter·경로 자리표시자·근거 제외 처리는 보존했다.
-- 원본의 실제 대화·Markdown 근거 기록·프로젝트 adapter·개인 경로·생성 그래프·Git 이력을
-  가져오지 않았다. 질문 규칙의 개인 사례는 제외하고 `sources_withheld: true`를 유지했다.
-- 공개본의 추적 파일과 기존 전체 이력 3개 커밋(서로 다른 blob 178개)을 알려진 비공개
-  프로젝트명·개인 경로·세션 식별자와 대조해 검출 0건을 확인했다.
-- 실제 호스트 질문 UI와 독립 코드 리뷰는 이번 자동 검사 범위에 포함되지 않는다.
+- 129 automatic checks, 10 separately executed checks, Ruff and the wiki lint
+  all passed.
+- The frontend lint and the TypeScript and Vite builds passed. The existing
+  lint, bundle and test-client warnings remain.
+- The core Python implementation, the frontend, and each rule's severity,
+  triggers and block settings were compared against the original. The
+  public-copy-only install guide, the fictional adapter, the path placeholders
+  and the withheld-grounds handling were preserved.
+- The original's real conversations, Markdown grounds records, project
+  adapters, personal paths, generated graph and git history were not brought
+  across. The question rule's private cases were excluded and
+  `sources_withheld: true` kept.
+- The public copy's tracked files and the whole existing history of three
+  commits (178 distinct blobs) were compared against known private project
+  names, personal paths and session identifiers, with zero detections.
+- The real host question UI and an independent code review are not within the
+  scope of these automatic checks.
 
-이 항목은 로컬 변경분의 검증 기록이다. 원격 push나 신규 공개 릴리스를 뜻하지 않는다.
+This entry records verification of local changes. It does not mean a remote
+push or a new public release.
 
-## 2026-09-16 초기 공개 사본
+## 2026-09-16 — the initial public copy
 
-2026-09-16, Windows 환경에서 이 공개 사본을 검사했다.
+On 2026-09-16 this public copy was checked on Windows.
 
-| 확인 대상 | 결과 |
+| Checked | Result |
 | --- | --- |
-| 자동 검사 | 126개 검사 중 125개 통과 후 설치 순서 테스트 1개 수정; 해당 파일 8개 재실행 통과 |
-| 저장소 검사 | Ruff, 위키 lint, 별도 실행형 검사 12개 통과 |
-| 화면 | npm ci, lint, TypeScript 및 Vite 빌드 통과 |
-| 실제 설치 | 새 `.venv`에서 채팅 설치, 지도 생성, 기존 Codex 로그인 유지와 모델 조회 통과 |
-| 로그인 상태 | 설치된 Claude Code·Codex CLI의 현재 사용자 로그인 상태 확인 |
-| 두 호스트의 hooks | 별도 로컬 clone에서 설치·재설치·검사 통과 |
-| 경로·설정 보존 | 한글·공백 경로, 동명 checkout 둘, 폴더명 변경 후 재설치, 기존 설정 보존 통과 |
-| 서버 | 빌드된 HTML, 지도, 프로젝트 목록, 모델 선택지, 채널의 HTTP 응답 확인 |
-| 파일 형식 | 공개 대상 파일의 UTF-8 without BOM·LF 확인; 지도 생성도 LF로 고정 |
-| 배포 제외 | 대화·분석·개인 설정 경로가 Git에서 제외되는지 자동 검사 |
+| Automatic checks | 125 of 126 passed, then one install-order test was fixed; the 8 affected files re-ran and passed |
+| Repository checks | Ruff, the wiki lint and 12 separately executed checks passed |
+| The screen | npm ci, lint, and the TypeScript and Vite builds passed |
+| A real install | Chat install in a fresh `.venv`, map generation, an existing Codex login surviving, and the model query all passed |
+| Sign-in state | The current user's sign-in state was confirmed in the installed Claude Code and Codex CLIs |
+| Hooks on both hosts | Install, reinstall and check passed in a separate local clone |
+| Paths and settings | Paths with Korean characters and spaces, two same-named checkouts, reinstalling after a rename, and existing settings surviving all passed |
+| The server | HTTP responses confirmed for the built HTML, the map, the project list, the model options and the channels |
+| File format | UTF-8 without BOM and LF confirmed on every published file; map generation pinned to LF too |
+| Distribution exclusions | An automatic check that conversation, analysis and private settings paths are excluded from git |
 
-검사용 서버는 종료했다. 다른 서버와 개인 프로젝트의 설정은 변경하지 않았다.
-지도 줄끝을 수정한 뒤 관련 검사 3개와 Ruff·위키 lint를 다시 실행해 통과했다.
+The server used for checking was stopped. No other server and no private
+project's settings were changed. After fixing the map's line endings, three
+related checks plus Ruff and the wiki lint were re-run and passed.
 
-규칙·스킬 복원 후 원문과 제거 내역을 대조했다. 21개 규칙의 근거 경로를 제외한 메타데이터는
-원본과 같고, 4개 스킬의 절차도 유지한다. 빈 기록 폴더를 남기고 실제 기록은 제외했다.
-`sources_withheld`는 정확히 `true`일 때만 근거 누락을 허용하며, 링크 오류는 계속 잡는지 확인했다.
-Slack 실행기는 실제 발송 대신 가짜 CLI로 개인 설정 전달과 채널 미지정 시 중단을 검사했다.
-채팅 설치 도구는 원본과 동일하다. 공개하지 않는 `graph.json`은 설치 안내에 따라 별도로 생성한다.
-복원한 내용을 임시 clone에 반영한 뒤 두 호스트 설치·재설치·기존 설정 보존을 다시 확인했다.
-같은 이름의 checkout 두 개, 한글·공백 경로, 폴더명을 바꾼 뒤 재설치가 모두 통과했다.
+After restoring the rules and skills, the text and what was removed were
+compared. The metadata of 21 rules is identical to the original apart from the
+grounds paths, and the procedures of four skills are kept. Empty record
+folders were left and the actual records excluded. `sources_withheld` was
+confirmed to permit missing grounds only when exactly `true`, and to keep
+catching link errors. The Slack launcher was checked with a fake CLI instead
+of really sending, for passing private settings through and for stopping when
+no channel is given. The chat installer is identical to the original. The
+`graph.json` that is not published is generated separately, per the install
+guide. The restored content was applied to a temporary clone and install,
+reinstall and existing-settings survival were confirmed again on both hosts.
+Two same-named checkouts, paths with Korean characters and spaces, and
+reinstalling after a rename all passed.
 
-기존 경고가 남아 있다: 프런트엔드 lint 경고 5개, 큰 번들 경고, 테스트 클라이언트 의존성 경고.
-실패한 검사로 숨기지 않았으며, 이번 배포 분리에서 관련 기능을 변경하지 않았다.
+Existing warnings remain: five frontend lint warnings, the large-bundle
+warning and the test-client dependency warning. None were hidden behind a
+failing check, and this separation for distribution changed none of the
+related features.
 
-## 공개 범위 검사
+## The publication-scope check
 
-원본의 `.git`, 실제 사용자 발화, 프로젝트별 adapter, 개인 설정과 생성 기록은 복사하지 않았다.
-규칙 21개와 스킬 4개는 원문에서 실제 근거 기록만 제외한다.
-적용 조건·등급·차단 설정과 스킬의 단계·종료 조건은 원본을 유지한다.
-실제 기록에 의존한 테스트는 가상 입력으로 바꿨고 실제 사고 통계를 기능 검증 근거로 삼지 않았다.
-최초 커밋의 128개 파일과 그 이력에서 알려진 기존 프로젝트명, 개인 경로, 세션 식별자,
-원본 커밋 참조, 흔한 인증 키 패턴이 검출되지 않았다. 원본의 세션 식별자 85개와도 대조했다.
-추가 변경과 커밋은 같은 검사를 다시 거쳐야 한다.
+The original's `.git`, real user utterances, per-project adapters, private
+settings and generated records were not copied. The 21 rules and four skills
+exclude only the real grounds records from the text. Applicability, severity,
+block settings, and each skill's steps and exit conditions keep the original.
+Tests that depended on real records were switched to fictional input, and real
+incident statistics were not used as evidence for functional verification. In
+the first commit's 128 files and their history, no known existing project
+name, personal path, session identifier, original commit reference or common
+credential pattern was detected. The original's 85 session identifiers were
+compared too. Further changes and commits have to go through the same check
+again.
 
-이 검사는 로컬 패턴 검사와 내용 확인이다. 모든 형태의 비밀정보 부재를 보장하는 인증은 아니다.
-사진·스크린샷은 포함하지 않았으며 포함된 PNG 한 개는 장식용 도형으로 확인했다.
+This is a local pattern check and a content review. It is not a certification
+guaranteeing the absence of every form of secret. No photographs or
+screenshots are included, and the one PNG present was confirmed to be
+decorative shapes.
 
-## 별도 확인이 필요한 것
+## What needs confirming separately
 
-- 새 계정으로 실제 OAuth 로그인하는 절차는 실행하지 않았다. 기존 로그인 유지와 상태를 확인했다.
-  서로 다른 CLI 설정 경로를 사용하는 검사는 가짜 CLI 프로세스로 실행했다.
-- 실제 Claude/Codex 세션이 자동 이벤트를 전달하는지와 선택형 질문 UI는 별도 검증 대상이다.
-- 쉬운 설명 품질은 아직 합격이 아니다. [검수 기준](quality.md)을 따른다.
-- macOS·Linux의 실제 설치는 이번 Windows 검사 결과에 포함하지 않는다.
-- 재사용할 독립 리뷰 세션이 없어 이번 결과는 구현자의 검사다. 독립 코드 리뷰를 받았다고 주장하지 않는다.
-- GitHub 원격 생성과 push는 실행하지 않았다.
+- Signing in with a new account through real OAuth was not performed. An
+  existing login surviving, and its state, were confirmed. The checks that use
+  different CLI settings paths ran with fake CLI processes.
+- Whether a real Claude or Codex session delivers automatic events, and the
+  options question UI, are separate verification targets.
+- The plain explanation's quality does not pass yet. It follows the
+  [review criteria](quality.md).
+- Real installs on macOS and Linux are not included in this Windows result.
+- With no independent review session to reuse, this result is the
+  implementer's own checking. No claim is made of an independent code review.
+- Creating a GitHub remote and pushing were not performed.

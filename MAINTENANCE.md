@@ -1,170 +1,186 @@
-# 유지보수 — 언제 검진하고 어떻게 갱신하는가
+# Maintenance — when to diagnose and how to update
 
-유지되지 않는 위키는 낡은 위키보다 나쁘다. 틀린 것을 자신 있게 말하기 때문이다.
+A wiki that is not maintained is worse than a stale one. It says wrong things
+confidently.
 
-## 손으로 갱신하는 위키는 갱신 안 되는 위키다
+## A wiki updated by hand is a wiki that does not get updated
 
-그래서 `tool/sync.py` 가 `Stop` 훅으로 걸려 있고, 일이 끝날 때마다 스스로 돈다.
+So `tool/sync.py` hangs on the `Stop` hook and runs itself whenever work ends.
 
-| 맞추는 것 | 언제 도나 |
+| What it reconciles | When it runs |
 | --- | --- |
-| 문서 목록 | 문서가 늘거나 지워지거나 고쳐졌으면 |
-| 결정 기록 | 기록에 없는 PR·커밋이 있으면 (6시간에 한 번만 확인) |
-| 검진 | 매번 |
+| The document listing | When a document was added, deleted or changed |
+| The decision record | When there is a PR or commit not in the record (checked at most once every six hours) |
+| The diagnosis | Every time |
 
-비싸면 꺼질 것이고,
-꺼진 자동 갱신은 없는 것과 같다.
+Expensive means it gets switched off, and an automatic update that is switched
+off is the same as none.
 
-그리고 이것이 주석에 이력을 안 쌓는 이유다. 언제 어느 PR 에서 무엇이
-바뀌었는지는 `.wiki/decisions/` 가 들고, 그 기록은 커밋에서 자동으로 캐진다.
-같은 이야기를 소스 주석에도 적으면 두 벌이 되고, 두 벌은 곧 어긋난다 —
-그게 이 lint 가 찾는 바로 그 드리프트다.
+And this is why history is not accumulated in comments. What changed in which
+PR and when is held by `.wiki/decisions/`, and that record is mined from
+commits automatically. Write the same story into the source comments as well
+and there are two copies, and two copies soon disagree — which is exactly the
+drift this lint hunts.
 
-이력이지 이유가 아니다.
+That is history, not a reason.
 
-가르는 기준은 시간이다. 왜 이 구조인가는 코드가 바뀔 때 같이 눈에 띄므로
-코드 옆에서 산다. 언제 무엇을 고쳤나는 코드가 바뀌어도 안 바뀌므로 혼자
-낡는다. 무엇을 남기고 무엇을 옮기는지는 [`craft/comments-carry-why`](craft/comments-carry-why.md)
-가 든다.
+Time is what separates them. Why this structure is visible whenever the code
+changes, so it lives next to the code. When what was fixed does not change
+when the code does, so it ages alone. What stays and what moves is held by
+[`craft/comments-carry-why`](craft/comments-carry-why.md).
 
-## 두 종류의 썩음
+## Two kinds of rot
 
-| 무엇 | 누가 잡나 | 어떻게 |
+| What | Who catches it | How |
 | --- | --- | --- |
-| 허브 위키의 구조가 썩음 | `tool/lint.py` | 링크·고아·근거·트리거를 기계가 판정한다 |
-| 붙은 저장소의 지식이 썩음 | `tool/repo_lint.py` | 목록·포인터를 그 저장소 안에서만 본다 |
-| 내용이 썩음 | `tool/census.py` 재실행 | 그 규칙이 여전히 어겨지는지 실 발화로 잰다 |
+| The hub wiki's structure rots | `tool/lint.py` | A machine judges links, orphans, grounds and triggers |
+| An attached repository's knowledge rots | `tool/repo_lint.py` | Listings and pointers, seen only inside that repository |
+| The content rots | Re-running `tool/census.py` | Measures from real utterances whether the rule is still broken |
 
-lint 는 위키가 자기 자신과 어긋나는 것을 잡는다. 위키가 세상과 어긋나는 것은
-못 잡는다. 그건 census 를 다시 돌려야 보인다.
+`lint` catches the wiki disagreeing with itself. It cannot catch the wiki
+disagreeing with the world. That only appears by running a census again.
 
-둘은 축이 다르므로 도구도 다르다. 대상 저장소에서 일이 끝날 때 도는 것은
-`repo_lint` 뿐이다. 허브의 발견을 거기 뿌리면 그 세션에서 할 수 있는 일이 없는
-줄이 매번 뜨고, 매번 뜨는 경고는 안 읽힌다.
+The two axes differ, so the tools differ. What runs when work ends in a target
+repository is `repo_lint` alone. Scatter the hub's findings there and every
+session shows lines nothing in that session can act on, and a warning that
+appears every time is not read.
 
-## 언제 하는가 — 달력이 아니라 사건에
+## When — on events, not on a calendar
 
-달력에 걸면 안 돌아간다. 이미 일어나는 일에 붙인다.
+Hung on a calendar it does not run. Attach it to something that already happens.
 
-| 계기 | 무엇을 | 왜 거기 |
+| Trigger | What | Why there |
 | --- | --- | --- |
-| 일이 끝날 때마다 | `sync` (`Stop` 훅) | 자동. |
-| 머지 후 정리 | `lint` | `after-merge` 스킬의 한 걸음. 가장 자주 일어난다 |
-| `apply` 직전 | `lint` | 썩은 위키를 남의 저장소에 쓰지 않는다 |
-| **`enforce` 를 고친 직후** | **`lint --check`** | 선언만 바뀌고 설치가 안 따라오는 것이 가장 오래 산 고장이다 |
-| **허브 게이트를 돌 때마다** | **`lint --check`** | 게이트에 들어 있다. 배선이 어긋나면 종료 코드 1 |
-| 페이지를 고친 직후 | `lint` + `graph` | 링크와 트리거는 고칠 때 깨진다 |
-| 하루 작업 끝 | `retrospect` 스킬 | 오늘 어긋난 자리를 오늘 잡는다 |
-| 프로젝트를 새로 붙일 때 | `census` + `intersect` | 새 교집합이 기존 페이지의 등급을 바꾼다 |
-| 같은 지적을 또 받았을 때 | `census` 재실행 | 그 페이지가 작동하지 않는다는 신호다 |
+| Whenever work ends | `sync` (the `Stop` hook) | Automatic |
+| Post-merge cleanup | `lint` | One step of the `after-merge` skill. It happens most often |
+| Just before `apply` | `lint` | A rotten wiki is not written into someone else's repository |
+| **Right after changing `enforce`** | **`lint --check`** | A declaration changing without the install following was the longest-lived fault |
+| **Every hub gate run** | **`lint --check`** | It is in the gate. Wiring out of step exits 1 |
+| Right after changing a page | `lint` + `graph` | Links and triggers break while being changed |
+| End of a day's work | The `retrospect` skill | Catch today's drift today |
+| Attaching a new project | `census` + `intersect` | A new intersection changes existing pages' severities |
+| On receiving the same finding again | Re-run `census` | That page is not working |
 
-마지막 줄이 이 문서에서 가장 중요하다. `retrospect` 는 census 가 못 하는
-자리를 맡는다 — census 는 세션이 수십 개 쌓여야 뭔가를 말하지만, 오늘 난
-사고는 오늘 잡지 않으면 다음 census 까지 반복된다.
+The last row is the most important in this document. `retrospect` takes the
+place a census cannot: a census needs dozens of sessions to say anything,
+while an incident from today repeats until the next census unless it is caught
+today.
 
-## 무엇이 저절로 따라오고 무엇이 `apply` 를 기다리나
+## What follows by itself and what waits for `apply`
 
-| 바꾼 것 | 어떻게 반영되나 | `apply` 재실행 |
+| Changed | How it takes effect | Re-run `apply` |
 | --- | --- | --- |
-| 페이지 본문 · 트리거 · 어댑터 슬롯 | `inject` 가 돌 때 허브 파일을 읽는다 | 불필요 |
-| 기존 훅의 파이썬 구현 | 설정의 절대 경로가 가리키는 파일을 다음 프로세스가 읽는다 | 불필요 |
-| **`enforce.deny` · 새 훅 · 이벤트 · 명령 옵션** | 대상 설정에 박힌 **사본** | **필요** |
-| Codex 의 deny 패턴 | `codex_pretool` 이 실행 때 `apply.declared()` 를 읽는다 | 이미 걸려 있으면 불필요 |
-| **Codex 의 새 이벤트 · 새 pretool 연결** | `.codex/hooks.json` | **필요** |
-| 프로젝트 문서 · 결정 | `SessionStart` 와 `Stop`→`sync`→`harvest` | 별도 경로 |
+| A page body · triggers · adapter slots | `inject` reads the hub files when it runs | Not needed |
+| The Python implementation of an existing hook | The next process reads the file the settings' absolute path points at | Not needed |
+| **`enforce.deny` · a new hook · an event · a command option** | A **copy** embedded in the target's settings | **Needed** |
+| Codex's deny patterns | `codex_pretool` reads `apply.declared()` at run time | Not needed once it is wired |
+| **A new Codex event · a new pretool link** | `.codex/hooks.json` | **Needed** |
+| Project documents · decisions | `SessionStart` and `Stop`→`sync`→`harvest` | A separate path |
 
-자동 배포는 없다. `sync` 는 corpus·결정·`repo_lint` 만 갱신하고 `apply` 를
-안 부른다. `after-merge` 스킬도 `lint` 만 부른다. 그러니 선언을 고친 세션이
-배포까지 해야 하고, 안 하면 아무도 안 알려 준다 — 알려 주게 만든 것이
-`lint --check` 다.
+There is no automatic deployment. `sync` updates the corpus, the decisions and
+`repo_lint`, and does not call `apply`. The `after-merge` skill calls `lint`
+only. So the session that changed a declaration has to deploy it too, and
+nobody says so if it does not — `lint --check` is what was built to say so.
 
-주기는 이렇다.
+The cycle is this.
 
-1. 허브에서 선언을 고친다 → 그 세션의 게이트가 `lint --check` 로 허브 배선을 본다
-2. 대상 저장소는 다음 `Stop` 의 `repo_lint` 가 자기 배선의 누락을 알린다
-3. 실제 갱신은 그 대상을 소유한 세션이 `apply --write` 로 한다.
-   남의 저장소 설정을 이쪽에서 자동으로 쓰지 않는다
-4. 새로 붙이는 저장소나 별명 어댑터로 설치한 저장소는 `--check` 를 명시적으로 돌린다
+1. A declaration changes in the hub → that session's gate reads the hub wiring
+   with `lint --check`
+2. The target repository learns of its own missing wiring from the next
+   `Stop`'s `repo_lint`
+3. The actual update is done by the session that owns that target, with
+   `apply --write`. Another repository's settings are never written
+   automatically from here
+4. A newly attached repository, or one installed through an aliased adapter,
+   runs `--check` explicitly
 
-## 페이지가 작동하는지 재는 법
+## How to measure whether a page works
 
-census 는 각 반복 지시가 몇 번 재입력됐는지 센다. 어떤 실패 때문에 페이지를
-썼다면, 나중에 다시 센 값은 내려가 있어야 한다.
+A census counts how many times each repeated instruction was retyped. If a
+page was written because of some failure, a later count should have gone down.
 
-    안 내려갔다  →  페이지를 고쳐 쓰지 마라. 사다리를 올려라
-    내려갔다     →  등급을 내리거나 검사로 옮기고 산문을 줄인다
+    It did not go down  →  do not rewrite the page. Go up the ladder
+    It went down        →  lower the severity or move it into a check, and cut the prose
 
-`--since` 로 오늘 것만 자를 수 있다. 회고가 손으로 세지 않아도 된다.
+`--since` cuts it to today, so a retrospective does not have to count by hand.
 
 ```bash
-python tool/census.py --project <경로> --since today
+python tool/census.py --project <path> --since today
 ```
 
-등급은 처음에 고르는 것이 아니라 재서 고치는 것이다.
+Severity is not chosen at the start, it is measured and corrected.
 
-`ENFORCEMENT.md` 의 사다리에서
-한 칸 올리는 것이 답이다.
+Going up one rung of the ladder in `ENFORCEMENT.md` is the answer.
 
-## 갱신 — 무엇이 생기면 어디로 가나
+## Updating — where something new goes
 
-| 생긴 것 | 가는 곳 | 문턱 |
+| What appeared | Where it goes | Threshold |
 | --- | --- | --- |
-| 한 저장소에서 처음 난 사고 | 그 저장소의 `CLAUDE.md` | 없음. 위키에 안 들인다 |
-| 반복일 것 같은데 표본이 하나 | `raw/` 에 측정만 | 다음에 무엇을 셀지 그 문서에 적는다 |
-| 같은 사고가 둘째 저장소에서 | 위키 페이지 | `intersect` 가 둘 이상에서 잡는다 |
-| 한 곳에서 이미 검사·차단으로 서 있는 규칙 | 위키 페이지 | 옮겨도 말이 되는가 |
-| 페이지가 틀렸다고 밝혀짐 | 그 페이지를 고치고 `sources` 갱신 | 재현 |
-| 규칙이 1층으로 옮겨감 | `enforce.deny` 채우고 **모든 대상·모든 agent 에 `apply`** | 실제로 차단되는가 |
-| 규칙이 더는 안 일어남 | 등급을 내리거나 지운다 | 다음 census 에서 0건 |
+| An incident seen once, in one repository | That repository's `CLAUDE.md` | None. It does not come into the wiki |
+| Looks like it will repeat but there is one sample | Measurements only, in `raw/` | Write in that document what to count next time |
+| The same incident in a second repository | A wiki page | `intersect` catches it in two or more |
+| A rule already standing as a check or block somewhere | A wiki page | Does it still make sense moved |
+| A page turns out to be wrong | Fix that page and update `sources` | Reproduction |
+| A rule moves down to layer 1 | Fill `enforce.deny` and **`apply` to every target and every agent** | Is it actually blocked |
+| A rule stops happening | Lower the severity or delete it | Zero in the next census |
 
-첫 줄이 이 표의 요점이다. 한 곳에서만 난 사고는 그 저장소의 것이고, 여기 들이면
-남의 지뢰가 된다.
+The first row is the point of this table. An incident seen in one place
+belongs to that repository, and bringing it here makes it someone else's
+landmine.
 
-둘째 줄도 나중에 붙였다. 그 전에는 갈 곳이 페이지 아니면 `CLAUDE.md` 뿐이었고,
-둘 다 아닌 것 — 한 번 봤는데 모양이 또 나올 것 같은 것 — 은 갈 데가 없어서 대화
-안에서 사라졌다. `raw/` 에 숫자와 다음에 셀 것을 적어 두면 두 번째가 왔을 때
-세는 비용이 거의 0 이 된다. 페이지를 만들지 않는 것이 요점이다: 표본 하나로 규칙을
-쓰면 그 규칙이 남의 지뢰가 되는 것은 첫 줄과 같다.
+The second row was added later. Before it, the only destinations were a page
+or `CLAUDE.md`, and anything that was neither — seen once, and looking likely
+to recur — had nowhere to go and disappeared inside the conversation. With the
+number and what to count next written into `raw/`, counting costs almost
+nothing when the second one arrives. Not creating a page is the point: writing
+a rule from one sample makes that rule someone else's landmine, exactly as the
+first row says.
 
-셋째 줄은 나중에 붙였다. census 는 사용자가 다시 친 것을 세는데 이미 차단된
-규칙은 재입력을 안 만든다. 첫 문만 열어 두면 1층에 실을 것이 영원히 안 생긴다.
+The third row was added later too. A census counts what the user retyped, and
+a rule already blocked produces no retyping. With only the first door open,
+layer 1 never gains anything.
 
-`landmine` 을 새로 붙일 때는 무엇을 태웠는지가 `sources` 에 있어야 한다. 없으면
-lint 가 짚는다.
+Applying a new `landmine` requires `sources` to say what it burned. Without
+it, `lint` raises it.
 
-## lint 가 짚은 것을 어떻게 처리하나
+## What to do with what `lint` finds
 
-| 발견 | 처리 |
+| Finding | What to do |
 | --- | --- |
-| 끊어진 링크 | 페이지를 쓰거나 링크를 뺀다. 쓰기 전에 문턱을 확인한다 |
-| 고아 페이지 | 관련 페이지에서 링크한다. 관련이 없으면 그 페이지가 왜 있는지 다시 본다 |
-| 낡은 서술 | 근거·브랜치를 고친다. 주입 대상인데 트리거가 없으면 트리거를 쓴다 |
-| 근거 없는 landmine | 무엇을 태웠는지 대거나 등급을 내린다 |
-| 빠진 연결 | 서로 링크하거나, 함께 실리면 안 되는 것이면 트리거를 좁힌다 |
-| 모순(슬롯) | 아래 |
+| A broken link | Write the page or remove the link. Check the threshold before writing |
+| An orphan page | Link it from a related page. If nothing is related, reconsider why that page exists |
+| A stale claim | Fix the grounds and the branch. If it is meant to be injected and has no trigger, write one |
+| A `landmine` with no grounds | Name what it burned, or lower the severity |
+| A missing connection | Link them, or narrow the triggers if they should not ride together |
+| A contradiction (slots) | Below |
 
-## 모순은 잘못이 아닐 수 있다
+## A contradiction is not necessarily a fault
 
-두 자료가 실제로 다른 말을 하고 있다면, 위키는 그 사실 자체를 기록해야 한다.
-드리프트인지 의도된 갈림인지는 기계가 못 가르므로 lint 는 선언되지 않은 것만
-짚고 사람이 판단한다. 판정 기준과 `conflicts_with` 선언 형식은 `SCHEMA.md` 의
-"모순은 잘못이 아닐 수 있다" 에 있다.
+If two sources genuinely say different things, the wiki has to record that
+fact. A machine cannot tell drift from an intended split, so `lint` raises
+only what is undeclared and a person judges. The criteria and the
+`conflicts_with` format are in "a contradiction is not necessarily a fault" in
+`SCHEMA.md`.
 
-가르기 전에 통일하면 정보를 지운다.
+Unifying before telling them apart erases information.
 
-## 안 만드는 것
+## What is not built
 
-- `log.md` 를 따로 두지 않는다. 원안에는 있지만 여기서는 git log 가 그 일을
-  한다. 무엇이 왜 바뀌었는지는 커밋 메시지에, 그때의 측정값은 페이지의
-  `sources` 에 있다.
-- 검진 결과를 파일로 쌓지 않는다. lint 는 상태를 보는 것이지 기록이 아니다.
-  같은 발견이 계속 나오면 그건 파일이 아니라 페이지를 고칠 일이다.
-- 달력 알림을 만들지 않는다. 위의 계기 표가 그 일을 한다.
+- There is no separate `log.md`. The original has one; here `git log` does
+  that job. What changed and why is in the commit message, and the
+  measurements from that moment are in a page's `sources`.
+- Diagnosis results are not accumulated into files. `lint` reads a state, it
+  is not a record. The same finding appearing over and over is a page to fix,
+  not a file to keep.
+- No calendar reminders. The trigger table above does that job.
 
-## 공개 사본의 근거 기록
+## Grounds in the public copy
 
-원본의 규칙·스킬·적용 조건·등급은 유지하고 실제 대화·사례·측정 기록만 제외했다.
-`sources_withheld: true`는 원본 근거가 비공개임을 나타낸다. 이 표시가 있는 기존 규칙에만
-lint의 근거 누락 예외를 적용하며, 새 규칙의 근거를 대신하지 않는다.
-설치와 본인 CLI 로그인은 [설치 안내](docs/chat-setup.md), 공개본 관리는
-[갱신 안내](docs/publishing.md), 검증 범위는 [검사 기록](docs/verification.md)을 따른다.
+The original's rules, skills, applicability and severities are kept; only the
+actual conversations, cases and measurements are withheld.
+`sources_withheld: true` marks a rule whose grounds are private. `lint`
+exempts the missing grounds only for existing rules carrying that mark, and it
+does not substitute for a new rule's grounds. Installing and signing in with
+your own CLI follows the [install guide](docs/chat-setup.md); managing the
+public copy follows the [update guide](docs/publishing.md); what was verified
+follows the [check record](docs/verification.md).

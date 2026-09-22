@@ -17,52 +17,58 @@ sources_withheld: true
 links: [destructive-git-guards]
 ---
 
-# 파일은 diff 로 고친다 — 스크립트로 다시 쓰지 마라
+# Edit files as diffs — do not rewrite them with a script
 
-규칙. 기존 파일은 바꿀 텍스트와 바꿀 내용을 짝지어 고친다.
-전체를 통째로 쓰는 것은 새 파일일 때만이다.
-셸 리다이렉션·here-string·`sed -i`·파일을 읽어 치환하고 되쓰는
-한 줄짜리 스크립트는 쓰지 않는다.
+Rule. An existing file is changed by pairing the text to replace with what
+replaces it. Writing the whole thing is for a new file only. No shell
+redirection, no here-strings, no `sed -i`, and no one-line script that reads a
+file, substitutes and writes it back.
 
-스크립트로 되쓰면 세 가지가 한꺼번에 나빠진다. 한 줄을 고치려고 파일
-전체를 다시 쓰고, 무엇이 바뀌었는지가 diff 에 안 남고, 인코딩과 줄끝이 조용히
-바뀐다.
+Rewriting with a script makes three things worse at once. A whole file is
+rewritten to change one line, what changed does not survive in the diff, and
+encoding and line endings flip silently.
 
-어겼을 때. 바뀐 자리를 아무도 못 읽는다. diff 는 대상 텍스트가 안 맞으면
-소리 내며 실패하지만, 스크립트는 아무것도 안 바꾸고도 조용히 성공한다.
+What goes wrong. Nobody can read where the change was. A diff fails loudly
+when the target text does not match; a script succeeds quietly having changed
+nothing.
 
-## 강제 — 이 페이지는 1층과 4층을 다 쓴다
+## Enforcement — this page uses layer 1 and layer 4
 
-`sed -i` 계열은 명령 모양으로 보이므로 `permissions.deny` 가 막는다. `apply`
-가 이 페이지의 `enforce.deny` 를 대상 저장소의 `.claude/settings.json` 에
-합친다.
+The `sed -i` family looks like a command, so `permissions.deny` blocks it.
+`apply` merges this page's `enforce.deny` into the target repository's
+`.claude/settings.json`.
 
-`Bash(perl -i*)` 는 `perl -0pi` 를 안 맞는다. 앞이 `-0pi` 라서다.
+`Bash(perl -i*)` does not match `perl -0pi`, because the front is `-0pi`.
 
-그러니 이 자리의 deny 는 실측한 모양만
-literal 로 적는다. `perl -0777pi` 처럼 안 세어진 조합은 여전히 빠져나간다 —
-그것이 나오면 그때 한 줄을 더한다.
+So the deny list here holds only the shapes that were actually measured, as
+literals. An uncounted combination such as `perl -0777pi` still gets through —
+when one shows up, a line is added then.
 
-`tool/edit_as_diff.py` 가 4층이다. **이미 있는 파일** 하나만 본다.
+`tool/edit_as_diff.py` is layer 4, and it looks only at files that already exist.
 
-- `Bash`: `cat >`·`cat >>`·`tee`·리다이렉션·`Path(...).write_*`·`open(..., "w")`
-  가 가리키는 경로 중 지금 실제로 있는 파일
-- `Write`: 대상 경로가 이미 있으면 — 통째로 쓰는 것은 새 파일일 때만이므로
+- `Bash`: among the paths named by `cat >`, `cat >>`, `tee`, a redirection,
+  `Path(...).write_*` or `open(..., "w")`, the ones present right now
+- `Write`: when the target path already exists — since writing whole is for
+  new files only
 
-통과시키는 것이 절반이다. 새 파일, 저장소 밖 스크래치, `/dev/null`, `2>&1`,
-`Edit` 자체. **오탐이 작업을 멈추면 사용자가 훅을 통째로 끄고 강제는 0이 된다.**
-`tool/test_edit_as_diff.py` 가 막는 자리 여덟과 안 막는 자리 아홉을 다 든다.
+Half of it is what it lets through: new files, scratch outside the repository,
+`/dev/null`, `2>&1`, and `Edit` itself.
+**A false positive that stops the work is a hook the user switches off.**
+Then enforcement is zero. `tool/test_edit_as_diff.py` holds eight blocking
+cases and nine passing ones.
 
-명령 모양이 무한하다는 것은 여전히 맞다. 못 잡는 나머지는 아래 산문이 든다.
+Command shapes are still infinite. What it cannot catch, the prose below holds.
 
-가르는 것은 본문이 무엇이 되느냐다. `python - <<'PY'` 의 본문은 실행되는 코드라
-봐야 하고, `git commit -F - <<'MSG'` 의 본문은 데이터라 안 봐야 한다. 그래서
-`strip_data_heredocs` 가 수신자를 보고 인터프리터가 아니면 본문을 스캔에서 뺀다.
-명령줄 자체의 리다이렉션은 본문 밖이므로 `cat > file <<'PY'` 는 계속 잡힌다.
+What decides is what the body becomes. The body of `python - <<'PY'` is code
+that runs and has to be read; the body of `git commit -F - <<'MSG'` is data
+and must not be. So `strip_data_heredocs` looks at the receiver and drops the
+body from the scan when it is not an interpreter. A redirection on the command
+line itself is outside the body, so `cat > file <<'PY'` is still caught.
 
-## 새 파일은 예외다
+## A new file is the exception
 
-없던 파일을 만드는 것은 통째로 쓴다. 지울 것이 없으므로 diff 가 될 수 없다.
+Creating a file that did not exist is written whole. There is nothing to
+replace, so it cannot be a diff.
 
-되돌릴 수 없는 쪽을 막는 규칙은 [[destructive-git-guards]] 에 있다. 둘이 같은
-자리를 지킨다 — 무엇이 바뀌었는지 아무도 못 읽게 되는 것을 막는다.
+The rule for the irreversible side is in [[destructive-git-guards]]. The two
+hold the same ground — stopping a change from becoming unreadable to everyone.

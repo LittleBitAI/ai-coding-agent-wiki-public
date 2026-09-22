@@ -25,8 +25,8 @@ emphasised anything.
 ## Why this page is on the second rung
 
 It is the kind of rule that should have held as prose, and prose did not hold
-it. One session put sixty bolds into four planning documents. Measuring the 21
-pages already in the repository gave a median of 11.8% of prose lines and a
+it. One session put sixty bolds into four planning documents. Measuring the
+21 pages already in the repository gave a median of 11.8% of prose lines and a
 maximum of 40.9%, so the habit was learned from the corpus — which is exactly
 why the corpus cannot set the threshold.
 

@@ -5,101 +5,119 @@ triggers: ["훅", "hook", "cp949", "UnicodeEncodeError", "UnicodeDecodeError", "
 slots: []
 sources: []
 sources_withheld: true
-links: [korean-progress, diagnose-from-what-ran]
+links: [english-progress, diagnose-from-what-ran]
 ---
 
-# 훅은 무슨 일이 있어도 세션을 멈추지 않는다
+# A hook never stops the session, whatever happens
 
-규칙. 훅 스크립트는 진입점에서 모든 예외를 통과로 바꾸고, `stdin` 과 `stdout` 의
-인코딩을 스스로 UTF-8 로 고정한다. 실행 환경이 무엇을 주든 훅의 실패가 그 세션을
-못 쓰게 만들어서는 안 된다.
+Rule. A hook script turns every exception into a pass at its entry point, and
+pins the encoding of `stdin` and `stdout` to UTF-8 itself. Whatever the
+environment hands it, a hook failing must not make that session unusable.
 
-**인코딩 고정은 훅만의 규칙이 아니다 — `tool/*.py` 전부다.** 죽는 조건은 훅이라는
-것이 아니라 stdout 이 파이프인 파이썬이고, CLI 도 파이프로 실행된다. 규칙의 이름이
-범위를 좁히면 그 좁힌 자리가 다음 사고다.
+**Pinning the encoding is not a hook rule — it covers all of `tool/*.py`.**
+What kills the process is not being a hook; it is being Python with a pipe on
+stdout, and a CLI runs on a pipe too. When a rule's name narrows its scope,
+the place it narrowed to is the next incident.
 
-진입점 가드는 훅만이다. 훅은 실패가 세션을 멈추니까 삼켜야 하고, CLI 는 사람이
-결과를 보고 있으니 트레이스백이 오히려 답이다.
+The entry-point guard is for hooks alone. A hook has to swallow, because its
+failure stops the session; a CLI has a person reading the result, and there a
+traceback is the answer.
 
-어겼을 때. 훅이 조용히 사라진다. 자동화가 안 도는 것보다
-나쁜 것은 **안 도는데 도는 줄 아는 것**이다.
+What goes wrong. The hook disappears quietly. Worse than the automation not
+running is **it not running while everyone believes it did**.
 
-## 지키는 방법
+## How to hold it
 
-- 진입점에서 잡는다. `main` 안의 `try` 는 그 안만 덮는다.
-- 예외는 이름만 stderr 로 남긴다. 메시지에 한글이 섞이면 그 stderr 쓰기가
-  또 죽는다. 타입 이름은 ASCII 라 안 죽고, `UnicodeEncodeError` 한 단어면 진단에
-  충분하다.
-- `stdout` 만 고치면 절반이다. `stdin` 이 깨지면 발화가 트리거에 안 맞아
-  **죽지도 않고 아무 일도 안 한다.** 트레이스백조차 안 남으므로 더 찾기 어렵다.
-- 종료 코드는 0 으로 돌린다. CLI 는 0 이 아닌 코드를 실패로 표시하고, 실패한
-  훅은 사용자 화면에 노이즈를 남긴다.
+- Catch at the entry point. A `try` inside `main` only covers what is inside.
+- Write the exception's name to stderr and nothing else. Korean in the message
+  kills that stderr write in turn. A type name is ASCII so it survives, and
+  `UnicodeEncodeError` alone is enough to diagnose from.
+- Fixing `stdout` alone is half of it. With `stdin` broken, the utterance does
+  not match the triggers and the hook **neither dies nor does anything**. Not
+  even a traceback is left, which makes it harder to find.
+- Return exit code 0. A CLI marks any non-zero code as a failure, and a failed
+  hook leaves noise on the person's screen.
 
-## 셋째 얼굴 — 남의 stdout 을 읽는 자리
+## The third face — reading someone else's stdout
 
-앞의 둘은 내가 쓰는 stdout 과 내가 읽는 stdin 이다. 셋째는
-`subprocess.run(..., capture_output=True, text=True)` 다 — 자식의 stdout 을
-읽는데, 그 디코딩도 로케일이 정한다. 자식이 UTF-8 을 내면 부모가 cp949 로
-읽다 `UnicodeDecodeError` 로 죽는다.
+The first two are the stdout this writes and the stdin this reads. The third
+is `subprocess.run(..., capture_output=True, text=True)` — reading a child's
+stdout, whose decoding the locale also decides. A child emitting UTF-8 kills
+the parent reading cp949 with `UnicodeDecodeError`.
 
-`sys.stdout.reconfigure` 는 이것을 못 막는다. 그건 내 스트림이지 파이프가 아니다.
+`sys.stdout.reconfigure` cannot stop this. That is this process's stream, not
+the pipe.
 
-죽는 자리도 다르다. 예외가 `subprocess` 의 리더 스레드에서 나고, 그 스레드는
-조용히 죽고, `run.stdout` 이 `None` 이 되어 본문이 엉뚱한 줄에서 터진다 —
-`TypeError: argument of type 'NoneType' is not iterable`. 인코딩 사고가 인코딩처럼
-안 보이는 첫 자리다.
+Where it dies is different too. The exception is raised in `subprocess`'s
+reader thread, that thread dies quietly, `run.stdout` becomes `None`, and the
+body blows up on an unrelated line, raising
+`TypeError: argument of type 'NoneType' is not iterable`.
+The first place an encoding incident does not look like one.
 
 ```python
 subprocess.run(cmd, capture_output=True, text=True,
                encoding="utf-8", errors="replace")
 ```
 
-`errors="replace"` 까지가 한 벌이다. 자식이 무엇을 내든 부모가 안 죽는 것이
-목적이고, 깨진 글자 몇 개는 진단을 안 막는다.
+`errors="replace"` is part of the same fix. The aim is that whatever the child
+emits, the parent survives, and a few broken characters do not block a
+diagnosis.
 
-조건은 파일이 어디 있느냐가 아니다. 파이프에 붙은 파이썬이고, 한 번 쓰고 버릴
-스크립트도 파이프에 붙는다.
+The condition is not where the file lives. It is Python attached to a pipe,
+and a throwaway script attaches to a pipe too.
 
-## 이제 검사가 있다 — `lint` 의 "인코딩 미고정"
+## There is a check now — `lint`'s "encoding not pinned"
 
-`tool/lint.py::fragile_tools`는 AST의 실제 출력 호출과 UTF-8 고정을 대조한다.
-`fragile_io`는 stdin을 읽는 도구의 UTF-8 고정과 운영 도구의 텍스트 subprocess에
-`encoding="utf-8", errors="replace"`가 있는지 본다. 바이트 파이프에는 디코딩이 없고,
-테스트의 엄격한 디코딩은 잘못된 출력을 발견하는 검사이므로 replace를 강요하지 않는다.
+`tool/lint.py::fragile_tools` compares the actual output calls in the AST
+against the UTF-8 pinning. `fragile_io` looks at whether tools that read stdin
+pin UTF-8, and whether operational tools' text subprocesses carry
+`encoding="utf-8", errors="replace"`. A byte pipe has no decoding, and a
+test's strict decoding is a check that finds wrong output, so `replace` is not
+forced there.
 
-`test_lint.py` 가 그 자리를 지킨다 — 문자열에만 이름이 있는 도구를
-심어 빨개지는지 본다. 검사가 자기를 못 보는 자리는 *검사가 있다는 착각* 이 가장 오래
-사는 자리다.
+`test_lint.py` holds that ground — it plants a tool whose name exists only in
+a string and watches the check turn red. A place where a check cannot see
+itself is where *the belief that a check exists* survives the longest.
 
-진입점 가드도 `missing_hook_guards`가 검사한다. 공통 이벤트 훅과 페이지가 선언한
-PreToolUse 훅을 대상으로 하며, 모든 제어 흐름을 증명하는 분석기는 아니다.
-`test_wiki_health.py`는 lint와 repo_lint 자신의 출력 고정, stdin 고정, 자식 출력 정책,
-진입점 가드를 임시 사본에서 없애 검사가 빨개지는지 확인한다.
+The entry-point guard is checked by `missing_hook_guards`. It covers the
+shared event hooks and the PreToolUse hooks pages declare; it is not an
+analyser that proves every control flow. `test_wiki_health.py` removes lint's
+and repo_lint's own output pinning, stdin pinning, child-output policy and
+entry-point guard from a temporary copy and confirms the check turns red.
 
-## 설치와 실행은 따로 확인한다
+## Installation and execution are confirmed separately
 
-허브의 코드와 페이지는 절대 경로로 읽으므로 수정 뒤 다음 실행부터 반영된다.
-새 이벤트·훅·Claude deny·명령 옵션은 설정에 복사되므로 `apply --write`가 필요하다.
-대상 어댑터의 `agents`가 기대하는 에이전트를 선언한다. 설정 파일 전체가 사라져도
-`lint`와 `repo_lint`의 배선 검사는 이를 발견한다. `sync`의 Stop 검진도 같은 검사를 쓴다.
+The hub's code and pages are read by absolute path, so an edit applies from
+the next run. New events, hooks, Claude deny rules and command options are
+copied into the settings, so those need `apply --write`. The target adapter's
+`agents` declares which agents are expected. Even if the whole settings file
+disappears, the wiring checks in `lint` and `repo_lint` find it. `sync`'s Stop
+diagnosis uses the same checks.
 
-허브 갱신 뒤 해당 저장소에서 두 에이전트의 `apply --check`를 실행한다.
-차이가 있으면 해당 에이전트의 `--write`로 갱신하고 다시 검사한다. 허브도 예외가 아니다.
-허브 게이트에는 실제 설정 검사가 포함된다. 대상 설정은 허브가 몰래 쓰지 않는다.
-게이트의 `lint --check`는 슬롯 값 차이만 종료 코드에서 제외하고 실제 페이지·소스·배선 결함은 실패시킨다.
-`apply`의 변경 미리보기는 기본적으로 종료 코드 0이며, 게이트에서는 반드시 `--check`를 쓴다.
+After updating the hub, run `apply --check` for both agents in that
+repository. Where it differs, update with that agent's `--write` and check
+again. The hub is no exception. The hub gate includes a real settings check.
+The hub does not quietly write a target's settings. The gate's `lint --check`
+excludes only slot-value differences from the exit code, and fails on real
+page, source and wiring defects. `apply`'s change preview exits 0 by default,
+so a gate always uses `--check`.
 
-배선 검사의 초록은 호스트가 이벤트를 실행했다는 증거가 아니다. Codex의 신뢰와 활성화,
-실제 세션의 이벤트 전달은 별도로 확인한다. `trajectory.jsonl`은 주입기의 실행 흔적이며
-다른 이벤트의 성공이나 세션 호스트를 식별하지 않는다. 직접 호출과 실제 이벤트를 구별해 기록한다.
+A green wiring check is not evidence that the host ran the event. Codex's
+trust and activation, and event delivery in a real session, are confirmed
+separately. `trajectory.jsonl` is a trace of the injector running; it does not
+identify another event's success or the session host. Record a direct
+invocation and a real event as different things.
 
-`hook_diagnostics.py`는 늦은 실행과 강제 종료만 보존하고 빠른 정상 종료 기록은 지운다.
-`watch_hook_timeouts.ps1`도 실행 중인 느린 프로세스만 본다. 둘 다 미설치·미실행이나
-빠른 무주입을 잡는 장치가 아니다. 기록이 없다는 이유로 훅이 건강하다고 판정하지 않는다.
+`hook_diagnostics.py` keeps only late runs and forced terminations, and
+deletes records of fast clean exits. `watch_hook_timeouts.ps1` likewise sees
+only slow processes while they run. Neither catches "not installed", "never
+ran", or a fast run that injected nothing. Do not read an absence of records
+as a healthy hook.
 
-## 같은 문장이 진단에서도 쓰인다
+## The same sentence is used in diagnosis
 
-이 페이지의 결론 — 안 도는 것보다 나쁜 것은 안 도는데 도는 줄 아는 것이다 — 은
-자동화만의 규칙이 아니다. 무언가가 깨진 원인을 확인 없이 정하는 자리에서 같은 모양이
-나온다: 모르는데 안다고 여기고, 그 위에서 행동한다. [[diagnose-from-what-ran]] 이 그
-쪽 얼굴이고.
+This page's conclusion — worse than something not running is something
+believed to be running — is not a rule about automation alone. The same shape
+appears wherever the cause of a break is decided without confirmation: not
+knowing, believing you know, and acting on it. [[diagnose-from-what-ran]] is
+that face of it.

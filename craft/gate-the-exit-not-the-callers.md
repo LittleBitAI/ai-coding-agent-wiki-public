@@ -8,103 +8,118 @@ sources_withheld: true
 links: [client-lifecycle-in-one-scope, diagnose-from-what-ran, verify-narrow-then-wide]
 ---
 
-# 나가는 것을 막을 때는 출구 하나에서 막는다
+# Gate the exit, not the callers
 
-규칙. 무엇이 밖으로 나가는지를 제한해야 하면 — 텔레메트리, 로그, 웹훅, 리포트 —
-**값이 경계를 넘는 마지막 한 지점**에서 막는다. 그 값을 만드는 자리마다 막지 않는다.
+Rule. When what leaves has to be restricted — telemetry, logs, webhooks,
+reports — gate it at the last point the value crosses the boundary, not at
+every place that produces the value.
 
-| 하는 것 | 하지 않는 것 |
+| Do | Do not |
 | --- | --- |
-| 직렬화·전송 **직전** 한 함수가 전부를 본다 | 생산 지점마다 게이트를 하나씩 단다 |
-| 필드 이름·본문·**이름표·상태 문자열**까지 같은 통로 | 슬롯 두 개만 막고 나머지를 잊는다 |
-| 새 필드가 생기면 자동으로 통로를 지난다 | 새 필드가 생기면 게이트를 하나 더 만든다 |
+| One function sees everything **just before** serialising and sending | Hang one gate per production site |
+| The same channel carries field names, bodies, labels and status strings | Gate two slots and forget the rest |
+| A new field goes through the channel automatically | A new field means another gate |
 
-출구가 아니라 호출자를 막으면 막아야 할 목록을 손으로 세게 된다. 그 목록은 언제나
-모자라다. 모자란 만큼이 다음 리뷰의 발견이 된다.
+Gate the callers instead of the exit and the list of things to block gets
+counted by hand. That list is always short. How short it is becomes the next
+review's finding.
 
-## 실제로 어떻게 새는가 — 한 결함이 다섯 라운드로 나뉘어 왔다
+## How it actually leaks — one defect arriving as five rounds
 
-한 사이드카에서 프롬프트 본문의 외부 송신을 막는 작업이었다. 매 라운드 P0 를 받았고
-매 라운드 "지적된 자리" 를 고쳤다.
+The work was stopping prompt bodies leaving a sidecar. Every round came back
+P0, and every round fixed "the place that was pointed at".
 
-| 라운드 | 리뷰가 지목한 출구 | 그때 한 수리 | 그래서 다음에 나온 것 |
+| Round | The exit review named | The repair made | So what came next |
 | --- | --- | --- | --- |
-| 1 | 본문이 조건 없이 span 에 실린다 | `input`/`output` 두 슬롯에 게이트 | 검증이 **id 만** 보고 본문 출처를 안 본다 |
-| 2 | 본문 출처 · redirect · 실패 필드 | 출처 대조 + 전송 고정 + 실패 필드 허용 목록 | 프롬프트 **형태**가 느슨하다 |
-| 3 | 메시지 형태 · 환경 프록시 · 세션 기본값 | 형태 고정 + 프록시 차단 + 경로 제거 | **응답만** 위조하면 검증을 건너뛴다 |
-| 4 | 응답 결속 · 구조화 필드 | 짝 검사 + 이름별 값 위생 | span **이름**·`usage_details`·중첩 키 |
-| 5 | 이름·usage·중첩 | 출구를 하나로 모았다 | 통로 **밖에서 직접 쓰는 자리**가 남았다 |
-| 6 | 전송 코드의 직접 set, 요약 안 한 토큰 | 직접 쓰는 자리도 통로로, 기본을 요약으로 | — |
+| 1 | The body rides on the span unconditionally | Gate the two slots `input`/`output` | Validation reads the id only, not the body's origin |
+| 2 | Body origin · redirect · failure fields | Origin check, pinned transport, allow-list for failure fields | The prompt shape is loose |
+| 3 | Message shape · environment proxy · session defaults | Pin the shape, block the proxy, strip the path | Forging only the response skips validation |
+| 4 | Response binding · structured fields | Pair check, per-name value hygiene | Span names, `usage_details`, nested keys |
+| 5 | Names, usage, nesting | Collapsed the exits into one | Places writing outside the channel remained |
+| 6 | Direct sets in the transport code, unsummarised tokens | Route the direct writes through the channel, default to a digest | — |
 
-**출구를 모을 때는 "직접 쓰는 자리" 를 전부 센다.** 라운드 5 에서 통로를 만들었는데
-전송 루프가 그 통로를 안 지나고 span 에 네 속성을 직접 적고 있었다. 통로를 만든 것과
-모두가 그 통로를 쓰는 것은 다른 일이다 — `grep` 으로 직접 쓰는 호출을 세어 확인한다.
+When collapsing exits, count every direct write. Round 5 built the channel,
+and the transport loop was still writing four attributes straight onto the
+span without passing through it. Building a channel and having everyone use it
+are different things — count the direct calls with `grep`.
 
-P0 12 건 중 12 건이 같은 질문의 다른 면이었다. "하나 고치면 둘 생긴다" 가 아니라
-처음부터 면이 N 개였고 매 라운드 두세 개만 닫은 것이다. 리뷰어가 집요한 것이 아니라
-수리가 구조가 아니라 패치였다.
+All twelve P0s were faces of one question. It was not "fix one and two
+appear"; there were N faces from the start and each round closed two or three.
+The reviewer was not being relentless — the repair was a patch, not a structure.
 
-신호를 읽는 법. 같은 파일·같은 주제로 P0 가 두 라운드 연속 나오면, 그것은
-"아직 못 찾은 면이 있다" 가 아니라 **막는 자리를 잘못 골랐다** 는 뜻이다. 세 번째 라운드를
-기다리지 말고 출구를 하나로 모은다. 리뷰가 다음 면을 찾아 주기를 기대하는 것은
-설계를 리뷰어에게 위임하는 것이다.
+How to read the signal. Two consecutive rounds of P0 on the same file and the
+same subject do not mean there are faces still to find. They mean
+**the place chosen to block was wrong**. Do not wait for a third round;
+collapse the exits. Expecting review to find the next face is delegating the
+design to the reviewer.
 
-## 막는 것과 지우는 것은 다르다 — 양쪽을 같은 검사에서 본다
+## Blocking and erasing are different — one check watches both
 
-출구를 조이면 진짜 값도 같이 사라진다. 위 작업의 라운드 5 에서 이름별 허용 목록이
-생산자의 실제 값을 다수 지웠다 — 설정의 숫자 하나, 모델 id (문자에 `/` 가 있었다),
-환경 dict 전체, 그리고 목록이라고 가정한 필드가 실제로는 dict 목록이어서 평탄화에서
-크래시했다.
+Tightening an exit erases real values along with the rest. In round 5 above, a
+per-name allow-list erased many of the producer's actual values — a number
+from the configuration, a model id (its characters included `/`), the whole
+environment dict, and a field assumed to be a list which was really a list of
+dicts and crashed the flattening.
 
-그 세 가지를 하나도 못 잡은 이유는 하나다. 검사가 손으로 쓴 이벤트를 썼다.
+There is one reason none of the three were caught: the check used hand-written
+events.
 
-그래서 이 규칙의 절반은 검사에 있다. 한 검사가 실제 생산자가 남긴 산출물로 셋을
-동시에 본다.
+So half of this rule lives in the check. One check, run over artefacts a real
+producer left, watches three things at once.
 
-1. 오염을 심으면 한 자리도 안 나간다
-2. 오염이 없으면 진짜 값이 그대로 남는다
-3. 실제 로그 전체를 통과시켜도 크래시하지 않는다
+1. Planted contamination gets out from nowhere
+2. With no contamination, the real values survive intact
+3. Passing a whole real log through does not crash
 
-2 와 3 이 없으면 1 만 초록인 채로, 아무것도 안 나가고 아무것도 안 남는 게이트를
-만들게 된다. 그것은 기능이 없는 것과 같다. [[diagnose-from-what-ran]] 이 빨강에 대해
-적어 둔 것과 같은 실패다 — 실제로 돌린 것이 아니면 초록도 근거가 아니다.
+Without 2 and 3, only 1 goes green and what gets built is a gate where nothing
+leaves and nothing remains. That is the same as having no feature. It is the
+failure [[diagnose-from-what-ran]] wrote down about red — if it was not
+actually run, a green is not grounds either.
 
-## 허용 목록을 쓸 때는 타입부터 가른다
+## An allow-list starts by separating types
 
-이름 목록으로 통과를 정하면 생산자의 형태를 추측하게 된다. 추측은 틀린다.
+Deciding what passes from a list of names means guessing the producer's
+shapes. Guesses are wrong.
 
-- 수치·bool 은 자유 텍스트가 아니다. 이름 규칙 없이 통과시킨다.
-- 문자열만 제한한다. 그 자리에 본문과 경로가 들어온다.
-- 컨테이너는 부모별 허용 키로 내려간다. 중첩 안에서 최상위 이름 규칙을 다시
-  쓰면, 바깥에서 막은 이름을 안쪽에 넣어 우회할 수 있다.
-- 긴 자유 문자열은 버리는 대신 hash 로 요약한다. 동일성은 남고 본문은 안 나간다.
+- Numbers and booleans are not free text. Pass them with no name rule.
+- Restrict strings only. That is where bodies and paths arrive.
+- Descend into containers with per-parent allowed keys. Re-applying the
+  top-level name rule inside a nesting lets a name blocked outside be smuggled
+  in underneath.
+- Digest long free strings rather than dropping them. Identity survives and
+  the body does not leave.
 
-패턴으로 문자열을 거를 때는 경로 문자(`/`, `:`)를 패턴에서 뺀다. 그것이 있으면
-짧은 식별자 패턴이 절대경로를 통과시킨다.
+When filtering strings by pattern, keep path characters (`/`, `:`) out of the
+pattern. With them in, a short-identifier pattern passes absolute paths.
 
-## 구분할 수 없으면 평문을 안 보낸다
+## When it cannot be told apart, plain text does not go
 
-패턴을 조여도 **짧은 영문 토큰은 못 가른다.** 버전 자리의 `sk-live-secret123` 은
-버전과 모양이 같다. 위 작업에서 나는 그 구분 불가능을 "그러니 평문으로 보낸다" 의
-근거로 썼고, 그것이 다음 라운드의 P0 였다.
+However tight the pattern, short Latin tokens cannot be told apart. An
+`sk-live-secret123` in a version field has the same shape as a version. In the
+work above, that indistinguishability was used as grounds for "so send it as
+plain text", and that was the next round's P0.
 
-방향이 거꾸로다. **구분할 수 없으면 평문을 안 보내는 쪽이 답이다.** 기본을 요약으로
-두고, 평문은 근거가 있을 때만 예외로 준다.
+The direction is backwards. When it cannot be told apart, the answer is that
+plain text does not go. Make a digest the default and let plain text out only
+where there are grounds.
 
-| 평문으로 나가는 것 | 왜 |
+| Goes out in plain text | Why |
 | --- | --- |
-| 생산자에서 읽은 enum 값 | 집합이 코드에 있다 |
-| 생산자 상수와 같은 문자열 | 상수와 대조했다 |
-| hash·항목명 | 모양이 값을 증명한다 |
-| 순수 숫자 버전 (`0.26.0`, `2.11.0+cu130`) | 그 모양에는 비밀을 담을 엔트로피가 없다 |
-| key·이름을 만드는 짧은 식별자 | 요약하면 트레이스를 읽을 수 없다. 대신 상위 층이 그 값을 대조한다 |
+| An enum value read from the producer | The set is in the code |
+| A string equal to a producer constant | It was compared against the constant |
+| A hash or an item name | The shape proves the value |
+| Purely numeric versions (`0.26.0`, `2.11.0+cu130`) | That shape has no entropy to hide a secret in |
+| Short identifiers that build keys and names | Digested, the trace cannot be read. The layer above compares that value instead |
 
-나머지는 `sha256:앞자리` 로 줄인다. 동일성과 변화는 남으므로 "같은 설정으로 돌았나" 는
-여전히 답할 수 있고, 값은 안 나간다. **요약은 유실이 아니다** — 버리는 것과 구별해서 적는다.
+Everything else shrinks to `sha256:<prefix>`. Identity and change survive, so
+"did it run with the same settings" is still answerable, and the value does
+not leave. A digest is not a loss — record it as distinct from dropping.
 
-층을 나눌 때는 아래 층이 **못 하는 일을 위층에 미루지 않는지** 본다. "이 값은 위층이
-막는다" 고 적으려면 위층이 실제로 그 값을 보는지 확인해야 한다. 위 작업에서는
-metadata 전용 모드에서 위층이 아예 돌지 않아, 두 층 어디에서도 안 막히는 값이 생겼다.
+When splitting layers, check that the lower one is not deferring to the upper
+one something the upper one cannot do. Writing "the layer above blocks this
+value" requires confirming the layer above actually sees it. In the work
+above, a metadata-only mode never ran the upper layer at all, leaving values
+blocked by neither.
 
-어겼을 때. 리뷰가 회차마다 인접한 출구를 하나씩 찾아 오고, 매 수리가 다음 라운드의
-발견을 만든다. 되돌림이 이어지는 동안 스위트는 내내 초록이다.
+What goes wrong. Review finds one adjacent exit per round, and every repair
+creates the next round's finding. Through all the reverts the suite stays green.

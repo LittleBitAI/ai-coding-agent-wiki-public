@@ -86,6 +86,36 @@ export type Peek = {
   lines: string[]
 }
 
+/** One rendered piece. `mark` says what it is and whether it was translated. */
+export type Part = {
+  i: number
+  mark: '' | '▶' | '·' | '$' | '──'
+  text: string
+  at: string
+  name: string
+}
+
+export type Repo = { path: string; name: string; at: number }
+
+export type Mirrors = {
+  here: { host: string; project: string }
+  hosts: Record<string, Repo[]>
+}
+
+/**
+ * `gen` rises on every repository switch and answers whose a late piece is.
+ * `feed` names the feed those `parts` indexes belong to — a restarted server
+ * hands back the same `gen` for a different feed, and the id is what tells
+ * those two apart.
+ */
+export type Frame = {
+  gen: number
+  feed: string
+  host: string
+  project: string
+  parts: Part[]
+}
+
 async function json<T>(res: Response, what: string): Promise<T> {
   if (!res.ok) {
     let detail = ''
@@ -145,6 +175,77 @@ export const peek = (repo: string, path: string, line: number) =>
   fetch(
     `/api/file?${new URLSearchParams({ repo, path, line: String(line), around: '25' })}`,
   ).then((r) => json<Peek>(r, '파일'))
+
+/** Render what a screen is about to show. Failure returns the original.
+ *
+ *  It calls the phase-one translator directly. Identifiers, paths, links and
+ *  config values are lifted out before the request, so there is nothing for
+ *  this side to mask. */
+export const render = (texts: string[], direction: 'en->ko' | 'ko->en' = 'en->ko') =>
+  post('/api/translate', { texts, direction }).then((r) =>
+    json<{ texts: string[] }>(r, '번역'),
+  )
+
+/** For more than one request holds. Order and count survive intact.
+ *
+ *  The splitting lives here alone. Split at each call site and changing the
+ *  limit means editing as many places as there are screens. */
+const BATCH = 40
+
+export async function renderAll(
+  texts: string[],
+  direction: 'en->ko' | 'ko->en' = 'en->ko',
+): Promise<string[]> {
+  const out: string[] = []
+  for (let i = 0; i < texts.length; i += BATCH) {
+    const { texts: done } = await render(texts.slice(i, i + BATCH), direction)
+    out.push(...done)
+  }
+  return out
+}
+
+/** Every checkout with a session, and where the mirror is pointed now. */
+export const getMirrors = () =>
+  fetch('/api/mirror/repos').then((r) => json<Mirrors>(r, '저장소 목록'))
+
+/** Move the mirror. Only a path the server itself listed is accepted. */
+export const pointMirror = (host: string, project: string) =>
+  post('/api/mirror/point', { host, project }).then((r) =>
+    json<{ gen: number; host: string; project: string }>(r, '저장소 전환'),
+  )
+
+/** Keep receiving what the mirror renders. Pass a signal to cut it off.
+ *
+ *  Unlike `say`, this stream has no end. Closing the tab or leaving it aborts
+ *  through `signal`, and the server's loop then stops on the closed socket. */
+export async function mirrorStream(
+  onFrame: (frame: Frame) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const res = await fetch('/api/mirror/stream', { signal })
+  if (!res.ok || !res.body) throw new Error(`서버가 ${res.status} 로 답했다`)
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const chunks = buffer.split('\n\n')
+    buffer = chunks.pop() ?? ''
+    for (const chunk of chunks) {
+      const line = chunk.split('\n').find((l) => l.startsWith('data: '))
+      if (!line) continue
+      try {
+        onFrame(JSON.parse(line.slice(6)))
+      } catch {
+        // Half a JSON object is dropped. The next event is coming.
+      }
+    }
+  }
+}
 
 /** 발화 하나를 보내고 이벤트를 차례로 넘긴다. 중간에 끊으려면 signal 을 준다. */
 export async function say(

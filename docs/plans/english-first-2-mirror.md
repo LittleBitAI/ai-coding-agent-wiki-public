@@ -43,6 +43,38 @@ Orca의 두 번째 셀은 사람이 열며 실행법을 `docs/mirror-setup.md`�
 
 실행 방법은 수동이다. 셀 생성 자동화는 이 계획에 포함하지 않는다.
 
+### 실측으로 바뀐 것 — 미러는 터미널이 아니라 화면이다
+
+계획서가 쓴 대로 터미널 출력으로 먼저 만들었고 그 경로는 `--web` 없이 그대로 돈다.
+그 위에 사용자 요청으로 로컬 화면을 얹었다. `tool/mirror.html` 한 장을 stdlib
+`http.server` 가 `127.0.0.1:8788` (위키 채팅 `8787` 다음 번호, 막혀 있으면 올려 잡음)
+에 띄우고 `/stream` 으로 SSE 를 흘린다. 새 의존성 0, 빌드 단계 0.
+
+두 면이다. 왼쪽은 번역된 대화, 오른쪽은 번역 안 한 명령과 패치. 산문과 코드는
+필요한 폭이 정반대라 한 열에 두면 둘 다 진다. 값과 근거는 루트 `DESIGN.md` 가 든다.
+
+계획서 명세에서 실제로 틀렸던 것 여섯:
+
+- manifest 의 kind 가 셋뿐이라 일부러 한국어로 남긴 문서를 적을 자리가 없었다.
+  그래서 그 문서들이 manifest 에서 통째로 빠졌는데, 빠진 것과 잊은 것을 게이트는
+  구별하지 못한다. 실제로 13개 파일이 보호 구간 대조를 한 번도 안 받은 채
+  "게이트 초록" 으로 적혔다. `kept` 를 더하고 `why` 를 의무로 걸었다
+
+- **Codex 세션은 `~/.codex/sessions` 한 곳에 없다.** `CODEX_HOME` 이 그 자리를
+  옮기고, Orca 는 그것을 계정마다 따로 준다 — 실제 경로는
+  `%APPDATA%/orca/codex-accounts/<id>/home/sessions` 다. 기본 경로만 읽는 미러는
+  사용자가 실제로 쓰는 세션을 한 번도 못 본 채 "세션 없음"이라고 말한다.
+  2걸음의 Codex 쪽이 막혀 있던 이유가 파서가 아니라 이것이었다.
+  `codex_homes()` 가 셋을 다 모은다. 저장소 목록이 3개에서 11개가 됐다
+
+- Claude 의 중간 발화는 `user` 레코드가 아니다. `queue-operation`/`enqueue` 의
+  `content` 에만 원문이 남는다. 이것을 안 읽으면 사람 발화 11건 중 1건만 뜬다
+- `HTTPServer.allow_reuse_address` 가 Windows 에서는 남의 포트를 뺏는다.
+  끄지 않으면 포트 넘기기 고리가 안 돌고 두 미러가 같은 포트를 서빙한다
+- 두 호스트의 `timestamp` 는 UTC 다. `transcript.py` 처럼 잘라 쓰면 9시간 틀린다
+- Codex 의 도구 설명은 `McpToolCall.arguments.title`, 패치는 `FileChange` 의
+  `unified_diff`, 명령은 `CommandExecution.command` 다
+
 ### `tool/test_mirror.py`
 
 - 가짜 jsonl 을 만들어 `tool_result` 와 주입문이 안 찍히는지
@@ -104,6 +136,18 @@ Orca의 두 번째 셀은 사람이 열며 실행법을 `docs/mirror-setup.md`�
 `MAINTENANCE`·`index`). 새 `docs/mirror-setup.md`는 이 32개에 별도로 추가한다.
 `docs/plans/` 네 문서는 한국어로 유지한다.
 
+#### 실측으로 늘어난 것과, 사용자가 뺀 것
+
+대상이 32개가 아니라 규칙 24장 + 루트 5장 + `docs/` 5장 = 34장이었다.
+계획서를 쓴 뒤 `craft/` 가 12 → 15 로 늘었고 루트에 `DESIGN.md` 가 생겼다.
+
+`docs/chat-setup.md` 와 `docs/mirror-setup.md` 는 **한국어로 남긴다.** 사용자가
+2026-09-22 에 그렇게 정했고, 근거는 계획서 0번의 기준 자체다 — 영어로 가는 것은
+"에이전트가 닿는 표면" 인데 이 둘은 팀원이 설치하기 전에 읽는 문서다. 설치 전에는
+미러도 인용 서랍도 안 도니 한국어로 읽을 경로가 없고, 그러면 이 계획의 순서 규칙
+("한국어로 읽을 경로가 서기 전에는 사용자 화면을 영어로 바꾸지 않는다") 을 정면으로
+어긴다. 두 파일은 `operator/english-progress` 가 말하는 "사람이 읽는 것" 쪽이다.
+
 각 파일에서 건드리지 않는 것:
 
 - front matter 전체. 특히 `triggers` — 사용자 발화를 매칭한다.
@@ -147,14 +191,14 @@ Orca의 두 번째 셀은 사람이 열며 실행법을 `docs/mirror-setup.md`�
 
 | # | 이름 | 무엇 | 상태 |
 | --- | --- | --- | --- |
-| 1 | mirror | 양 호스트 출력 경로 조사·`mirror.py`·`test_mirror.py`·수동 실행 문서 | 미착수 |
-| 2 | mirror-live | Claude·Codex 각각 실제 세션과 한국어 표시 범위 검증 | 미착수 |
-| 3 | web-docs | 번역 API·인용 서랍·지도 한국어 표시와 graph의 Rule 파서 검증 | 미착수 |
-| 4 | enforce | 영어 진행·영어 Stop 판정·페이지 재작성·양 호스트 배선 전환 | 미착수 |
-| 5 | pages | Git 기준 manifest 확정·32개 산문 영어화·허용 보호 구간 차이 기록 | 미착수 |
-| 6 | lint-index | 영어 줄바꿈 검사·직접 실행 검사·sync와 graph 각각 재생성 | 미착수 |
-| 7 | status | 두 호스트의 상태·차단·질문 UI 한국어 유지 확인 | 미착수 |
-| 8 | gate | `--check` 초록 + 표본 역번역 사람 확인 | 미착수 |
+| 1 | mirror | 양 호스트 출력 경로 조사·`mirror.py`·`test_mirror.py`·수동 실행 문서 | 완료 |
+| 2 | mirror-live | Claude·Codex 각각 실제 세션과 한국어 표시 범위 검증 | 완료 — 양 호스트 실측. Codex 는 `CODEX_HOME` 을 찾고서야 보였다 |
+| 3 | web-docs | 번역 API·인용 서랍·지도 한국어 표시와 graph의 Rule 파서 검증 | 완료 |
+| 4 | enforce | 영어 진행·영어 Stop 판정·페이지 재작성·양 호스트 배선 전환 | 완료 |
+| 5 | pages | Git 기준 manifest 확정·32개 산문 영어화·허용 보호 구간 차이 기록 | 완료 — manifest 37건. 규칙 24장 + 루트·문서 10장 영어화, 한국어로 남긴 3장은 `kept` 로 선언 |
+| 6 | lint-index | 영어 줄바꿈 검사·직접 실행 검사·sync와 graph 각각 재생성 | 완료 |
+| 7 | status | 두 호스트의 상태·차단·질문 UI 한국어 유지 확인 | 완료 |
+| 8 | gate | `--check` 초록 + 표본 역번역 사람 확인 | 완료 — `translate --check` 37/37 종료 코드 0, 역번역 3건 사람이 읽고 "크게 무너지는 것 없음" |
 
 ## 검증
 

@@ -29,10 +29,101 @@ NEEDED = {"PyYAML": "yaml", "markdown-it-py": "markdown_it"}
 FLOOR = (3, 11)
 BUILTIN = {"tomllib": "tomllib"}
 
-HOOK_MARK = "tool/inject.py"
-SESSION_MARK = "tool/session_state.py"
-SYNC_MARK = "tool/sync.py"
-CONTINUATION_MARK = "tool/declared_continuation.py"
+HOOK_MARK = "inject.py"
+SESSION_MARK = "session_state.py"
+SYNC_MARK = "sync.py"
+CONTINUATION_MARK = "declared_continuation.py"
+
+# The quoted arguments of a hook command. Our own writer emits
+# `"<python>" "<wiki>/tool/<script>"`, optionally behind `& ` for PowerShell
+# and followed by flags, so the script is always the second quoted argument.
+ARGS = re.compile(r'"([^"]*)"')
+
+
+def script_arg(command: str) -> str | None:
+    """The argument our writer puts the script in, or `None`.
+
+    The position is the point. Scanning every quoted argument answers "does
+    this command mention the path" and a command can mention it as data —
+    `"python" "audit.py" --watch "<wiki>/tool/inject.py"` is somebody else's
+    hook watching our file, and reading it as ours overwrote their hook.
+    """
+
+    args = ARGS.findall(command)
+    return args[1] if len(args) >= 2 else None
+
+
+def runs(command: str, script: str) -> bool:
+    """Does this command run *this wiki's* copy of `script`?
+
+    Asked of the quoted arguments, as a path, against the one directory that
+    can answer it — `HERE`. Three review rounds went to weaker answers, each
+    one a shape that looked like the path instead of being it: the bare
+    filename matched `--watch korean_progress.py`, `tool/<script>` matched
+    `custom-tool/<script>`, and comparing the parent component matched a
+    person's own `C:/project/tool/<script>`. Only this wiki's own directory
+    tells those apart, and it is known here.
+
+    A relative path is never ours. This writer only ever emits an absolute
+    one, so `"python" "tool/inject.py"` in a project's settings was written by
+    someone else and is run relative to wherever the host starts the hook.
+    Resolving it here would measure it against this process's working
+    directory instead — and from the hub root that lands on `HERE`, which made
+    the answer depend on where `apply.py` happened to be run from.
+
+    There is no guess for a path that is simply missing. An earlier draft
+    claimed a dangling `<...>/tool/<script>` as this wiki's old location, and
+    a person's hook on a mapped drive that is offline for a minute is the same
+    string. Nothing in the command separates those two, so nothing here tries;
+    `stale` reports them instead and the person decides.
+    """
+
+    arg = script_arg(command)
+    if arg is None:
+        return False
+    where = Path(arg.replace("\\", "/"))
+    if where.name != script or not where.is_absolute():
+        return False
+    try:
+        return where.resolve() == (HERE / script).resolve()
+    except OSError:
+        return False
+
+
+def stale(settings: dict) -> list[str]:
+    """Hooks naming one of this wiki's scripts at a path that is not there.
+
+    Never removed, only said out loud. Moving the wiki leaves exactly this
+    behind: the old entry names a file that is gone, the host runs it on every
+    tool call, python exits 2, and the session stops being able to do
+    anything. That happened here once. But the same line is also a colleague's
+    hook on a share that is temporarily unreachable, and deleting that is
+    destroying their settings over a network blip. Which one it is cannot be
+    read off the string, so it is handed to the person who can tell.
+    """
+
+    owned = {HOOK_MARK, SESSION_MARK, SYNC_MARK, CONTINUATION_MARK,
+             "codex_pretool.py", *declared()[1]}
+    found: list[str] = []
+    for groups in (settings.get("hooks") or {}).values():
+        for group in groups:
+            for entry in group.get("hooks", []):
+                arg = script_arg(str(entry.get("command", "")))
+                if arg is None:
+                    continue
+                where = Path(arg.replace("\\", "/"))
+                if where.name not in owned or not where.is_absolute():
+                    continue
+                try:
+                    if where.exists() or where.resolve() == (HERE / where.name).resolve():
+                        continue
+                except OSError:
+                    continue
+                found.append(
+                    f"훅이 없는 파일을 가리킨다: {where.as_posix()}. "
+                    "이 위키를 옮겼다면 그 항목을 지워라. 남의 훅이면 그대로 둬라"
+                )
+    return found
 
 
 def declared() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
@@ -174,24 +265,63 @@ def script_entry(python: str, script: str, status: str) -> dict:
     }
 
 
-def put_hook(settings: dict, event: str, mark: str, entry: dict) -> list[str]:
+def put_hook(settings: dict, event: str, script: str, entry: dict) -> list[str]:
     """한 이벤트에 훅 하나를 건다. 같은 스크립트가 이미 있으면 명령만 갱신한다.
 
-    이름이 아니라 명령 안의 스크립트 경로로 자기 것을 알아본다. 이름으로
-    찾으면 사용자가 붙인 훅과 구별이 안 되고, 그러면 남의 훅을 덮는다.
+    이름이 아니라 `runs` 가 자기 것을 가린다. 이름으로 찾으면 사용자가 붙인
+    훅과 구별이 안 되고, 그러면 남의 훅을 덮는다.
     """
 
     groups = settings.setdefault("hooks", {}).setdefault(event, [])
     for group in groups:
         for existing in group.get("hooks", []):
-            if mark in str(existing.get("command", "")):
+            if runs(str(existing.get("command", "")), script):
                 wanted = entry["hooks"][0]
                 if any(existing.get(k) != v for k, v in wanted.items() if k != "statusMessage"):
                     existing.update(wanted)
-                    return [f"{event} 훅 명령 갱신: {mark}"]
+                    return [f"{event} 훅 명령 갱신: tool/{script}"]
                 return []
     groups.append(entry)
-    return [f"{event} 훅 추가: {mark}"]
+    return [f"{event} 훅 추가: tool/{script}"]
+
+
+# Hook scripts that were renamed: old name on the left, current one on the right.
+#
+# `put_hook` only adds and updates. So when a page renames its script the old
+# entry stays in `settings.json`, and the moment the script is deleted the hook
+# points at a file that is not there — which fails every tool call with "can't
+# open file". That is not a hypothetical; it happened while writing this.
+#
+# Only what this table names gets removed.
+RETIRED = {"korean_progress.py": "english_progress.py"}
+
+
+def retire(settings: dict, gone: str, instead: str) -> list[str]:
+    """Drop an owned entry, but only once its replacement is already wired.
+
+    Removing the old one first would leave enforcement quietly off in between.
+    Running twice has to give the same answer, so an entry already gone is not
+    an error and not a change.
+    """
+
+    groups = settings.get("hooks", {}).get("PreToolUse", [])
+    has_new = any(
+        runs(str(h.get("command", "")), instead)
+        for group in groups
+        for h in group.get("hooks", [])
+    )
+    if not has_new:
+        return []
+
+    changes: list[str] = []
+    for group in list(groups):
+        kept = [h for h in group.get("hooks", []) if not runs(str(h.get("command", "")), gone)]
+        if len(kept) != len(group.get("hooks", [])):
+            changes.append(f"PreToolUse 옛 훅 제거: {gone} → {instead}")
+            group["hooks"] = kept
+        if not group.get("hooks"):
+            groups.remove(group)
+    return changes
 
 
 def merge(
@@ -223,6 +353,10 @@ def merge(
         changes += put_hook(settings, "Stop", SYNC_MARK, sync)
     if continuation:
         changes += put_hook(settings, "Stop", CONTINUATION_MARK, continuation)
+    # Wire the new one first, retire the old one after. The other order leaves
+    # a window with no enforcement at all.
+    for gone, instead in RETIRED.items():
+        changes += retire(settings, gone, instead)
     return changes
 
 
@@ -234,7 +368,7 @@ def configure(settings: dict, project: Path, adapter: str | None, python: str, a
         entries = [
             ("UserPromptSubmit", HOOK_MARK, hook_entry(python, adapter, where)),
             ("SessionStart", SESSION_MARK, session_entry(python, where)),
-            ("PreToolUse", "tool/codex_pretool.py",
+            ("PreToolUse", "codex_pretool.py",
              script_entry(python, "codex_pretool.py", "위키: 도구 실행 검사")),
             ("Stop", SYNC_MARK, sync_entry(python, where)),
             ("Stop", CONTINUATION_MARK, continuation_entry(python)),
@@ -294,8 +428,11 @@ def wiring_drift(project: Path, agents: tuple[str, ...] | None = None) -> list[t
     for agent in agents:
         try:
             settings = json.loads(paths[agent].read_text(encoding="utf-8")) if paths[agent].exists() else {}
+            # 자기 훅만 고른다. 남의 명령이 `commands[0]` 이 되면 그 안의 첫
+            # 따옴표 토큰이 "설치된 인터프리터" 로 읽혀, 배선이 멀쩡한데도
+            # 드리프트가 뜨고 게이트가 그것 때문에 떨어진다.
             commands = [h.get("command", "") for g in settings.get("hooks", {}).get("UserPromptSubmit", [])
-                        for h in g.get("hooks", []) if HOOK_MARK in h.get("command", "")]
+                        for h in g.get("hooks", []) if runs(h.get("command", ""), HOOK_MARK)]
             # 실행 파일은 기계별 값이다. 설치된 인터프리터를 보존해 경로 차이 소음을 피한다.
             quoted = re.match(r'(?:&\s*)?"([^"]+)"', commands[0]) if commands else None
             python = quoted[1] if quoted else sys.executable
@@ -308,6 +445,7 @@ def wiring_drift(project: Path, agents: tuple[str, ...] | None = None) -> list[t
                         HERE.as_posix() in h.get("command", "") for h in group.get("hooks", [])
                     ):
                         changes.append(f"{event} 위키 훅에 제한 matcher가 있다")
+            changes += stale(settings)
             findings.extend(("훅 배선 드리프트", f"{agent}: {change}") for change in changes)
         except (OSError, ValueError, TypeError, AttributeError, KeyError):
             findings.append(("훅 배선 드리프트", f"{agent}: 설정을 읽을 수 없다"))

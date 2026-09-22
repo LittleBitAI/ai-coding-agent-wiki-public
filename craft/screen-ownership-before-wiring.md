@@ -8,37 +8,46 @@ sources_withheld: true
 links: [pick-up-async-results, diagnose-from-what-ran, verify-narrow-then-wide, client-lifecycle-in-one-scope]
 ---
 
-# 화면을 짜기 전에 계정 경계와 비동기 소유권을 정한다
+# Decide the account boundary and async ownership before wiring a screen
 
-규칙. 화면이 서버에 쓰거나 다시 읽는다면, 한 줄을 짜기 전에 셋을 정하고 적어라.
-(그 화면이 애초에 무엇을 보여 줘야 하고 어떤 순서로 손질되는가는
-[[screen-follows-the-purpose]] 가 든다. 이 페이지는 그다음, 배선의 전제다.)
+Rule. If a screen writes to a server or reads back from it, decide and write
+down three things before a line of it is built. (What the screen should show
+in the first place, and the order it gets polished in, is held by
+[[screen-follows-the-purpose]]. This page is the step after: the premise of
+the wiring.)
 
-| 무엇 | 정해야 하는 것 |
+| What | What has to be decided |
 | --- | --- |
-| 계정 경계 | 이 요청은 **어느 계정의 것**인가. 그 표를 **언제** 잡는가 |
-| 비동기 소유권 | 늦게 도착한 결과가 **아직 화면의 것**인지 무엇으로 판정하는가 |
-| 유효성 | "적어도 되는가" 와 "저장돼도 되는가" 는 **다른 질문**이다 |
+| Account boundary | Whose account is this request. When is that ticket taken |
+| Async ownership | What decides that a late result is still this screen's |
+| Validity | "May this be written" and "may this be stored" are different questions |
 
-표는 버튼을 누를 때가 아니라 화면이 열릴 때 잡는다. 은퇴는 세대를 먼저 올리고
-로그아웃 요청을 기다리므로, 그 사이에 눌린 저장은 이미 올라간 값을 읽어 자기
-것으로 통과한다. 늦은 결과는 잠그지 말고 무시한다 — 요청은 서버에 이미 닿았을 수 있어
-어차피 못 끊고, 잠그면 시간 제한 없는 요청 하나가 사용자를 모달에 가둔다.
-저장소에 이미 세대 소유권 불변식이 있으면 새 화면에도 그것을 건다.
+The ticket is taken when the screen opens, not when a button is pressed.
+Retirement raises the generation first and then waits for the logout, so a
+save pressed in between reads the already-raised value and passes as its own.
+Ignore a late result rather than locking — the request may already have
+reached the server, so it cannot be cut anyway, and a lock means one request
+with no time limit traps the user in a modal. Where the repository already has
+a generation-ownership invariant, hang the new screen on that one.
 
-어겼을 때. 수리가 라운드마다 인접한 구멍을 하나씩 열어 되돌림이 이어지고,
-결국 기능을 PR 에서 빼게 된다. 오프라인 스위트는 그동안 내내 초록이다.
+What goes wrong. Each round of repair opens one adjacent hole, the reverts
+continue, and the feature comes out of the PR in the end. The offline suite is
+green throughout.
 
-## 잡는 법 — 화면 하나에 네 줄
+## How to hold it — four lines per screen
 
-- 표를 잡는 시점을 상수로 못 박아라. 열릴 때 한 번, 그 뒤로는 안 다시 읽는다.
-- 도착한 결과마다 `내 세대인가` 를 먼저 묻고, 아니면 상태를 안 건드리고 버린다.
-  살아 있는가(`alive`)만 보는 것으로는 모자란다 — 은퇴 중에도 화면은 살아 있다.
-- 재조회가 실패하면 성공이라고 답하지 마라. 낡은 목록에는 방금 저장한 것이 없다.
-- 다시 빌드하거나 다른 대상을 열면 입력 상태를 비워라. 초안에도 소유자가 있다.
+- Pin the moment the ticket is taken as a constant. Once on open, never
+  re-read after.
+- Ask "is this my generation" of every arriving result, and drop it without
+  touching state when it is not. Checking `alive` is not enough — a screen is
+  alive during retirement too.
+- If the re-query fails, do not answer success. A stale list does not contain
+  what was just saved.
+- Rebuilding, or opening a different target, clears the input state. A draft
+  has an owner too.
 
-늦게 오는 것을 어떻게 받는가는 [[pick-up-async-results]] 가 든다. 이 페이지가
-다루는 것은 그 결과가 도착했을 때 누구의 것인가다.
+How a late result is picked up is held by [[pick-up-async-results]]. What this
+page is about is whose it is once it arrives.
 
-화면이든
-클라이언트든 정할 것은 하나다 — **소유는 나중에 붙이는 층이 아니다.**
+Screen or client, there is one thing to decide —
+**ownership is not a layer added later.**

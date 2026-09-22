@@ -8,82 +8,94 @@ sources_withheld: true
 links: [diagnose-from-what-ran, do-the-whole-instruction]
 ---
 
-# 주석은 이유를 들고, 이력은 안 든다
+# Comments carry the why, not the history
 
-규칙. 주석과 docstring 은 코드를 읽어서 알 수 없는 것만 적는다 — 왜 이 구조인가,
-무엇을 일부러 안 했는가, 어떤 외부 제약이 이 모양을 강요했는가. 코드가 이미
-말하는 것은 주석이 아니라 이름과 구조로 고친다. 그리고 줄은 의미 단위에서
-끊는다. 길이 제한은 읽기 쉬우라고 있는 것이지 맞춰야 할 숫자가 아니다.
+Rule. Comments and docstrings hold only what cannot be learned by reading the
+code — why this structure, what was deliberately not done, which external
+constraint forced this shape. What the code already says is fixed with a name
+and a structure, not with a comment. And lines break at meaning. A length
+limit exists to make reading easier; it is not a number to hit.
 
-가르는 것은 이유와 이력이다. 왜 이 구조인가는 코드가 바뀔 때 같이 눈에 띄므로
-코드 옆에서 산다. 언제 어느 브랜치에서 무엇을 고쳤나는 코드가 바뀌어도 안
-바뀌므로 혼자 낡는다. 뒤엣것은 `.wiki/decisions/` 와 커밋이 든다.
+What separates them is reason against history. Why this structure is visible
+whenever the code changes, so it lives next to the code. When, on which
+branch, what was fixed does not change when the code does, so it ages alone.
+That belongs to `.wiki/decisions/` and to commits.
 
-어겼을 때. 둘 중 하나다. 이유를 지우면 다음 사람이 같은 결정을 다시 하거나
-되돌린다. 이력을 쌓으면 주석이 틀린 것을 자신 있게 가리키고, 그것은 주석이
-없는 것보다 나쁘다.
+What goes wrong. One of two things. Remove the reason and the next person
+remakes the same decision, or reverses it. Accumulate the history and the
+comment confidently points at something untrue, which is worse than no comment.
 
-## 무엇을 남기고 무엇을 지우나
+## What stays and what goes
 
-| 남긴다 | 지우거나 옮긴다 |
+| Keep | Remove or move |
 | --- | --- |
-| 설계 의도 — 왜 이 구조를 골랐나 | 코드를 그대로 옮겨 적은 문장 |
-| 비직관적인 제약 — 왜 이 순서·이 타입이어야 하나 | 날짜·PR 번호·브랜치 이름 |
-| 외부 시스템의 성질 — 그쪽이 이렇게 답한다 | "전에는 A 였는데 B 로 바꿨다" 식 작업 일지 |
-| 일부러 안 한 것과 그 이유 (`ponytail:` 표지 포함) | 재현 절차 없는 디버깅 회상 |
-| 회귀를 만든 원인 중 지금 구현을 설명하는 부분 | 같은 이야기의 두 벌째 (위키가 이미 든다) |
+| Design intent — why this structure was chosen | A sentence that restates the code |
+| A counter-intuitive constraint — why this order, this type | Dates, PR numbers, branch names |
+| How an external system behaves — it answers like this | A worklog: "it used to be A, changed to B" |
+| What was deliberately skipped and why (including a `ponytail:` marker) | Debugging recollections with no reproduction |
+| The part of a regression's cause that explains the code as it stands | A second copy of a story the wiki already holds |
 
-지우는 첫 줄이 가장 흔하다. 코드가 이미 말하는 것을 다시 말하고 있으면 주석을
-줄이는 게 아니라 이름과 구조를 고친다. 좋은 이름 하나가 주석 세 줄을 지운다.
+The first row of the remove column is the common one. When a comment restates
+what the code says, the fix is the name and the structure, not a shorter
+comment. One good name removes three lines of comment.
 
-양을 줄이는 것이 목표가 아니다. 목표는 짧음이 아니라 밀도다 — 남은 줄이 전부 코드가 못 하는 말이면 길어도
-맞다.
+Reducing the quantity is not the goal. The goal is density, not brevity — if
+every line left says something the code cannot, length is fine.
 
-## 줄바꿈은 의미 단위에서 한다
+## Lines break at meaning
 
-지킬 것은 셋이다.
+Three things to hold.
 
-- 끊는 자리는 문장·절·구의 경계다. 관형형과 의존명사(`쓰는 것`, `없을 때`),
-  수식어와 단위(`한 줄`), 조사와 그 임자는 갈라놓지 않는다.
-- 한 줄에 자연스럽게 들어가는 것을 여러 줄로 만들지 않는다. 두 줄로 늘리려고
-  넣은 수식어는 정보가 아니라 소음이다.
-- 논점이 둘이면 문단을 나눈다. 빈 주석 줄 하나가 "여기서 다른 이야기가
-  시작된다" 를 말한다.
+- Break at a sentence, clause or phrase boundary. Do not leave an article, a
+  preposition, a conjunction or an auxiliary stranded at the end of a line;
+  `the`, `of`, `and`, `to`, `is` belong with what follows them.
+- Do not spread across lines what fits naturally on one. A modifier added to
+  reach a second line is noise, not information.
+- Two points mean two paragraphs. One blank comment line says "a different
+  thing starts here".
 
-## 테스트 주석은 반대로 판단한다
+## Test comments invert the judgement
 
-일반 코드에서 지우는 이력이 테스트에서는 자산이다. 회귀 테스트의 값어치는
-그것이 무엇을 확인하는지가 아니라 무엇이 한 번 깨졌기 때문에 여기 있는지에
-있고, 그것을 지우면 다음 사람이 "이 단언은 왜 이렇게 빡빡하지" 하고 느슨하게
-고친다.
+The history removed from ordinary code is an asset in a test. A regression
+test is worth not what it checks but why it is here — what broke once — and
+removing that leads the next person to ask "why is this assertion so tight"
+and loosen it.
 
-그래서 테스트에서는 "무엇을 테스트하는가" 를 적지 않는다 — 그건 테스트 이름과
-단언이 이미 말한다. 적을 것은 무엇이 어떻게 깨졌고 이 테스트가 그 자리를 어떻게
-지키는가다. 재현 조건을 함께 적으면 그 테스트가 빨개졌을 때 진단이 반쯤 끝난다.
+So a test does not say what it tests; the name and the assertion already say
+that. What it says is what broke, how, and how this test holds that ground.
+Written with the reproduction conditions, the diagnosis is half done the
+moment it turns red.
 
-## 코드를 고치면 그 주석까지가 한 벌이다
+## Fixing the code and its comment is one change
 
-리팩터링으로 의미가 바뀌면 주석도 같이 본다. 함수를 옮기고 이름을 바꾸면서
-주석을 두고 오면, 그 주석은 이제 없는 동작을 설명하는 문장이다. 고칠 자리를
-셀 때 주석을 빼고 세지 않는다 — [[do-the-whole-instruction]] 의 같은 얼굴이다.
+When a refactor changes the meaning, look at the comment too. Move a function
+and rename it while leaving the comment behind, and that comment now describes
+behaviour that does not exist. Do not count the places to fix with the
+comments left out — the same face as [[do-the-whole-instruction]].
 
-주석에 원인을 적을 때는 확인한 것만 적는다. 그럴듯한 추측을 주석에 적으면
-그것이 다음 사람에게는 확인된 사실로 읽힌다 — [[diagnose-from-what-ran]].
+When writing a cause into a comment, write only what was confirmed. A
+plausible guess in a comment is read by the next person as established fact —
+[[diagnose-from-what-ran]].
 
-## 검사가 잡는 것과 못 잡는 것
+## What the check catches and what it cannot
 
-`tool/lint.py::broken_wraps` 가 끊긴 줄바꿈을 짚는다. 관형형 다음 줄이
-의존명사로 시작하는 자리를 기계로 세고, 이 저장소의 `tool/*.py` 와 페이지
-산문을 본다. `test_lint.py` 가 그 검사가 실제로 빨개지는지 지킨다.
+`tool/lint.py::broken_wraps` points at a break that split a phrase. It counts
+lines ending on a word that belongs with the next one, across this
+repository's `tool/*.py` and the page prose. `test_lint.py` keeps that check
+actually turning red.
 
-나머지는 검사가 없다. 이 주석이 코드를 다시 말하는지, 남긴 회귀 원인이 지금
-구현을 설명하는지는 판단이고, 판단을 기계화하면 오탐이 작업을 멈춘다. 그래서
-이 페이지는 5층 산문으로 남고 발화에 걸릴 때만 실린다.
+The rest has no check. Whether a comment restates the code, whether the
+regression cause left behind explains the implementation as it stands, are
+judgements, and mechanising a judgement means false positives stopping the
+work. So this page stays layer-5 prose and rides only when an utterance
+catches it.
 
-코드를 쓰는 매 순간 실리지는 않는다. 그 자리를 트리거로 잡으려면 모든 발화에
-실어야 하고, 그것이 이 위키를 만들게 한 문제다. 대신 `lint` 가 사후에 잡고,
-지적이 다시 세어져 늘어 있으면 그때 `PostToolUse` 로 사다리를 올린다.
+It does not ride on every moment of writing code. Catching that moment as a
+trigger would mean riding on every utterance, and that is the problem this
+wiki was built for. Instead `lint` catches it afterwards, and if the findings
+are counted again and have grown, that is when the ladder goes up to
+`PostToolUse`.
 
-문서의 강조도 같은 종류의 판단이다. 무엇이 굵게를 받을 만한가는 취향이지만
-문단 라벨·한 줄에 둘·비율은 기계가 센다 — [[emphasis-is-scarce]] 가 그 선을
-어디에 그었는지 든다.
+Emphasis in a document is the same kind of judgement. What deserves bold is
+taste, but paragraph labels, two in one line and the ratio are counted by a
+machine — [[emphasis-is-scarce]] holds where that line was drawn.

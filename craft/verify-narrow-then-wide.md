@@ -8,40 +8,42 @@ sources_withheld: true
 links: [diagnose-from-what-ran, pick-up-async-results, do-the-whole-instruction]
 ---
 
-# 좁게 재고, 마지막에 넓게 — 수리마다 전부 돌리지 마라
+# Measure narrow, go wide at the end — not everything on every repair
 
-규칙. 고치는 동안은 **그 변경이 닿는 자리만** 돌린다. 전체 스위트와 전체 라이브
-회차는 커밋·리뷰·PR 직전에 한 번이다.
+Rule. While fixing, run **only what the change touches**. The full suite and
+the full live run happen once, just before a commit, a review or a PR.
 
-| 언제 | 무엇 |
+| When | What |
 | --- | --- |
-| 판단 하나를 고치는 중 | 그 테스트 파일 하나 |
-| 한 도메인이 닫힐 때 | 그 도메인 디렉터리 |
-| 커밋·리뷰 라운드·PR 직전 | 전체 게이트 |
-| 라이브가 주 증거인 변경 | 라이브 한 회차 |
+| Fixing one judgement | That one test file |
+| Closing out a domain | That domain's directory |
+| Before a commit, a review round or a PR | The whole gate |
+| A change whose main evidence is live | One live run |
 
-측정 하나를 위해 전체 시나리오를 돌리지 않는다. 계기를 심어야 하면 심되,
-그 값이 나오는 최소 경로만 태우고 값이 나오면 끊는다. 끝까지 돌린다고 답이 더
-정확해지지 않는다.
+Do not run a whole scenario for one measurement. Add instrumentation if it is
+needed, but drive only the shortest path that produces the value and stop when
+it does. Running to the end does not make the answer more accurate.
 
-국소로 잡히는 것을 전체로 잡는 것은 안전이 아니라 비용이다. 그 비용은 조용하다
-— 게이트는 계속 초록이므로 뭔가 잘못됐다는 신호가 어디에도 안 뜬다. 하루가 지나
-"왜 아직 아무것도 안 들어갔나" 로만 드러난다.
+Catching with the whole what the local would have caught is not safety, it is
+cost — and a quiet one. The gate stays green, so nothing anywhere signals that
+something is wrong. It shows up a day later as "why has nothing landed yet".
 
-예외 둘. 원인을 모르는 실패는 좁힐 근거가 없으므로 전체를 돌린다.
-공유 파일을 고쳤으면 그것을 쓰는 모든 자리를 봐야 한다
+Two exceptions. A failure with an unknown cause has no basis for narrowing, so
+run everything. And a change to a shared file means looking at every place
+that uses it.
 
-어겼을 때. 검증에 쓴 시간이 수리에 쓴 시간을 넘고, 밀린 작업이 그대로 쌓인다.
+What goes wrong. The time spent verifying passes the time spent repairing, and
+the backlog stays exactly where it was.
 
-## 시간을 쓰기 전에 그 시간이 무엇을 사는지 물어라
+## Before spending the time, ask what the time buys
 
-같은 저울이 다른 자리에도 있다. 이 규칙이 재는 것은 "이 실행이 새로 답해
-주는 것이 있는가" 하나다.
+The same scale sits in other places. What this rule weighs is one thing: does
+this run answer anything new?
 
-- 앞 실행 뒤로 안 건드린 자리는 다시 안 돌린다.
-- 이미 답이 나온 라이브 회차는 끝까지 안 돌린다.
-- 리뷰 라운드를 기다리는 동안 같은 검증을 다시 돌리지 않는다 —
-  기다림은 [[pick-up-async-results]] 가 든다.
+- Anything untouched since the last run is not run again.
+- A live run that has already given its answer is not driven to the end.
+- The same verification is not re-run while waiting for a review round —
+  waiting is held by [[pick-up-async-results]].
 
-깊이는 대상 저장소의 `.wiki/gates.md` 가 든다. 어느 명령이 게이트이고 각각
-얼마나 걸리는지는 저장소마다 다르다.
+The depth belongs to the target repository's `.wiki/gates.md`. Which commands
+are gates, and how long each takes, differ per repository.

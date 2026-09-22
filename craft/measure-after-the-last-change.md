@@ -8,71 +8,83 @@ sources_withheld: true
 links: [gate-the-exit-not-the-callers, diagnose-from-what-ran, client-lifecycle-in-one-scope]
 ---
 
-# 재는 자리는 값이 마지막으로 바뀐 뒤다
+# Measure after the value changes for the last time
 
-규칙. 어떤 값을 검사하거나 기록하거나 예산에 맞춘다면, 그 자리는 값을 바꿀 수
-있는 것이 전부 끝난 뒤여야 한다. 파이프라인에 걸음을 하나 끼우면 그 아래에서
-같은 값을 재던 곳은 전부 낡은 것을 재게 된다.
+Rule. If a value is checked, recorded or fitted to a budget, that has to
+happen after everything that can change it. Insert one step into a pipeline
+and every place below it that measured the same value is now measuring a stale
+one.
 
-어겼을 때. 검사는 계속 통과하는데 계속 엉뚱한 것을 잰다. 안 재는 것보다 나쁘다 —
-숫자가 있으니 잰 줄 안다.
+What goes wrong. The check keeps passing while measuring the wrong thing.
+Worse than not measuring — there is a number, so it looks measured.
 
-## 두 얼굴이 같은 규칙이다
+## Two faces of one rule
 
-한 번은 시간이고 한 번은 길이였는데, 틀린 방식이 같았다.
+Once it was time and once it was length, and the mistake was the same.
 
-| 무엇을 재나 | 어디서 쟀나 | 그 뒤에 무엇이 값을 바꿨나 |
+| What was measured | Where | What changed the value after that |
 | --- | --- | --- |
-| 마감이 지났나 | 응답이 도착한 순간 | 자리표시자 복원, 캐시 쓰기 |
-| 블록이 예산에 맞나 | 번역하기 전 | 번역. 영어가 대개 더 길다 |
+| Has the deadline passed | The moment the response landed | Restoring placeholders, writing the cache |
+| Does the block fit the budget | Before translating | The translation. English is usually longer |
 
-둘 다 재는 코드를 어디에 두나를 값의 생애가 아니라 읽기 편한 자리로 정한
-결과다. 응답 직후는 마감을 확인하기 좋은 자리처럼 보이고, 렌더링 직후는 길이를
-재기 좋은 자리처럼 보인다. 그 뒤로도 값이 움직인다는 것만 안 봤다.
+Both put the measuring code where it read well rather than where the value
+finished. Just after the response looks like a good place to check a deadline;
+just after rendering looks like a good place to measure length. What neither
+looked at is that the value keeps moving afterwards.
 
-## 걸음을 끼울 때 세는 것
+## What to count when inserting a step
 
-새 걸음을 파이프라인에 넣으면, 그 걸음이 바꾸는 값을 **읽는 곳을 전부** 센다.
-읽는 곳이 하나라도 위에 있으면 걸음을 위로 올리거나 읽기를 아래로 내린다.
+Adding a step to a pipeline means counting **every place that reads** the
+value that step changes. If even one of them is above it, move the step up or
+move the read down.
 
-실제로 이것을 안 세서 난 일이다. 번역을 렌더링 뒤에 넣었더니 셋이 같이 틀어졌다.
+This is what happened from not counting. Putting the translation after
+rendering broke three things at once.
 
-1. `fit` 이 한국어 길이로 예산에 맞춘 블록이 영어로 바뀌며 다시 넘쳤다
-2. `trajectory.cost` 가 번역 전 숫자를 적었다
-3. `trigger_audit` 이 그 숫자를 주입된 크기라고 자기 docstring 에 적어 두었으므로,
-   그 문장이 거짓이 됐다
+1. A block `fit` had trimmed to budget at Korean length overflowed again as
+   English
+2. `trajectory.cost` recorded the pre-translation number
+3. `trigger_audit` had written in its own docstring that this number was the
+   injected size, so that sentence became false
 
-번역을 렌더링 앞으로 옮기자 셋이 한꺼번에 맞았다. 고친 것은 한 줄의 위치다.
+Moving the translation ahead of rendering fixed all three. What was fixed was
+the position of one line.
 
-## 오프라인 재생은 같은 단위를 못 낸다 — 그러면 그렇게 적는다
+## An offline replay cannot produce the same unit — so write that down
 
-위를 고치자 건강 검진 하나가 빨개졌다. 훅이 기록한 값과 감사 도구가 잰 값이
-달랐다.
+Fixing the above turned one health check red. The value the hook recorded and
+the value the audit tool measured did not agree.
 
-조사해 보니 그 검사가 재려던 것은 두 측정의 단위가 같은가인데, 실제로는 번역이
-돌았는가를 재고 있었다. 훅은 서브프로세스로 돌며 환경을 물려받아 번역을 했고,
-감사 도구는 오프라인이라 안 했다.
+Investigating showed the check meant to measure whether the two measurements
+share a unit, and was actually measuring whether the translation ran. The hook
+runs as a subprocess, inherits the environment and translates; the audit tool
+is offline and does not.
 
-여기서 두 갈래가 있고, 고른 쪽을 적어 두는 것까지가 수리다.
+There are two branches here, and writing down which was chosen is part of the
+repair.
 
-| 고를 수 있는 것 | 대가 |
+| The choice | The cost |
 | --- | --- |
-| 감사 도구도 번역하게 한다 | 발화마다 왕복. 재생의 값어치가 사라진다 |
-| 감사 도구는 번역 전 크기를 잰다고 문서에 적는다 | 두 수를 비교할 때 차이를 빼고 봐야 한다 |
+| Make the audit tool translate too | A round trip per utterance. The value of replaying is gone |
+| Document that the audit tool measures the pre-translation size | Comparing the two numbers means allowing for the difference |
 
-뒤를 골랐다. 그리고 검사에서는 번역을 꺼서, 그 단언이 재려던 관계를 실제로
-재게 했다. 키만 빼는 것으로는 모자랐다 — 캐시가 키보다 먼저 답한다.
+The second was chosen. And the check turns the translation off, so the
+assertion measures the relationship it meant to. Removing the key alone was
+not enough — the cache answers before the key is read.
 
-## 리뷰가 같은 값을 다시 짚으면
+## When review points at the same value twice
 
-이 결함은 한 라운드에 다 안 보인다. 첫 라운드는 "마감을 안 본다" 로 오고,
-고치면 다음 라운드가 "그 뒤에도 시간이 간다" 로 온다. 지적이 짚은 자리만 고치면
-매번 그 점만 옮기게 된다.
+This defect does not show in one round. The first round arrives as "it does
+not look at the deadline", and after the fix the next one arrives as "time
+passes after that too". Fixing only where the finding pointed moves the point
+each time.
 
-리뷰 루프의 `지적이 짚은 자리만 고친다` 는 **범위**에 대한 규칙이다. 깊이에까지
-적용하면 증상 자리를 기우게 된다. 같은 값에 대한 지적이 두 번 오면 점을 옮기지
-말고 그 값의 생애를 따라가서, 마지막으로 바뀌는 자리를 찾는다.
+The review loop's "fix only where the finding points" is a rule about
+**scope**. Applied to depth, it patches the symptom site. When two findings
+land on the same value, do not move the point — follow that value's life and
+find where it changes last.
 
-막는 자리를 잘못 고른 쪽 얼굴은 [[gate-the-exit-not-the-callers]] 가 든다.
-그쪽은 무엇을 내보낼지를, 이쪽은 무엇을 잴지를 다룬다. 둘 다 답이 같다 —
-값이 마지막으로 지나는 한 자리.
+The face of this about picking the wrong place to block is held by
+[[gate-the-exit-not-the-callers]]. That one is about what goes out, this one
+about what gets measured. Both have the same answer: the single place the
+value passes through last.

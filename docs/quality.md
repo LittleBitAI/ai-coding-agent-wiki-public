@@ -1,26 +1,30 @@
-# 쉬운 설명 품질 기준
+# Quality bar for the plain explanation
 
-목표 독자는 오늘 처음 작업에 참여한 비전공자입니다.
-프로젝트를 모르더라도 무엇을 만드는지, 무엇이 됐는지, 무엇이 남았는지 이해해야 합니다.
-어려운 말에 괄호 설명을 붙이는 것만으로 통과시키지 않습니다.
+The reader it is written for is a non-specialist who joined the work today.
+Knowing nothing about the project, they have to understand what is being
+built, what is done and what remains. Adding a parenthetical gloss to a hard
+word is not enough to pass.
 
-원문은 문서·코드를 찾아 근거를 확인하는 답변입니다.
-쉬운 설명은 그 원문만 받아 의미를 보존하며 다시 쓰는 답변입니다.
-두 작업은 별도 영어 프롬프트를 사용하고 모두 한국어로 출력합니다.
-쉬운 설명에는 검색 도구나 원문 검색용 프롬프트를 전달하지 않습니다.
+The original is an answer that searches documents and code and confirms its
+grounds. The plain explanation receives only that original and rewrites it
+preserving the meaning. The two use separate English prompts and both output
+Korean. The explanation is given neither search tools nor the answer prompt.
 
-현재 기능 구현과 별개로 **쉬운 설명 품질은 미통과**입니다.
-긴 답변에서 어려운 개념이 남거나 수치와 조건의 의미가 달라질 수 있습니다.
-공개본에는 실제 프로젝트 답변과 검수 대화를 포함하지 않습니다.
+Independently of the feature being implemented,
+**the explanation quality does not pass yet**. In a long answer, hard concepts
+survive, or the meaning of a number or a condition shifts. The public copy
+contains no real project answers and no review conversations.
 
-검수자는 다음을 확인합니다.
+A reviewer confirms the following.
 
-1. 사전 지식 없이 본문을 이해할 수 있는가?
-2. 수치가 센 대상·단위·조건이 원문과 같은가?
-3. 실패·미실행·미확인을 구분하는가?
-4. 원문에 없는 원인·목적·완료 주장을 더하지 않았는가?
-5. 확인에 필요한 출처를 그대로 남겼는가?
+1. Can the body be understood with no prior knowledge?
+2. Do the numbers count the same thing, in the same unit, under the same
+   conditions as the original?
+3. Does it distinguish failed, not run and not confirmed?
+4. Has it added no cause, purpose or completion claim absent from the original?
+5. Are the sources needed to check it left intact?
 
-진척도 질문으로 시험할 때는 화면에서 해당 채널의 **문맥 비우기**를 먼저 실행합니다.
-같은 원문을 다시 풀어쓴 비교와, 새 문맥에서 실제 질문한 결과는 따로 기록합니다.
-검사 통과를 응답 품질 합격으로 바꾸어 보고하지 않습니다.
+Testing with a progress question starts by clearing that channel's context on
+screen. Re-explaining the same original and asking a real question in a fresh
+context are recorded separately. A passing check is never reported as passing
+response quality.

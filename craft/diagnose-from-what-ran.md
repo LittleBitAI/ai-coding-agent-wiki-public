@@ -8,77 +8,80 @@ sources_withheld: true
 links: [hooks-fail-open, run-inside-this-session, ask-with-arrow-key-options, verify-narrow-then-wide, error-names-the-symptom-site]
 ---
 
-# 무엇이 실제로 돌았는지 먼저 물어라
+# Ask what actually ran, first
 
-규칙. 무언가가 깨졌을 때 원인을 추측하기 전에 실제로 실행된 것을 조회한다.
-어느 이미지가 떴는지, 어느 설정값이 읽혔는지, 어느 프로세스가 답했는지. 그 조회가
-없으면 가설을 세우지 않는다. 세웠으면 확인하기 전에는 결론으로 말하지 않고,
-행동으로 옮기지 않는다.
+Rule. When something breaks, query what actually executed before guessing at
+the cause. Which image came up, which setting was read, which process
+answered. Without that query, do not form a hypothesis. Having formed one, do
+not state it as a conclusion or act on it until it is confirmed.
 
-어겼을 때. **가설이 행동을 시키고, 그 행동이 손해를 낸다.**
+What goes wrong. **The hypothesis drives an action, and the action does damage.**
 
-명령이 무엇을 죽이는지가 명령 이름에 안 적혀 있다.
-`wsl --shutdown` 은 "메모리를 비운다" 가
-아니라 "이 기계의 모든 컨테이너를 멈춘다" 이고, 거기에는 남의 프로젝트 것도
-들어간다.
+What a command kills is not written in the command's name. `wsl --shutdown` is
+not "free some memory", it is "stop every container on this machine", and that
+includes other projects'.
 
-### 남의 것을 고아로 부르지 않는 한 줄
+### The one line that stops someone else's from being called an orphan
 
 ```bash
 docker inspect <name> --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}'
 ```
 
-이름은 안 가른다. 라벨이 가른다. 라벨이 없는 컨테이너는 퍼블리시한 포트를 그
-프로젝트의 설정과 맞춰 봐야 한다.
+The name does not tell them apart. The label does. A container with no label
+has to be matched by its published ports against that project's configuration.
 
-## 그럴듯함이 증거처럼 보이는 두 자리
+## Two places where plausibility looks like evidence
 
-시점이 맞는 것은 근거가 아니다.
+Timing that lines up is not grounds.
 
-내가 미리 경고해 둔 위험이 특히 위험하다. 자기가 세운 예보와
-일치하는 관측은 증거가 아니라 확증 편향이 붙기 가장 좋은 자리다.
+A risk warned about in advance is the most dangerous of all. An observation
+that agrees with one's own forecast is not evidence; it is the best possible
+place for confirmation bias to attach.
 
-## 순서를 뒤집지 마라
+## Do not invert the order
 
-결론의 어조로 적으면 다음 걸음이 그 위에 쌓인다. 사용자는 그 문장을 읽고
-판단하고, 나는 그 문장과 일관되게 행동한다
+Written in the tone of a conclusion, the next step gets built on it. The user
+reads that sentence and decides, and the agent then acts consistently with it.
 
-## 먼저 치는 것
+## What to run first
 
-어느 층이 의심스럽든 "무엇이 실제로 돌았나" 를 반환하는 조회가 대개 존재한다.
-전부 읽기 전용이고, 전부 가설보다 싸다.
+Whatever layer is suspected, there is usually a query that returns what
+actually ran. All of them are read-only, and all of them are cheaper than a
+hypothesis.
 
-| 의심 | 추측 대신 |
+| Suspected | Instead of guessing |
 | --- | --- |
-| 어느 이미지·컨테이너가 떴나 | `docker events` · `docker inspect` · `docker ps -a` |
-| 어느 설정값이 읽혔나 | 그 값을 그대로 찍어 본다. 파일이 아니라 **프로세스가 읽은 값** |
-| 어느 프로세스가 그 포트를 잡았나 | 이름 말고 `CommandLine` — [[run-inside-this-session]] |
-| 어느 코드가 돌았나 | 그 자리에 한 번 찍고 되돌린다 |
-| 무엇이 실패했나 | 잘린 요약 말고 **전체 출력**을 파일로 받는다 |
+| Which image or container came up | `docker events` · `docker inspect` · `docker ps -a` |
+| Which setting was read | Print the value itself — not the file, **the value the process read** |
+| Which process holds that port | `CommandLine`, not the name — [[run-inside-this-session]] |
+| Which code ran | Print once at that spot and revert it |
+| What failed | The **whole output** into a file, not a truncated summary |
 
-## 초록을 의심하는 것과 같은 규율이다
+## The same discipline as doubting a green
 
-빨강의 원인을 확인 없이 정하는 것은, 초록을 확인 없이 믿는 것과 같은 실패다. 양쪽 다
-확인하지 않은 것을 확인한 것처럼 다룬다.
+Deciding the cause of a red without confirming it is the same failure as
+trusting a green without confirming it. Both treat something unconfirmed as
+confirmed.
 
-[[hooks-fail-open]] 이 그 결론을 한 문장으로 들고 있다:
-안 도는 것보다 나쁜 것은 안 도는데 도는 줄 아는 것이다.
-진단에서는 이렇게 읽힌다 — 모르는 것보다 나쁜 것은
-모르는데 안다고 여기는 것이다. 아는 줄 알면 행동하고,
-그 행동은 되돌려야 한다.
+[[hooks-fail-open]] carries the conclusion in one sentence: worse than
+something not running is something believed to be running. In diagnosis it
+reads as — worse than not knowing is believing you know. Believing you know
+leads to acting, and the action has to be undone.
 
-## 트리거는 반쪽이다
+## The trigger is half of it
 
-여기 걸린 정규식은 사용자가 고장을 말로 꺼낼 때만 걸린다. 진짜 실패 자리는 내가
-스스로 가설을 세우는 순간이고 그건 발화에 안 나타난다 —
-[[ask-with-arrow-key-options]] 가 같은 한계를 자기 페이지에 적어 두고 있고, 원인도
-같다: 2층 훅은 사용자가 친 것만 본다.
+The regex here only fires when the user says out loud that something broke.
+The real failure point is the moment a hypothesis forms, and that does not
+appear in an utterance — [[ask-with-arrow-key-options]] wrote the same limit
+on its own page, for the same reason: a layer-2 hook only sees what the user
+typed.
 
-그래서 이 페이지의 나머지 절반은 습관이다. "무엇이 실제로 돌았나" 를 한 번도 안
-물었으면 아직 진단을 시작하지 않은 것이다.
+So the other half of this page is a habit. If "what actually ran" has not been
+asked once, the diagnosis has not started.
 
-## 오류 메시지도 실행 기록이 아니다
+## An error message is not an execution record either
 
-`X_missing` 같은 이름은 조회가 어디서 실패했는지만 말하고 그 조회가 무엇을
-보고 있었는지는 말하지 않는다. 이름을 실행 기록으로 읽으면 여기 적힌 것과 같은
-오진이 난다 — [[error-names-the-symptom-site]].
+A name like `X_missing` says where a lookup failed and nothing about what that
+lookup was looking at. Reading the name as an execution record produces
+exactly the misdiagnosis described here —
+[[error-names-the-symptom-site]].

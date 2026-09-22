@@ -1,54 +1,72 @@
-# 개인용 원본과 공개본 관리
+# Managing the private original and the public copy
 
-개인용 원본은 기록과 이력을 유지한 채 계속 사용합니다.
-공개본은 별도 Git 저장소이며, 원본의 구조·규칙·스킬을 유지하고 개인 기록만 제외합니다.
-원본의 Git 이력을 가져오거나 원본 브랜치를 공개본에 merge하지 않습니다.
+The private original stays in use, with its records and history intact. The
+public copy is a separate git repository that keeps the original's structure,
+rules and skills and excludes only the private records. Do not import the
+original's git history, and do not merge an original branch into the public
+copy.
 
-## 갱신 순서
+## The update order
 
-1. 원본에서 바뀐 파일 중 공개본에 필요한 변경을 고릅니다.
-2. 파일 전체를 자동 동기화하지 말고, 변경 내용을 검토해 공개본에 패치합니다.
-3. 주석·테스트·프롬프트·예시에도 개인 프로젝트 정보가 없는지 확인합니다.
-4. 실제 대화 인용, 내부 코드, 프로젝트별 경로, 세션 링크만 뺍니다. 규칙을 요약하거나 다시 쓰지 않습니다.
-   규칙의 적용 조건·등급·차단 설정과 스킬의 단계·종료 조건은 원본과 대조합니다.
-5. 기능 검사를 실행하고 `git diff --cached`로 실제 커밋할 내용을 확인합니다.
-6. 인증 정보뿐 아니라 기획·내부 코드·대화·저장소 주소·개인 경로도 검사합니다.
-7. 커밋 후 공개할 브랜치의 전체 이력을 검사하고, 그 공개본만 push합니다.
+1. From the files changed in the original, pick the changes the public copy
+   needs.
+2. Do not auto-sync whole files; review the change and patch it into the
+   public copy.
+3. Confirm that comments, tests, prompts and examples carry no private project
+   information either.
+4. Remove only real conversation quotes, internal code, per-project paths and
+   session links. Do not summarise or rewrite a rule. Compare each rule's
+   applicability, severity and block settings, and each skill's steps and exit
+   conditions, against the original.
+5. Run the functional checks and confirm what will actually be committed with
+   `git diff --cached`.
+6. Check for more than credentials: plans, internal code, conversations,
+   repository addresses and personal paths.
+7. After committing, inspect the whole history of the branch to be published,
+   and push that public copy alone.
 
 `raw/`, `.wiki/`, `.claude/`, `.codex/`, `.chat-local.json`, `artifacts/`,
-`graph.json`, 개인 adapter는 기본적으로 Git에서 제외합니다.
-인증·설정·경험 기록을 강제로 추가하지 마세요.
-`.gitignore`는 이미 커밋된 파일이나 과거 이력을 지우지 않습니다.
+`graph.json` and a private adapter are excluded from git by default. Do not
+force-add credentials, settings or experience records. `.gitignore` removes
+neither an already-committed file nor past history.
 
-## 기존 경험을 계속 쓰는 방법
+## Keeping the existing experience
 
-개인용 위키는 기존 경로에서 그대로 사용하면 됩니다.
-공개본을 설치했다고 개인용 위키나 프로젝트의 설정을 자동으로 교체하지 않습니다.
-각 프로젝트에 어떤 위키를 연결할지는 그 프로젝트에서 설치할 때 선택합니다.
+The private wiki keeps working from its existing path. Installing the public
+copy does not replace the private wiki or a project's settings. Which wiki a
+project connects to is chosen when installing in that project.
 
-공개본의 설치 검사는 공개본 안의 코드와 가상 예시로 실행합니다.
-실제 프로젝트 기록을 검사 편의를 위해 공개본으로 복사하지 않습니다.
-공개 저장소의 접근 범위와 라이선스는 저장소 소유자가 결정합니다.
+The public copy's install checks run against the code inside the public copy
+and fictional examples. Real project records are not copied into the public
+copy for the convenience of a check. Access and licensing of the public
+repository are decided by its owner.
 
-## 근거를 제외한 규칙
+## Rules with their grounds withheld
 
-기존 규칙의 `sources`는 비우고 `sources_withheld: true`로 원본 근거가 비공개임을 표시합니다.
-이 표시는 규칙의 중요도나 적용 조건을 바꾸지 않으며, 원본 경험이 공개 검증됐다는 뜻도 아닙니다.
-lint는 이 표시가 있는 규칙의 근거 누락만 허용합니다. 다른 검사는 그대로 실행합니다.
-새 규칙에 근거가 없다는 이유로 이 표시를 붙이지 않습니다.
+An existing rule's `sources` is emptied and `sources_withheld: true` marks the
+original grounds as private. That mark changes neither the rule's severity nor
+its applicability, and it does not mean the original experience was publicly
+verified. `lint` allows the missing grounds only for rules carrying it; every
+other check runs unchanged. Do not apply it to a new rule that simply has no
+grounds.
 
-## 개인 값과 선택 기능
+## Private values and optional features
 
-프로젝트 adapter는 각 checkout에서 새로 설정합니다. `raw/`와 `.wiki/`의 빈 구조는 남기되,
-이전에 쌓인 발화·결정·측정 파일은 배포하지 않습니다. 설치 후 쌓이는 기록도 Git에서 제외됩니다.
+A project adapter is configured fresh in each checkout. The empty structure of
+`raw/` and `.wiki/` stays, but the utterances, decisions and measurement files
+accumulated before are not distributed. Records that accumulate after
+installing are excluded from git too.
 
-Slack 브리핑 도구와 프롬프트도 유지합니다. 작성자의 프로젝트 경로와 채널 ID는 포함하지 않습니다.
-본인의 Claude Code에서 Slack 연결과 발송 권한을 준비한 뒤, 실제 발송할 때만 아래 명령을 실행합니다.
+The Slack briefing tools and prompts stay as well, without the author's
+project paths or channel ids. After preparing the Slack connection and send
+permission in your own Claude Code, run the commands below only when actually
+sending.
 
 ```powershell
-tool/slack_post.cmd standup "../example-project" "<내 Slack 채널 ID>"
-tool/slack_post.cmd retro "../example-project" "<내 Slack 채널 ID>"
+tool/slack_post.cmd standup "../example-project" "<my Slack channel id>"
+tool/slack_post.cmd retro "../example-project" "<my Slack channel id>"
 ```
 
-실행기는 위키 위치를 자동으로 잡고 입력받은 프로젝트·채널을 사용합니다. 채널이 없으면 실행하지 않습니다.
-이 명령은 Slack에 메시지를 보내므로 설치 확인용으로 실행하지 않습니다.
+The launcher finds the wiki itself and uses the project and channel it is
+given. With no channel it does not run. These commands post to Slack, so they
+are not run to verify an install.

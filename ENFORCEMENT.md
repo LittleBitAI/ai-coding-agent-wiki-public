@@ -1,48 +1,53 @@
-# 강제 — 적힌 것이 행동을 지배하게 만드는 다섯 층
+# Enforcement — the five layers that make what is written govern behaviour
 
-`SCHEMA.md` 가 "가능한 규칙을 검사로 바꾼다"고 적었다. 이 문서가 그 어떻게다.
+`SCHEMA.md` says "turn the rules that can be into checks". This document is
+the how.
 
-그 규칙은 이제 4층이다 — `operator/edit-files-as-diffs`, `tool/edit_as_diff.py`.
+That rule is now layer 4 — `operator/edit-files-as-diffs`,
+`tool/edit_as_diff.py`.
 
-## 사다리 — 싼 것부터, 첫 칸에서 멈춘다
+## The ladder — cheapest first, stop at the first rung that holds
 
-| 층 | 무엇 | 언제 | 비용 |
+| Layer | What | When | Cost |
 | --- | --- | --- | --- |
-| 1 | `permissions.deny` | 위반이 명령 모양으로 보인다 | 페이지의 `enforce.deny` 한 줄 |
-| 2 | `UserPromptSubmit` 훅 → `additionalContext` | 그 발화에 맞는 페이지를 주입한다 | 정규식 몇 줄 |
-| 3 | 스킬 | 반복 지시를 절차로 굳힌다. 순서를 못 틀리게 | 파일 하나 |
-| 4 | `PreToolUse` 훅 | 위반이 계산된 상태로만 보인다 | 스크립트 + 오탐 위험 |
-| 5 | 산문 | 판단이 필요하다 | 안 지켜질 수 있음 |
+| 1 | `permissions.deny` | The violation looks like a command | One line of `enforce.deny` on a page |
+| 2 | `UserPromptSubmit` hook → `additionalContext` | Inject the page that fits this utterance | A few lines of regex |
+| 3 | A skill | Set a repeated instruction into a procedure so the order cannot go wrong | One file |
+| 4 | `PreToolUse` hook | The violation is only visible once computed | A script, and the risk of false positives |
+| 5 | Prose | It needs judgement | It might not be followed |
 
-2층 옆에 하나가 더 있다. `SessionStart` 훅은 발화가 아니라 상태를 넣는다 —
-브랜치, 열린 계획의 미완 항목, 최근 결정. 잊는 것 중 둘은 어떤 발화에도 안
-걸리기 때문이다. "무엇을 하던 중이었나" 는 사용자가 안 적고, "왜 그렇게
-골랐나" 는 어느 낱말에도 안 붙는다. 트리거로 잡을 수 없는 것은 트리거로
-잡으려 하지 않는다.
+There is one more beside layer 2. The `SessionStart` hook injects state rather
+than a response to an utterance — the branch, the unfinished rows of open
+plans, recent decisions. Two of the things that get forgotten catch on no
+utterance at all: the user does not write down "what was I in the middle of",
+and "why was it chosen that way" attaches to no particular word. What cannot
+be caught by a trigger is not chased with one.
 
-첫 칸에서 멈춘다. 4층으로 막을 수 있다고 4층을 쓰지 않는다 — 오탐이 작업을
-멈추면 강제가 아니라 방해가 된다.
+Stop at the first rung. Do not use layer 4 because layer 4 could block it — a
+false positive that stops the work is not enforcement, it is obstruction.
 
-## 2층이 이 위키의 핵심이다
+## Layer 2 is the heart of this wiki
 
-`UserPromptSubmit` 훅이 사용자의 발화를 보고 맞는 페이지를 컨텍스트에 넣는다.
+The `UserPromptSubmit` hook reads the user's utterance and puts the matching
+page into the context.
 
 ```
-사용자: "PR #91 리뷰 루프 돌려라"
-   ↓  UserPromptSubmit 훅이 "리뷰 루프" 를 본다
-   ↓  hookSpecificOutput.additionalContext 로 operator/codex-review-loop.md 주입
-에이전트: 그 페이지를 이미 읽은 상태로 시작
+User: "PR #91 리뷰 루프 돌려라"
+   ↓  the UserPromptSubmit hook sees "리뷰 루프"
+   ↓  hookSpecificOutput.additionalContext injects operator/codex-review-loop.md
+Agent: starts with that page already read
 ```
 
-이것이 원래 하고 싶었던 일이다 — "`~를 읽어라` 라고 안 해도 알아서 맞는 것을
-읽는 것". 그런데 원안(Karpathy)의 방식과 다르다.
+This is what was wanted in the first place — the right thing gets read without
+anyone saying "read X". It works differently from the original idea
+(Karpathy's).
 
-| | 원안 | 여기 |
+| | The original | Here |
 | --- | --- | --- |
-| 누가 고르나 | 에이전트가 `index.md` 를 읽고 고른다 | 훅이 발화를 보고 넣는다 |
-| 안 읽으면 | 안 읽힌다 | 안 읽을 수가 없다 |
+| Who chooses | The agent reads `index.md` and chooses | The hook reads the utterance and injects |
+| If it is not read | It is not read | It cannot not be read |
 
-그래서 페이지마다 `triggers` 를 선언한다.
+So every page declares its `triggers`.
 
 ```yaml
 ---
@@ -52,104 +57,115 @@ triggers: ["리뷰 루프", "review loop", "codex.*리뷰"]
 ---
 ```
 
-`landmine` 과 `contract` 만 주입한다. `preference` 는 `index.md` 에 두고
-에이전트가 필요할 때 읽는다. 안 그러면 처음에 이 위키를 만들게 한 문제 —
-컨텍스트에 다 실어서 아무것도 안 읽히는 것 — 이 그대로 돌아온다.
+Only `landmine` and `contract` are injected. `preference` stays in `index.md`
+for the agent to read when it needs it. Otherwise the problem that created
+this wiki — everything loaded into the context and therefore nothing read —
+comes straight back.
 
-`trajectory.cost` 와 같은 단위다 — 헤더·출처표·블록 사이 구분자는
-안 센다. `rule` 은 공유 규칙과 프로젝트 `.wiki/*.md` 규칙이고, `repo` 는 결정
-블록이다. `SessionStart` 가 싣는 문서 목록·계획·최근 결정은 이 두 수치에 안
-들어간다. 두 축의 최대는 서로 다른 턴일 수 있으므로 합쳐서 한 턴 최대라고
-부르면 안 된다.
+The unit is the same as `trajectory.cost`: headers, source tables and the
+separators between blocks are not counted. `rule` covers the shared rules and
+a project's `.wiki/*.md` rules; `repo` covers decision blocks. The document
+list, plans and recent decisions that `SessionStart` carries are in neither
+number. The maxima of the two axes can fall on different turns, so adding them
+and calling the result a per-turn maximum is wrong.
 
-`--project` 없이 돌리면 감사기가 프로젝트 페이지를
-아예 안 읽는다. 안 읽은 것과 읽었는데 빈 것은 같은 글자로 내면 안 된다.
+Run without `--project` and the auditor does not read the project pages at
+all. "Did not read" and "read and found nothing" must not print as the same
+thing.
 
-본문 합계는 아무 뜻이 없고, 그것을 "예산" 이라 부르면 아무도
-정한 적 없는 상한처럼 읽힌다.
+A sum of the bodies means nothing, and calling that sum a "budget" makes it
+read as a ceiling nobody ever set.
 
-페이지가 느는 것이 곧 비용이라는 것을 숫자로 보는 자리가 여기다.
+This is where the cost of adding pages becomes a number.
 
-그래서 상한을 없앴다. 잘릴 것은 트리거에 걸린 규칙 — 이 발화에 필요하다고
-판정된 바로 그것이고, 규칙이 안 실려서 어기는 것이 이 위키가 막으려는 실패다.
-상한이 그 실패를 스스로 만들어서는 안 된다. 예산은 프로젝트가
-`adapters/*.toml` 로만 정하고, 정하더라도 자르지 않고 다듬는다 — 등급이 낮은
-것부터 규칙 한 줄로 줄이고, 그래도 넘으면 제목과 경로만 남긴다. 사라지는
-페이지는 없다.
+So the ceiling was removed. What would be cut is a rule a trigger matched —
+the very thing judged necessary for this utterance — and a rule not arriving
+is the failure this wiki exists to stop. A ceiling must not manufacture that
+failure. A budget is set only by a project in `adapters/*.toml`, and even then
+it trims rather than cuts: lower severities shrink to their one rule line, and
+if it still does not fit, to a title and a path. No page disappears.
 
-값이 없는 것은 미완성이 아니라
-*축약하지 않는다* 는 기본값이다. 지금 최대 크기만 보고 숫자를 고르면 방금 걷어낸
-무근거 상한을 다른 이름으로 되살린다. 값을 정할 때는 실제 주입 제한이나 규칙
-이행 저하가 관측된 다음이고, 그때 비용과 이행을 같이 잰다.
+No value is not an unfinished setting, it is the default of *do not
+abbreviate*. Picking a number from the current maximum size would revive the
+groundless ceiling just removed under another name. A value is set after a
+real injection limit or a drop in rule adherence has been observed, and cost
+and adherence are measured together at that point.
 
-예산은 하드 상한이 아니라 축약 목표다. 규칙의 제목·경로와 결정의 이름 목록은
-최소 크기가 있어서, 아주 작은 예산에서는 그냥 넘는다. 결정은 최대 세 건을 요약하고
-나머지는 이름 여덟 개와 총수만 남긴다 — "모든 결정의 이름이 무조건 남는다" 도
-틀린 해석이다.
+A budget is a trimming target, not a hard ceiling. A rule's title and path and
+a decision's name list have a minimum size, so a very small budget is simply
+exceeded. Decisions summarise at most three and leave eight names and a total
+for the rest — "every decision's name always survives" is the wrong reading too.
 
-### 예산은 축마다 따로다
+### The budget is per axis
 
-`rule_budget` 과 `repo_budget` 둘이다. 하나로 두면 모자랄 때 줄어드는 것이
-언제나 규칙이 된다 — 다듬는 코드가 규칙만 다듬고 결정 기록은 한 글자도 안
-건드리기 때문이다.
+There are two, `rule_budget` and `repo_budget`. With one, what shrinks when
+space runs out is always the rules, because the trimming code trims rules and
+does not touch a character of the decision record.
 
-늘어나는 축이 지켜야 할 축을 밀어내는 구조를 두면, 프로젝트가 오래될수록
-규칙이 덜 실린다.
+Leave a growing axis able to push out an axis that has to be held, and an
+older project carries fewer rules.
 
-`tool/test_inject.py` 가 그 자리를 지킨다. 갈라 놓지 않았을 때 규칙이 실제로
-줄어드는 것까지 같이 재므로, 이 설계가 무엇을 막고 있는지가 초록 하나로
-지워지지 않는다.
+`tool/test_inject.py` holds that ground. It also measures that the rules
+actually do shrink when the two are not separated, so what this design
+prevents is not erased by a single green.
 
-### 경고를 적중률에서 크기로 옮겼다
+### The warning moved from hit rate to size
 
-적중률은
-해를 재지 못한다 — 요약 두 줄이 발화 47%에 실리는 것과 전문 일곱 장이 20%에
-실리는 것은 전혀 다른 일이고, 나쁜 쪽은 뒤엣것이다. 이제 중앙값과 상한 근접도로
-경고한다.
+A hit rate cannot measure harm — two summary lines riding on 47% of
+utterances and seven full pages riding on 20% are entirely different things,
+and the bad one is the second. The warning is now the median and how close it
+comes to the ceiling.
 
-주입 시점에 필요한 것은 "이건 이미 정했고 이유는 이것" 이지 전문이 아니다.
+What is needed at injection time is "this was already decided, and here is
+why", not the full text.
 
-같은 규칙이라도 기계가 판정할 수 있는 부분만 검사로 내려간다.
-줄이 어디서 끊겼는지는 세면 되지만,
-그 문장이 코드를 다시 말하는지는 읽어야 안다. 뒤엣것까지 검사로 만들면 오탐이
-작업을 멈추고, 그러면 사용자가 검사를 통째로 끈다.
+Even within one rule, only the part a machine can judge goes down into a
+check. Where a line broke can be counted; whether that sentence restates the
+code has to be read. Make the second a check too and false positives stop the
+work, and then the person turns the check off entirely.
 
-훅으로 "보내기 전에
-감시를 걸었나" 를 검사하려면 상태를 추측해야 하고 그건 4층이라 오탐이 난다.
-대신 스킬이 두 걸음을 한 절차로 묶으면 순서를 틀릴 자리가 사라진다.
+Checking with a hook whether the watch was armed before sending would mean
+guessing at state, and at layer 4 that produces false positives. A skill that
+binds the two steps into one procedure removes the place the order can go
+wrong instead.
 
-**근거 없이 층을 짓지 않고, 근거가 생기면 미루지 않는다.**
+**No layer without grounds, and no delay once there are grounds.**
 
-## census 는 작동하는 규칙을 못 본다
+## A census cannot see a rule that works
 
-census 는 사용자가 다시 친 지시를 세므로,
-이미 강제된 규칙은 재입력을 안 만들고 따라서 0건으로 보인다.
+A census counts the instructions a user retyped, so a rule already enforced
+produces no retyping and therefore reads as zero.
 
-그래서 페이지가 되는 문은 둘이다.
+So there are two doors into a page.
 
-| 문 | 근거 | 예 |
+| Door | Grounds | Example |
 | --- | --- | --- |
-| 반복 | 둘 이상의 저장소에서 다시 쳤다 | 리뷰 루프 · 머지 후 정리 |
-| 강제 | 한 곳에서라도 이미 검사·차단으로 서 있고 옮길 수 있다 | `git reset --hard` 차단 |
+| Repetition | It was retyped in two or more repositories | The review loop · post-merge cleanup |
+| Enforcement | It already stands as a check or a block somewhere, and it travels | Blocking `git reset --hard` |
 
-둘째 문이 없으면 layer 1 에 실을 것이 영원히 안 생긴다. `permissions.deny` 로
-막힌 것은 census 에 한 줄도 안 남기기 때문이다.
+Without the second door, layer 1 never gains anything. What
+`permissions.deny` blocks leaves not one line in a census.
 
-## 안 하는 것
+## What is not done
 
-- `Stop` 훅으로 "멈추지 마라" 를 강제하지 않는다. 언제 멈추는 것이 옳은지는 판단이다(사용자만 정할 수 있는 것 · 되돌리기
-  어려운 것 · 가정이 위험한 것). 기계가 판정하면 멈춰야 할 자리에서 못 멈춘다.
-- `prompt`/`agent` 타입 훅을 기본으로 쓰지 않는다. 매 도구 호출마다 모델을
-  부르는 비용이고, 판정이 흔들린다. `command` 로 안 되는 것만.
-- 오탐이 나는 검사를 넣지 않는다. 강제가 방해가 되면 사용자가 통째로 끈다.
+- A `Stop` hook is not used to enforce "do not stop". When stopping is right
+  is a judgement (only the user can decide · hard to reverse · the assumption
+  is unsafe). Judged by a machine, it fails to stop where it should.
+- `prompt` and `agent` type hooks are not used by default. They cost a model
+  call on every tool call and their judgement wobbles. Only where `command`
+  cannot do it.
+- A check that produces false positives is not added. Enforcement that
+  obstructs is enforcement the person turns off entirely.
 
-2층과 다른 점이 여기서 보인다. 2층은 규칙을 읽히게 하고, 1층은 읽든 말든
-못 하게 한다. 그래서 명령 모양으로 보이는 것은 1층에서 멈추고 2층까지 안 간다.
+The difference from layer 2 shows here. Layer 2 makes a rule read; layer 1
+makes it impossible whether or not it was read. So anything that looks like a
+command stops at layer 1 and never reaches layer 2.
 
-4층이 1층과 다른 점은 판정에 계산이 든다는 것이다. 그래서 오탐이 날 자리가
-있고, 그 자리를 좁히려고 대상을 `Bash`·`Agent`·`Task` 의 `description` 하나로
-묶었다. 프롬프트도 파일 내용도 안 본다. 무엇이든 잘못되면 통과시킨다 —
-강제가 작업을 멈추면 사용자가 통째로 끈다.
+What separates layer 4 from layer 1 is that the judgement takes computation.
+That leaves room for false positives, and to narrow that room its target is
+one thing: the `description` of `Bash`, `Agent` and `Task`. Not prompts, not
+file contents. Anything goes wrong, it passes — enforcement that stops the
+work is enforcement the person turns off entirely.
 
-층이 실제로 작동하는지를 계속 재는 방법은
-[`MAINTENANCE.md`](MAINTENANCE.md) 의 "페이지가 작동하는지 재는 법" 에 있다.
+How to keep measuring whether the layers actually work is in "how to measure
+whether a page works" in [`MAINTENANCE.md`](MAINTENANCE.md).

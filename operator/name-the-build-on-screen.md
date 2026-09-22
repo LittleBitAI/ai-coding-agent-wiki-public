@@ -7,29 +7,31 @@ sources: []
 links: [run-inside-this-session, diagnose-from-what-ran, verify-narrow-then-wide]
 ---
 
-# 화면을 넘길 때는 그것이 어느 빌드인지 먼저 말한다
+# Handing over a screen starts with naming the build
 
-규칙. 사용자에게 "확인해 주십시오" 라고 부탁하기 **전에**, 지금 떠 있는 빌드의
-브랜치와 커밋을 한 줄로 적는다. 프런트엔드가 따로 서면 그 번들도 같이 적는다.
-사용자가 그 줄을 읽고 "내가 볼 것이 그것이 맞다" 를 스스로 판단할 수 있어야
-부탁이 성립한다. 되돌아온 실패 보고에도 같은 줄을 붙여 어느 빌드의 회차였는지
-기록한다.
+Rule. **Before** asking the user to check something, write one line giving the
+branch and commit of the build that is up. If the frontend is served
+separately, name that bundle too. The request only works if the user can read
+that line and decide for themselves that this is the thing they meant to look
+at. Attach the same line to the failure report that comes back, so the run is
+recorded against a build.
 
-어겼을 때. **사용자가 낸 회차가 버려진다.** 사람이 앱을 켜고 대화를 하고 결과를
-적어 보내는 데 드는 값은 테스트 한 번보다 훨씬 비싼데, 그 회차가 어느 코드의
-것인지 안 적혀 있으면 증거로 못 쓴다. 게다가 그 답을 되찾으려고 로그를
-뒤지게 되고, [[diagnose-from-what-ran]] 이 말하는 "실제로 돈 것" 이 정작 사용자
-쪽에서만 안 적혀 있는 상태가 된다.
+What goes wrong. **A run the user paid for gets thrown away.** A person
+opening the app, having a conversation and writing up the result costs far
+more than one test, and without a record of which code it was, none of it can
+be used as evidence. Worse, recovering that answer means digging through logs,
+leaving "what actually ran" — the thing [[diagnose-from-what-ran]] is about —
+unrecorded on exactly the side where it cost the most.
 
-## 그 줄은 이미 서버가 갖고 있다 — 지어내지 마라
+## The server already holds that line — do not invent it
 
-띄운 뒤 그것을 읽어서 그대로 옮겨 적는다. 기억으로 쓰지 않는다 — 방금 `git`
-으로 확인한 커밋과 서버가 실제로 물고 있는 커밋이 같다는 보장이 없고, 그 어긋남이
-바로 이 페이지가 다루는 실패다.
+Read it after starting the server and copy it across. Do not write it from
+memory: the commit just checked with `git` is not guaranteed to be the commit
+the server is actually serving, and that gap is the failure this page is about.
 
-`launcher_worktree` 도 같이 적는다. 커밋이 맞아도 워크트리가 더러우면 그 커밋은
-빌드를 설명하지 못한다. `unknown` 은 런처가 안 알려줬다는 뜻이지 깨끗하다는 뜻이
-아니다.
+Write `launcher_worktree` too. A correct commit does not describe the build if
+the worktree is dirty. `unknown` means the launcher did not say, not that it
+is clean.
 
-서버를 무엇으로 어디에 띄우는가는 [[run-inside-this-session]] 이 든다. 이 페이지는
-그다음 한 걸음 — 띄운 것을 사람에게 넘기는 자리만 본다.
+What starts the server and where is held by [[run-inside-this-session]]. This
+page is the step after: the moment it is handed to a person.

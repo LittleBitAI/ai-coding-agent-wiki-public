@@ -12,6 +12,7 @@ import pytest
 import chat
 import chat_channels
 import chat_session
+import translate
 from chat_session import ChatSession, Event
 
 
@@ -231,3 +232,88 @@ for line in sys.stdin:
     with patch.object(chat_channels, "codex_models", side_effect=RuntimeError("offline")):
         response = TestClient(chat.app).get("/api/options").json()
         assert response["models"] == chat_channels.MODELS and "offline" in response["codex_error"]
+
+
+# -- translation -------------------------------------------------------------
+
+
+def test_translate_api_guards_its_own_budget():
+    """One cache and one bill, shared with the hooks.
+
+    A screen that posts a whole document burns what the hooks were going to
+    spend, and nothing downstream of here would notice.
+    """
+
+    client = TestClient(chat.app)
+    assert client.post(
+        "/api/translate", json={"texts": ["x"], "direction": "ko->ko"}
+    ).status_code == 400
+    assert client.post(
+        "/api/translate", json={"texts": ["x"] * (chat.TRANSLATE_MAX + 1)}
+    ).status_code == 413
+    assert client.post(
+        "/api/translate", json={"texts": ["x" * (chat.TRANSLATE_CHARS + 1)]}
+    ).status_code == 413
+
+
+def test_map_words_go_but_identifiers_stay():
+    """The map renders a headline and one rule line. Nothing else.
+
+    Carry a slug, a path or a config value along and the links break while
+    `graph.json`'s keys quietly differ on screen only. The translator lifts
+    those out before the request; this checks the door in front of it hands
+    the text over intact, because a door that mangles it first leaves the
+    protection nothing to protect. No network — the translator is faked.
+    """
+
+    seen: list[str] = []
+
+    def fake(texts, direction=translate.EN_KO, deadline=None):
+        seen.extend(texts)
+        return [f"[ko]{t}" for t in texts]
+
+    line = "Rule. `tool/lint.py` and [[hooks-fail-open]] decide `{review_dir}`."
+    with patch.object(chat.translate, "translate", fake):
+        answer = TestClient(chat.app).post(
+            "/api/translate", json={"texts": ["Emphasis is scarce", line]}
+        ).json()
+
+    assert seen == ["Emphasis is scarce", line]
+    assert answer["texts"][0] == "[ko]Emphasis is scarce"
+    # `translate.protect` does the real work, and `test_translate.py` keeps it
+    # honest. What is checked here is that these spans are the ones it lifts.
+    kept = translate.protect(line, translate.glossary()[0])[1]
+    assert "tool/lint.py" in " ".join(kept)
+    assert "[[hooks-fail-open]]" in " ".join(kept)
+    assert "{review_dir}" in " ".join(kept)
+
+
+# -- the Korean mirror --------------------------------------------------------
+
+
+def test_mirror_only_points_at_a_repo_it_listed():
+    """That the screen named a path is not a reason to open it.
+
+    Running on the same machine does not make it one. Only what this server
+    itself offered gets accepted.
+    """
+
+    client = TestClient(chat.app)
+    listing = client.get("/api/mirror/repos").json()
+    assert set(listing["hosts"]) == {"claude", "codex"}
+
+    assert client.post(
+        "/api/mirror/point", json={"host": "claude", "project": "C:\\nowhere"}
+    ).status_code == 404
+    assert client.post(
+        "/api/mirror/point", json={"host": "없는호스트", "project": "C:\\tmp"}
+    ).status_code == 404
+
+    offered = listing["hosts"]["claude"]
+    if offered:
+        answer = client.post(
+            "/api/mirror/point",
+            json={"host": "claude", "project": offered[0]["path"]},
+        )
+        assert answer.status_code == 200
+        assert answer.json()["project"] == offered[0]["path"]
