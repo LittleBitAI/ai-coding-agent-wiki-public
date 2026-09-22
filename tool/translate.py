@@ -59,7 +59,13 @@ TIMEOUT = 6.0
 # and that is worse than no cache: it looks current.
 PROMPT_VERSION = "1"
 
-CACHE = ROOT / "raw" / "translate-cache.sqlite3"
+# Overridable because the cache answers before the key is ever looked at — a
+# hit needs no request, and no key. That is right in production and poison in a
+# test, where a run seeded by an earlier one passes for reasons it did not
+# create. Tests point this somewhere disposable.
+CACHE = Path(
+    os.environ.get("TRANSLATE_CACHE") or (ROOT / "raw" / "translate-cache.sqlite3")
+)
 GLOSSARY = HERE / "markers" / "glossary.toml"
 
 KO_EN = "ko->en"

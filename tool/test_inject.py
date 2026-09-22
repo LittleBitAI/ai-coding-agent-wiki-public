@@ -69,7 +69,19 @@ def build(decisions: int, rule_budget: int | None, repo_budget: int | None) -> s
          "--project", str(project)],
         input=json.dumps({"prompt": f"{WORD} 를 쓴다", "session_id": "t"}),
         capture_output=True, text=True, encoding="utf-8",
-        env={**os.environ, "WIKI_ROOT": str(wiki), "PYTHONIOENCODING": "utf-8"},
+        # 키를 빼서 번역을 fail-open 시킨다. 안 빼면 이 헬퍼를 부를 때마다
+        # 실제 Gemini 왕복이 일어나 스위트가 느려지고 흔들리고 돈이 든다.
+        # 영어본 자체는 아래 전용 시험이 가짜 번역기로 잰다.
+        #
+        # 캐시도 임시로 돌린다. **키를 빼는 것만으로는 모자란다** — 캐시가
+        # 키보다 먼저 답하므로, 앞선 회차가 이 발화를 캐시해 뒀으면 키 없이도
+        # 번역이 성공한다. 실제로 그렇게 이 시험이 한 번 빨갰다.
+        env={k: v for k, v in os.environ.items() if k != "GEMINI_API_KEY"}
+        | {
+            "WIKI_ROOT": str(wiki),
+            "PYTHONIOENCODING": "utf-8",
+            "TRANSLATE_CACHE": str(root / "translate-cache.sqlite3"),
+        },
     )
     payload = json.loads(done.stdout or "{}")
     return payload.get("hookSpecificOutput", {}).get("additionalContext", "")
@@ -99,12 +111,12 @@ def test_결정이_늘어도_규칙이_한_글자도_안_줄어든다():
     crowded = build(decisions=10, rule_budget=700, repo_budget=None)
     assert MARK in crowded, "결정이 실리지 않았다. 시험이 아무것도 안 재고 있다"
     assert rule_half(alone) == rule_half(crowded)
-    assert "줄임" not in rule_half(crowded), rule_half(crowded)[:200]
+    assert "shortened" not in rule_half(crowded), rule_half(crowded)[:200]
 
 
 def test_규칙_예산이_모자라면_규칙만_다듬는다():
     text = build(decisions=10, rule_budget=200, repo_budget=None)
-    assert "줄임" in rule_half(text), rule_half(text)[:200]
+    assert "shortened" in rule_half(text), rule_half(text)[:200]
     # 규칙을 다듬었다고 결정이 사라지지는 않는다.
     assert MARK in text
 
@@ -121,7 +133,7 @@ def test_지식을_아무리_조여도_이름은_남는다():
     block = text.split(MARK)[1]
     # 이름은 최신순 여덟까지만 보인다. 가장 새것은 어떤 예산에서도 안 사라진다.
     assert "2026-01-10-9" in block, block
-    assert "결정이 10건 있다" in block, block
+    assert "10 decision(s) on this" in block, block
 
 
 def test_한_예산이었다면_지식이_규칙을_밀어냈다():
@@ -162,7 +174,74 @@ def test_한_예산이었다면_지식이_규칙을_밀어냈다():
 
 def test_예산이_없으면_아무것도_안_다듬는다():
     text = build(decisions=10, rule_budget=None, repo_budget=None)
-    assert "줄임" not in text
+    assert "shortened" not in text
+
+
+# ---- 발화의 영어본 --------------------------------------------------------
+#
+# 가짜 번역기로 잰다. 진짜를 부르면 시험이 네트워크와 돈에 매이고, 무엇보다
+# 번역이 실패한 회차와 성공한 회차가 같은 초록으로 보인다.
+
+
+def _rendering(monkeypatch, prompt: str, answer: str | None) -> str:
+    import inject
+    import translate
+
+    monkeypatch.setattr(
+        translate, "ko_to_en", lambda text, deadline=None: answer or text
+    )
+    return inject.rendering(prompt)
+
+
+def test_영어본은_발화가_한국어일_때만_붙는다(monkeypatch):
+    korean = _rendering(monkeypatch, "규칙을 지켜라", "Follow the rule")
+    assert "Follow the rule" in korean
+    assert "English rendering" in korean
+
+    assert _rendering(monkeypatch, "just plain english", "SHOULD NOT BE CALLED") == ""
+
+
+def test_번역이_실패하면_영어본_표지를_안_붙인다(monkeypatch):
+    """원문을 영어본이라고 이름 붙이는 것이 가장 나쁜 실패다.
+
+    읽는 쪽은 그것이 번역된 것인지 아닌지 확인할 방법이 없으므로, 틀린
+    이름표가 붙은 한국어를 영어로 믿고 읽게 된다. 그래서 `ko_to_en` 이
+    원문을 그대로 돌려주면 — 즉 실패하면 — 블록 자체를 안 만든다.
+    """
+
+    assert _rendering(monkeypatch, "규칙을 지켜라", None) == ""
+
+
+def test_트리거는_한국어_원문에_걸린다(monkeypatch):
+    """순서가 이 변경의 전부다.
+
+    `match_pages` 에 번역본을 주면 한국어 정규식이 영어 문장을 훑게 되어
+    아무것도 안 걸리고, **아무것도 안 걸린 것은 아무것도 해당 안 되는 것과
+    구별되지 않는다.** 주입이 말없이 사라진다.
+    """
+
+    from inject import match_pages
+
+    meta = {"severity": "contract", "triggers": [WORD]}
+    available = [(meta, "규칙. 본문", Path("craft") / "x.md")]
+
+    assert match_pages(f"{WORD} 를 쓴다", available), "원문에는 걸려야 한다"
+    assert not match_pages("writes the budget test word", available), (
+        "번역본에 걸리면 이 시험은 순서가 뒤집힌 것을 못 잡는다"
+    )
+
+
+def test_걸린_규칙이_없어도_영어본은_나간다(monkeypatch):
+    """`if not parts: return 0` 이 원래 여기서 발화 번역을 통째로 삼켰다.
+
+    발화는 매 턴 에이전트 입력이다. 그것을 트리거에 매달면 **어떤 규칙도
+    해당 안 되는 턴** — 즉 위키가 도울 말이 없는 턴 — 에서만 번역이 사라진다.
+    """
+
+    import inject
+
+    monkeypatch.setattr(inject.translate, "ko_to_en", lambda t, deadline=None: "EN")
+    assert inject.rendering("규칙을 지켜라").endswith("EN")
 
 
 if __name__ == "__main__":

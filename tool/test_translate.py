@@ -200,7 +200,7 @@ def test_keep_korean_terms_are_masked_not_merely_requested() -> None:
     assert T.restore(masked, spans) == "나라장터 입찰공고 파서"
 
 
-def test_it_runs_as_a_process_and_korean_survives_the_pipe() -> None:
+def test_it_runs_as_a_process_and_korean_survives_the_pipe(tmp_path: Path) -> None:
     """`craft/hooks-fail-open`, third face. The child writes Korean, the parent
     reads it, and a cp949 default in between kills the reader thread quietly."""
 
@@ -210,7 +210,14 @@ def test_it_runs_as_a_process_and_korean_survives_the_pipe() -> None:
         text=True,
         encoding="utf-8",
         errors="replace",
-        env={"PATH": "", "SYSTEMROOT": "C:\\Windows"},
+        # No key, and a cache of its own. Dropping the key alone is not enough:
+        # the cache answers before the key is read, so a real cache entry from
+        # an earlier run would translate this and the assert below would flip.
+        env={
+            "PATH": "",
+            "SYSTEMROOT": "C:\\Windows",
+            "TRANSLATE_CACHE": str(tmp_path / "cache.sqlite3"),
+        },
         check=False,
     )
 

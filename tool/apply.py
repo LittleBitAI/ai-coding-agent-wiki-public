@@ -81,7 +81,10 @@ def hook_entry(python: str, adapter: str | None, project: str = "") -> dict:
                     f'"{python}" "{(HERE / "inject.py").as_posix()}"'
                     f"{selection}{where}"
                 ),
-                "timeout": 10,
+                # 10 이었다. `inject.py` 가 발화의 영어본을 붙이면서 Gemini
+                # 왕복(실측 1.2초)이 들어왔다. `translate.py` 자체 상한이 6초라
+                # 번역이 최악으로 늦어도 훅은 예산 안에서 끝난다.
+                "timeout": 15,
                 "statusMessage": "위키 확인",
             }
         ]

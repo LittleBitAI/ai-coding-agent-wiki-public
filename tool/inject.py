@@ -10,10 +10,12 @@ import sys
 from pathlib import Path
 
 import trajectory
+import translate
 from wikilib import WIKI, front_matter
 
 INJECTABLE = {"landmine", "contract"}
 SLOT = re.compile(r"\{([a-z][a-z0-9_]*)\}")
+HANGUL = re.compile(r"[가-힣]")
 
 # 기본 예산은 없다. 걸린 규칙은 다 싣는다.
 #
@@ -57,11 +59,16 @@ def shrink(body: str, path: Path, severity: str, hard: bool) -> str:
     """
 
     title = next((x[2:].strip() for x in body.splitlines() if x.startswith("# ")), path.stem)
-    head = f"<!-- wiki:{label(path)} ({severity}, 줄임) -->\n# {title}"
+    head = f"<!-- wiki:{label(path)} ({severity}, shortened) -->\n# {title}"
     if hard:
-        return head + f"\n\n전문: `{label(path)}.md`"
-    rule = next((x for x in body.splitlines() if x.startswith("규칙.")), "")
-    return head + (f"\n\n{rule}" if rule else "") + f"\n\n전문: `{label(path)}.md`"
+        return head + f"\n\nFull page: `{label(path)}.md`"
+    # Both spellings. Page bodies turn English in stage 2, and a shrink that
+    # only knows `규칙.` would leave the title with no rule under it exactly
+    # when the budget is tight -- the turn where the rule matters most.
+    rule = next(
+        (x for x in body.splitlines() if x.startswith(("규칙.", "Rule."))), ""
+    )
+    return head + (f"\n\n{rule}" if rule else "") + f"\n\nFull page: `{label(path)}.md`"
 
 
 def fit(parts: list[str], rules: list, limit: int | None) -> tuple[list[str], int]:
@@ -102,7 +109,7 @@ def digest(body: str, path: Path) -> str:
     title = next((x[2:].strip() for x in body.splitlines() if x.startswith("# ")), path.stem)
     why = next((x[3:].strip() for x in body.splitlines() if x.startswith("왜.")), "")
     head = re.split(r"(?<=다\.)\s", why, maxsplit=1)[0][:180] if why else ""
-    return f"- {title}\n  {head}\n  전문: `.wiki/decisions/{path.stem}.md`"
+    return f"- {title}\n  {head}\n  Full record: `.wiki/decisions/{path.stem}.md`"
 
 
 def knowledge(decisions: list, limit: int | None) -> list[str]:
@@ -122,13 +129,16 @@ def knowledge(decisions: list, limit: int | None) -> list[str]:
     while True:
         briefs = [digest(b, p) for _s, b, p in decisions[:keep]]
         rest = [p.stem for _s, _b, p in decisions[keep:]]
-        block = "<!-- wiki:decisions -->\n이 주제는 이미 정한 적이 있다. 뒤집기 전에 이유를 보라."
+        block = (
+            "<!-- wiki:decisions -->\n"
+            "This has been decided before. Read the reason before reversing it."
+        )
         if briefs:
             block += "\n\n" + "\n".join(briefs)
         if rest:
-            head = "같은 주제의 결정이" if briefs else "이 주제의 결정이"
+            more = " more" if briefs else ""
             block += (
-                f"\n\n{head} {len(rest)}건 {'더 ' if briefs else ''}있다: "
+                f"\n\n{len(rest)}{more} decision(s) on this: "
                 + ", ".join(f"`{n}`" for n in rest[:8])
                 + (" …" if len(rest) > 8 else "")
             )
@@ -168,17 +178,17 @@ def source_map(matched: list, project: str | None) -> str:
         {label(p) for _s, _b, p in matched if str(label(p)).startswith(".wiki/")}
     )
 
-    lines = ["**출처.** 아래 페이지는 두 곳에서 온다. 고쳐 쓸 곳을 여기서 정해라."]
-    lines.append(f"- 허브 위키 `{hub}` — `operator/` `craft/`. 저장소를 안 가리는 규칙")
+    lines = ["**Where these came from.** Two places. Decide here which one to edit."]
+    lines.append(f"- Hub wiki `{hub}` — `operator/` `craft/`. Rules that name no repo")
     if project:
         repo_wiki = Path(project).expanduser() / ".wiki"
-        lines.append(f"- 이 저장소 `{repo_wiki}` — 게이트·런처·포트·아키텍처 불변식")
+        lines.append(f"- This repo `{repo_wiki}` — gates, launchers, ports, invariants")
     else:
-        lines.append("- 대상 저장소의 `.wiki/` — 게이트·런처·포트·아키텍처 불변식")
+        lines.append("- The target repo's `.wiki/` — gates, launchers, ports, invariants")
     if from_hub:
-        lines.append(f"- 이번에 허브에서 온 것: {', '.join(from_hub)}")
+        lines.append(f"- From the hub this time: {', '.join(from_hub)}")
     if from_repo:
-        lines.append(f"- 이번에 이 저장소에서 온 것: {', '.join(from_repo)}")
+        lines.append(f"- From this repo this time: {', '.join(from_repo)}")
     return "\n".join(lines)
 
 
@@ -283,6 +293,32 @@ def render_parts(matched: list, rule_limit: int | None, repo_limit: int | None) 
     return rules, decisions, parts, knowledge(decisions, repo_limit), trimmed
 
 
+def rendering(prompt: str) -> str:
+    """The English rendering of the utterance, or `""` if there is none.
+
+    **This must run after `match_pages`, never before.** Triggers are Korean
+    regexes held against what the person actually typed. Hand `match_pages` a
+    translation and nothing matches, and nothing matching is indistinguishable
+    from nothing applying — the injection disappears without a word.
+
+    `craft/hooks-fail-open` names that shape: not running is bad, believing it
+    ran is worse.
+    """
+
+    if not HANGUL.search(prompt):
+        return ""
+    english = translate.ko_to_en(prompt)
+    if english == prompt:
+        # Unchanged means the translation failed. Labelling the Korean as an
+        # English rendering would be a lie the reader cannot check.
+        return ""
+    return (
+        "<!-- wiki:english-rendering -->\n"
+        "English rendering of the user's message (Gemini). The Korean above is "
+        "authoritative — go back to it wherever this reads oddly.\n\n" + english
+    )
+
+
 def main() -> int:
     # 들어오는 발화도 나가는 주입문도 한글이다. 인코딩을 환경에 안 맡긴다.
     sys.stdin.reconfigure(encoding="utf-8")
@@ -328,18 +364,34 @@ def main() -> int:
         # 이름만 남긴다. 한글이 섞이면 이 stderr 쓰기가 또 죽는다.
         print(f"trajectory skipped: {failed}", file=sys.stderr)
 
-    if not parts:
+    # After `trajectory.record`, so the trajectory keeps the Korean original.
+    english = rendering(prompt)
+    if not parts and not english:
         return 0
-    body = (
-        "다음은 위키가 이 발화에 대해 실은 것이다. 규칙은 어기면 과거에 실제로 "
-        "사고가 났던 자리이고, 지식은 이미 정한 것이다.\n\n"
-        + source_map(rules, args.project)
-        + "\n\n"
-        + "\n\n---\n\n".join(parts)
-    )
-    note = f"위키 주입: {', '.join(loaded[:6])}"
+
+    blocks = []
+    if parts:
+        blocks.append(
+            "Below is what the wiki loaded for this utterance. A rule marks a "
+            "place where something actually went wrong before; knowledge is "
+            "something already decided.\n\n"
+            + source_map(rules, args.project)
+            + "\n\n"
+            + "\n\n---\n\n".join(parts)
+        )
+    # Carried even when no page matched. The utterance is agent input on every
+    # turn, and tying it to a trigger would drop it on exactly the turns that
+    # no rule covers.
+    if english:
+        blocks.append(english)
+    body = "\n\n---\n\n".join(blocks)
+    # 사용자 화면에 그대로 뜨는 한 줄이다. 여기만 한국어로 남는다 —
+    # `operator/korean-progress`.
+    note = f"위키 주입: {', '.join(loaded[:6])}" if loaded else "위키: 걸린 규칙 없음"
     if trimmed:
         note += f" · 줄임 {trimmed}장"
+    if english:
+        note += " · 영어본 첨부"
 
     json.dump(
         {
