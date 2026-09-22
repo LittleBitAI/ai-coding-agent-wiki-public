@@ -19,7 +19,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from sessions import INJECTED, SESSIONS, folder  # noqa: E402
+from sessions import INJECTED, SESSIONS, folder, logs  # noqa: E402
 
 DEFAULT_MARKERS = HERE / "markers" / "ko.toml"
 
@@ -54,12 +54,17 @@ class Markers:
         )
 
 
-def human_turns(directory: Path) -> list[Turn]:
+def human_turns(files: list[Path]) -> list[Turn]:
     """Of the `type=user` records, only what a person typed. Tool results and
-    injected text are removed."""
+    injected text are removed.
+
+    Files, not a directory. Which files are this checkout's is `sessions.logs`'s
+    answer — one directory can hold two checkouts' sessions, and counting both
+    as one project's is a census of a conversation that never happened.
+    """
 
     turns: list[Turn] = []
-    for path in sorted(directory.glob("*.jsonl")):
+    for path in sorted(files):
         for order, line in enumerate(
             path.read_text(encoding="utf-8", errors="replace").splitlines()
         ):
@@ -167,13 +172,15 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    directory = folder(args.project, args.transcripts)
-    if not directory.is_dir():
-        print(f"세션 로그를 못 찾았다: {directory}", file=sys.stderr)
+    files = logs(args.project, args.transcripts)
+    if not files:
+        directory = folder(args.project, args.transcripts)
+        where = directory if directory.is_dir() else args.transcripts
+        print(f"이 체크아웃의 세션 로그를 못 찾았다: {where}", file=sys.stderr)
         return 2
 
     markers = Markers.load(args.markers)
-    turns = human_turns(directory)
+    turns = human_turns(files)
     if not turns:
         print("사람 발화가 없다. --transcripts 경로를 확인하라.", file=sys.stderr)
         return 2

@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -151,6 +153,59 @@ def test_a_lone_candidate_that_belongs_to_another_checkout_is_not_taken(tmp_path
     assert found.parent == root
 
 
+def test_two_checkouts_that_flatten_to_one_directory_are_kept_apart(tmp_path):
+    """The flattening is lossy, and the host writes both of them here.
+
+    `C:\\a-b` and `C:\\a\\b` both become `C--a-b`. Reading that directory whole
+    hands the census, the retro and the Slack brief two repositories'
+    conversations as one project's, and `claude_session` points the mirror at
+    whichever of the two spoke last.
+    """
+
+    root = tmp_path / "projects"
+    hyphen = tmp_path / "x-y"       # one checkout
+    nested = tmp_path / "x" / "y"   # and another
+    hyphen.mkdir()
+    nested.mkdir(parents=True)
+    assert S.folder(hyphen, root).name == S.folder(nested, root).name  # one directory
+
+    shared = S.folder(hyphen, root)
+    mine = claude_log(shared, "mine.jsonl", hyphen)
+    theirs = claude_log(shared, "theirs.jsonl", nested)
+    os.utime(mine, (0, 1_000_000))
+    os.utime(theirs, (0, 2_000_000))  # the other checkout spoke most recently
+
+    assert S.logs(hyphen, root) == [mine]
+    assert S.logs(nested, root) == [theirs]
+
+    with patch.object(S, "SESSIONS", root):
+        assert S.claude_session(hyphen) == mine   # not `theirs`, which is newer
+        assert {row["path"] for row in S.checkouts("claude")} == {
+            str(hyphen.resolve()), str(nested.resolve()),
+        }
+
+
+def test_a_candidate_proves_itself_with_any_log_not_only_the_newest(tmp_path):
+    """A session opened a moment ago has not written its `cwd` record yet.
+
+    Judging the candidate on that one file alone rejected the directory and
+    hid every earlier log in it that did belong.
+    """
+
+    root = tmp_path / "projects"
+    project = tmp_path / "elsewhere" / "demo"
+    project.mkdir(parents=True)
+    candidate = root / "flattened-another-way-demo"
+    old = claude_log(candidate, "old.jsonl", project)
+    blank = candidate / "just-opened.jsonl"
+    blank.write_text("", encoding="utf-8")   # no records yet
+    os.utime(old, (0, 1_000_000))
+    os.utime(blank, (0, 2_000_000))
+
+    assert S.folder(project, root) == candidate
+    assert S.logs(project, root) == [old]   # the empty one belongs to nobody
+
+
 def test_a_candidate_with_no_log_at_all_proves_nothing(tmp_path):
     root = tmp_path / "projects"
     (root / "flattened-another-way-demo").mkdir(parents=True)
@@ -277,6 +332,48 @@ def test_a_deleted_worktree_leaves_the_listing_when_it_leaves_the_disk(
     monkeypatch.setattr(S, "codex_homes", lambda: [tmp_path])
 
     assert {row["path"] for row in S.checkouts("codex")} == {str(here)}
+
+
+def test_a_deleted_subfolder_keeps_the_checkout_it_sat_in(tmp_path):
+    """`web/` goes, the repository above it does not.
+
+    Testing the recorded path alone dropped that repository's only session —
+    the row vanished from the picker although the checkout was right there.
+    """
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "-b", "main")
+    git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit",
+        "--allow-empty", "-m", "one")
+    (repo / "web").mkdir()
+
+    day = tmp_path / "logs" / "2026" / "09" / "22"
+    rollout(day, "rollout-a.jsonl", repo / "web")   # the only session
+    shutil.rmtree(repo / "web")
+
+    with patch.object(S, "codex_homes", lambda: [tmp_path / "logs"]):
+        rows = S.checkouts("codex")
+
+    assert [row["path"] for row in rows] == [str(repo.resolve())]
+    assert rows[0]["branch"] == "main"
+
+
+def test_a_deleted_checkout_with_no_repository_above_it_is_still_dropped(tmp_path):
+    """The climb stops at the first directory that exists, and git decides.
+
+    A scratchpad under `Temp` has a living ancestor too. Keeping a row because
+    *something* above the gone directory is on disk would put `Temp` in the
+    picker.
+    """
+
+    scratch = tmp_path / "scratch" / "run-1"
+    (tmp_path / "scratch").mkdir()      # the parent lives, but it is no checkout
+    day = tmp_path / "logs" / "2026" / "09" / "22"
+    rollout(day, "rollout-a.jsonl", scratch)
+
+    with patch.object(S, "codex_homes", lambda: [tmp_path / "logs"]):
+        assert S.checkouts("codex") == []
 
 
 def test_the_listing_carries_the_repository_each_checkout_is_of(tmp_path, monkeypatch):

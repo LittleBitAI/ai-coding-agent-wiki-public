@@ -86,6 +86,20 @@ def parse(line: str) -> dict | None:
     return record if isinstance(record, dict) else None
 
 
+def living(path: Path) -> Path | None:
+    """The nearest directory at or above `path` that is still on disk.
+
+    A cell records where it was opened, which is routinely a subdirectory. That
+    subdirectory can go while the checkout holding it stays, and then the path
+    in the log names nothing although the work it describes is still there.
+    """
+
+    for candidate in (path, *path.parents):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
 def newest(paths) -> Path | None:
     def when(path: Path) -> float:
         try:
@@ -170,8 +184,13 @@ def checkout(path: Path) -> tuple[str, str, str]:
 # --------------------------------------------------------------------------
 
 
-def folder(project: Path, root: Path = SESSIONS) -> Path:
+def folder(project: Path, root: Path | None = None) -> Path:
     """The log directory for a checkout.
+
+    `root` defaults to `SESSIONS` when it is called, not when it is defined.
+    Bound as a default it would be read once at import, and then redirecting
+    the constant — which is the only way to run any of this against a
+    directory that is not the real one — would silently have no effect.
 
     Claude Code flattens the checkout path into a directory name:
     `C:\\projects\\demo` becomes `C--projects-demo`, every separator turning
@@ -186,13 +205,17 @@ def folder(project: Path, root: Path = SESSIONS) -> Path:
     `D:\\new\\demo`, and handing it over silently gives the census, the retro
     and the Slack brief another repository's conversation to read.
 
-    So the log says who it belongs to. Every record carries the `cwd` the
-    session ran in, and a candidate is taken only when its own newest log
-    names this checkout. Nothing matching that means there is no log for this
-    checkout, which is a different sentence from "I could not tell which", and
-    the honest one.
+    A candidate proves itself with any log in it that names this checkout, not
+    with its newest. The newest file can be a session that has not written its
+    first `cwd` record yet, and rejecting the whole directory over that hides
+    every earlier log that does belong.
+
+    This answers *which directory*, which is not the same as which logs. The
+    flattening is lossy — `C:\\a-b` and `C:\\a\\b` both become `C--a-b` — so one
+    directory can hold two checkouts' sessions. `logs` is what settles that.
     """
 
+    root = SESSIONS if root is None else root
     flat = str(project.resolve()).replace(":", "-").replace("\\", "-").replace("/", "-")
     exact = root / flat
     if exact.is_dir() or not root.is_dir():
@@ -202,10 +225,34 @@ def folder(project: Path, root: Path = SESSIONS) -> Path:
     for candidate in sorted(root.glob("*")):
         if not candidate.is_dir() or not candidate.name.endswith(tail):
             continue
-        latest = newest(candidate.glob("*.jsonl"))
-        if latest is not None and under(claude_cwd(latest), here):
+        if any(under(claude_cwd(p), here) for p in candidate.glob("*.jsonl")):
             return candidate
     return exact
+
+
+def logs(project: Path, root: Path | None = None) -> list[Path]:
+    """This checkout's session files, oldest first. Each one proves itself.
+
+    Not everything in the directory. Claude flattens the checkout path into a
+    directory name by turning every separator into `-`, which is lossy:
+    `C:\\a-b` and `C:\\a\\b` both land in `C--a-b`, and the host writes both
+    checkouts' sessions there. Whoever reads that directory whole reads two
+    repositories' conversations as one.
+
+    Every record carries the `cwd` the session ran in, so the file settles it
+    and the directory name never has to. A file with no `cwd` yet — a session
+    opened a moment ago — belongs to nobody until it writes one, and leaving
+    it out costs an empty log rather than a wrong attribution.
+    """
+
+    directory = folder(project, root)
+    if not directory.is_dir():
+        return []
+    here = project.resolve()
+    return sorted(
+        (p for p in directory.glob("*.jsonl") if under(claude_cwd(p), here)),
+        key=lambda p: p.stat().st_mtime,
+    )
 
 
 def claude_cwd(path: Path) -> Path | None:
@@ -233,8 +280,10 @@ def claude_cwd(path: Path) -> Path | None:
 
 
 def claude_session(project: Path) -> Path | None:
-    directory = folder(project)
-    return newest(directory.glob("*.jsonl")) if directory.is_dir() else None
+    """The newest log that belongs to this checkout, not the newest in the folder."""
+
+    found = logs(project)
+    return found[-1] if found else None
 
 
 # --------------------------------------------------------------------------
@@ -348,19 +397,26 @@ def checkouts(host: str) -> list[dict]:
         for directory in SESSIONS.iterdir():
             if not directory.is_dir():
                 continue
-            latest = newest(directory.glob("*.jsonl"))
-            if latest is None:
-                continue
-            where = claude_cwd(latest)
-            if where is None:
-                continue
-            seen[str(where)] = max(seen.get(str(where), 0.0), latest.stat().st_mtime)
+            # Every file, not the newest one. A directory can hold two
+            # checkouts — the flattening collides — and reading only the
+            # newest made whichever ran last the only one offered.
+            for log in directory.glob("*.jsonl"):
+                where = claude_cwd(log)
+                if where is None:
+                    continue
+                seen[str(where)] = max(seen.get(str(where), 0.0), log.stat().st_mtime)
 
     rows: dict[str, dict] = {}
     for path, when in sorted(seen.items(), key=lambda row: -row[1]):
-        if not Path(path).is_dir():
+        # The cell's directory may be gone while the checkout it sat in is
+        # not — `web/` gets deleted, the repository above it does not. Testing
+        # the recorded path alone dropped that repository's only session.
+        alive = living(Path(path))
+        if alive is None:
             continue  # the worktree was deleted; its log was not
-        top, repo, branch = checkout(Path(path))
+        top, repo, branch = checkout(alive)
+        if alive != Path(path) and not top:
+            continue  # gone, and nothing above it is a checkout either
         # Keyed by the checkout, not by where the cell was opened. Coming in
         # newest first means the first arrival already holds the latest time.
         key = top or path
