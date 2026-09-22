@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from pathlib import Path
 
 # Both hosts' editing tools. Claude sends `Write`/`Edit`/`MultiEdit`; Codex
 # sends `apply_patch`, sometimes as `functions.apply_patch`. Listing only
@@ -21,8 +22,10 @@ import sys
 # Codex edit through -- wired, reported as enforced, never once firing.
 WATCHED = {"Write", "Edit", "MultiEdit", "apply_patch"}
 
-# `*** Add File: path` / `*** Update File: path` inside an apply_patch body.
+# `*** Add File: path` / `*** Update File: path` inside an apply_patch body,
+# and the rename header that decides where the result actually lands.
 PATCH_FILE = re.compile(r"^\*\*\* (?:Add|Update) File: (.+)$", re.M)
+MOVE_TO = re.compile(r"^\*\*\* Move to: (.+)$", re.M)
 
 BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
 
@@ -66,7 +69,10 @@ def prose(text: str) -> list[tuple[str, bool]]:
     """
 
     out: list[tuple[str, bool]] = []
-    fence = False
+    # Which marker opened the fence, not merely that one is open. A single
+    # boolean let a `~~~` written inside a backtick block close it, and every
+    # asterisk after that counted as prose.
+    fence = ""
     blank = True
     lines = text.splitlines()
     start = 0
@@ -79,8 +85,9 @@ def prose(text: str) -> list[tuple[str, bool]]:
         # Both fence spellings. Only backticks were recognised at first, so a
         # tilde-fenced code sample counted as prose and its asterisks pushed a
         # correct document over the limit.
-        if line.lstrip().startswith(("```", "~~~")):
-            fence = not fence
+        mark = next((m for m in ("```", "~~~") if line.lstrip().startswith(m)), "")
+        if mark and (not fence or fence == mark):
+            fence = "" if fence else mark
             blank = True
             continue
         if fence:
@@ -99,9 +106,11 @@ def prose(text: str) -> list[tuple[str, bool]]:
 def findings(text: str, whole: bool = True) -> list[str]:
     """Everything certain that is wrong with this text's emphasis.
 
-    `whole` is False when the text is part of a document rather than all of it
-    — an `Edit` replacement or the added lines of a patch. A ratio over a
-    fragment says nothing, so density is only judged on a whole document.
+    `whole` is False when the result could not be reconstructed and only a
+    fragment is in hand. Two of the checks need surrounding text to be right —
+    a ratio needs the whole document, and a label needs to know a block starts
+    there. On a fragment both are guesses, and a guess that refuses correct
+    prose is how a hook gets switched off. Only the context-free two remain.
     """
 
     found = []
@@ -109,7 +118,10 @@ def findings(text: str, whole: bool = True) -> list[str]:
     lines = [line for line, _opens in rows]
     body = "\n".join(lines)
 
-    labels = [line.strip()[:40] for line, opens in rows if opens and LABEL.match(line)]
+    labels = [
+        line.strip()[:40] for line, opens in rows
+        if whole and opens and LABEL.match(line)
+    ]
     if labels:
         found.append(f"- 문단 라벨을 굵게 했다 ({len(labels)}곳): {labels[0]} …")
 
@@ -132,40 +144,90 @@ def findings(text: str, whole: bool = True) -> list[str]:
     return found
 
 
-def targets(given: dict, tool: str) -> list[tuple[str, str, bool]]:
-    """`(path, text, whole)` for every file this call would write.
+def contents(root: Path, path: str) -> str | None:
+    try:
+        return (root / path).read_text(encoding="utf-8")
+    except Exception:
+        return None
 
-    Three shapes reach here. `Write` carries a whole document, `Edit` and
-    `MultiEdit` carry replacements, and `apply_patch` carries a patch body that
-    can touch several files at once.
+
+def patched(root: Path, patch: str) -> list[tuple[str, str, bool]]:
+    """Each file an apply_patch would leave behind, as it would then read."""
+
+    out: list[tuple[str, str, bool]] = []
+    for match in PATCH_FILE.finditer(patch):
+        after = PATCH_FILE.search(patch, match.end())
+        body = patch[match.end():after.start() if after else len(patch)]
+
+        # The destination, not the source. A patch may rename as it edits, and
+        # reading only the source header lets `notes.txt -> docs/x.md` slip past
+        # a check that keys on the extension.
+        moved = MOVE_TO.search(body)
+        path = (moved.group(1) if moved else match.group(1)).strip()
+
+        lines = [
+            line for line in body.splitlines()
+            if not line.startswith(("***", "@@"))
+        ]
+        added = "\n".join(line[1:] for line in lines if line.startswith("+"))
+
+        if match.group(0).startswith("*** Add File:"):
+            out.append((path, added, True))
+            continue
+
+        # Apply it. The context lines locate the hunk, so the result is the
+        # real document rather than a guess assembled from the diff.
+        before = "\n".join(line[1:] for line in lines if line[:1] in ("-", " "))
+        want = "\n".join(line[1:] for line in lines if line[:1] in ("+", " "))
+        now = contents(root, match.group(1).strip())
+        if now is not None and before and before in now:
+            out.append((path, now.replace(before, want, 1), True))
+        elif added.strip():
+            out.append((path, added, False))
+    return out
+
+
+def resulting(given: dict, tool: str, root: Path) -> list[tuple[str, str, bool]]:
+    """`(path, text, whole)` — the document each write would leave behind.
+
+    Judging the result rather than the change is what keeps this from guessing
+    document structure out of a diff. Two review rounds found faces of that one
+    mistake: a wrapped line read as a paragraph label, a fence marker that was
+    a string inside another fence, a destination sitting in a header nobody
+    parsed. They were not three bugs. They were one wrong choice of place.
+
+    `whole` is False only where the result could not be built — a file that is
+    not there, a hunk whose context does not match. Then the fragment is judged
+    for what holds without surrounding text, and nothing else.
     """
 
     path = str(given.get("file_path") or "")
-    if path:
-        edits = given.get("edits")
-        if isinstance(edits, list):
-            text = "\n".join(
-                str(e.get("new_string") or "") for e in edits if isinstance(e, dict)
-            )
-        else:
-            text = str(given.get("content") or given.get("new_string") or "")
-        return [(path, text, tool == "Write")] if text.strip() else []
+    if not path:
+        return patched(root, str(given.get("input") or given.get("patch") or ""))
 
-    patch = str(given.get("input") or given.get("patch") or "")
-    if not patch:
-        return []
-    out = []
-    for match in PATCH_FILE.finditer(patch):
-        after = PATCH_FILE.search(patch, match.end())
-        chunk = patch[match.end():after.start() if after else len(patch)]
-        # Only the added lines. The context and removals are what is already
-        # there, and judging those would refuse an edit for someone else's bold.
-        added = "\n".join(
-            line[1:] for line in chunk.splitlines() if line.startswith("+")
-        )
-        if added.strip():
-            out.append((match.group(1).strip(), added, False))
-    return out
+    if tool == "Write":
+        text = str(given.get("content") or "")
+        return [(path, text, True)] if text.strip() else []
+
+    edits = given.get("edits")
+    pairs = (
+        [e for e in edits if isinstance(e, dict)] if isinstance(edits, list)
+        else [{"old_string": given.get("old_string"),
+               "new_string": given.get("new_string")}]
+    )
+    now = contents(root, path)
+    if now is not None:
+        for edit in pairs:
+            old = str(edit.get("old_string") or "")
+            if not old or old not in now:
+                now = None
+                break
+            now = now.replace(old, str(edit.get("new_string") or ""), 1)
+        if now is not None:
+            return [(path, now, True)]
+
+    fragment = "\n".join(str(e.get("new_string") or "") for e in pairs)
+    return [(path, fragment, False)] if fragment.strip() else []
 
 
 def verdict(payload: dict) -> dict | None:
@@ -176,8 +238,9 @@ def verdict(payload: dict) -> dict | None:
     if tool not in WATCHED:
         return None
 
+    root = Path(str(payload.get("cwd") or Path.cwd()))
     found = []
-    for path, text, whole in targets(payload.get("tool_input") or {}, tool):
+    for path, text, whole in resulting(payload.get("tool_input") or {}, tool, root):
         if path.lower().endswith(".md"):
             found += findings(text, whole)
     if not found:

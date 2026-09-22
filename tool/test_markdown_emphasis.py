@@ -15,7 +15,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from markdown_emphasis import verdict  # noqa: E402
+from markdown_emphasis import findings, verdict  # noqa: E402
 
 HOOK = HERE / "markdown_emphasis.py"
 
@@ -115,17 +115,92 @@ def test_fences_and_tables_are_not_counted() -> None:
     assert blocked(f"# 제목\n\n{plain}\n\n{fence}\n\n{rows}\n") is None
 
 
-def test_a_short_edit_fragment_is_not_judged_on_density() -> None:
-    """`new_string` carries part of a document, not a document. A ratio over a
-    fragment says nothing, so density never refuses one. A label or a doubled
-    bold is still certain inside a fragment."""
+def test_a_fragment_is_judged_only_on_what_needs_no_context() -> None:
+    """When the result cannot be rebuilt, only the context-free checks run.
 
-    fragment = "한 줄이고 **강조**가 있다.\n\n또 한 줄에도 **강조**가 있다.\n"
-    assert blocked(fragment, tool="Edit") is None
+    Density needs a whole document and a label needs to know a block begins
+    there. Guessing either from a fragment refuses correct prose — a bold
+    opening a wrapped line is ordinary emphasis, and a review round found
+    exactly that. What survives is what holds on any line by itself.
+    """
 
-    labelled = "**규칙.** 한 줄이다.\n"
-    why = blocked(labelled, tool="Edit")
-    assert why and "문단 라벨" in why
+    # `docs/nowhere.md` does not exist, so no result can be built.
+    missing = "docs/nowhere.md"
+    assert blocked("**규칙.** 한 줄이다.\n", path=missing, tool="Edit") is None
+
+    why = blocked("여기 **이것**과 **저것**이 있다.\n", path=missing, tool="Edit")
+    assert why and "한 줄에 굵게가 둘 이상" in why
+
+
+def test_a_patch_is_judged_at_its_destination(tmp_path: Path) -> None:
+    """`*** Move to:` decides where the result lands, so it decides the check.
+
+    Reading only the source header let a patch rename `notes.txt` into a `.md`
+    and skip the extension test on the way. The check keyed on where the file
+    came from rather than where it was going.
+    """
+
+    (tmp_path / "notes.txt").write_text("old\n", encoding="utf-8")
+    patch = (
+        "*** Begin Patch\n*** Update File: notes.txt\n*** Move to: docs/x.md\n@@\n"
+        "-old\n+**규칙.** 나쁜 라벨\n*** End Patch"
+    )
+    answer = verdict(
+        {"tool_name": "apply_patch", "cwd": str(tmp_path), "tool_input": {"input": patch}}
+    )
+    assert answer, "목적지가 .md 인데 통과했다"
+
+
+def test_a_patch_keeps_the_context_that_says_where_a_block_begins(
+    tmp_path: Path,
+) -> None:
+    """Taking only the added lines threw away what made the label check right.
+
+    The same false positive already fixed for `Write` came back through the
+    patch path: the first added line looked like it opened a block because the
+    line it continues was never in view.
+    """
+
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "x.md").write_text("# t\n\n앞줄이 이어지고\n", encoding="utf-8")
+    patch = (
+        "*** Begin Patch\n*** Update File: docs/x.md\n@@\n"
+        " 앞줄이 이어지고\n"
+        "+**죽지도 않고 아무 일도 안 한다.** 트레이스백조차 없다.\n"
+        "*** End Patch"
+    )
+    answer = verdict(
+        {"tool_name": "apply_patch", "cwd": str(tmp_path), "tool_input": {"input": patch}}
+    )
+    assert answer is None, "이어진 줄의 강조를 문단 라벨로 읽었다"
+
+
+def test_an_edit_is_judged_on_the_document_it_leaves(tmp_path: Path) -> None:
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "e.md").write_text("# t\n\n평문 줄\n", encoding="utf-8")
+    answer = verdict({
+        "tool_name": "Edit",
+        "cwd": str(tmp_path),
+        "tool_input": {
+            "file_path": "docs/e.md",
+            "old_string": "평문 줄",
+            "new_string": "**규칙.** 라벨",
+        },
+    })
+    assert answer and "문단 라벨" in answer["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_a_fence_marker_inside_another_fence_does_not_close_it() -> None:
+    """One boolean for both spellings let a `~~~` written inside a backtick
+    block end it, and every asterisk after that counted as prose."""
+
+    fence = chr(96) * 3
+    text = (
+        "# title\n\n" + fence + "text\n~~~\n"
+        + "\n".join(["**code**"] * 4 + ["plain"] * 4)
+        + "\n" + fence + "\n"
+    )
+    assert findings(text) == []
 
 
 def test_files_that_are_not_markdown_pass() -> None:

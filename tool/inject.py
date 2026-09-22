@@ -22,6 +22,10 @@ HANGUL = re.compile(r"[가-힣]")
 # 주입 전체를 잃는다. 못 끝낸 것은 한국어 원문으로 나간다.
 BUDGET = 8.0
 
+# 발화 영어본을 붙이지 않는 길이. 규칙 예산과 달리 이 블록은 다듬을 수가 없다 —
+# 잘린 번역은 온전한 번역처럼 읽히기 때문이다. 그래서 상한이 아니라 문턱이다.
+MAX_RENDERED = 4000
+
 # 기본 예산은 없다. 걸린 규칙은 다 싣는다.
 #
 # 버리면 안 되기 때문이다. 버려질 것은 트리거에 걸린 규칙 — 이 발화에
@@ -298,30 +302,33 @@ def render_parts(matched: list, rule_limit: int | None, repo_limit: int | None) 
     return rules, decisions, parts, knowledge(decisions, repo_limit), trimmed
 
 
-def localised(
-    parts: list[str], rules: list, repo: list[str], deadline: float
-) -> tuple[list[str], list[str]]:
-    """Translate the repo's own pages and its decision digest in one request.
+def localised(matched: list, deadline: float) -> list:
+    """Translate the repo's own pages before anything is measured.
 
     Only `.wiki/` pages. The hub's `operator/` and `craft/` prose is rewritten
     in English at the source in stage 2, so translating it here would pay for
     the same words twice and throw the second copy away.
 
-    Runs after `fit` and `knowledge`, so what goes to the model is what would
-    have been injected — a page shortened to its rule line costs one line to
-    translate, not the whole page.
+    Runs before `render_parts`, which is the part that matters. Translating
+    afterwards saved a few tokens on pages the budget would have shortened, and
+    cost correctness everywhere else: `fit` had already trimmed to the Korean
+    length, and English is usually longer, so a block could come back over the
+    budget it was just fitted to — and `trajectory.cost` recorded the number
+    from before, which `trigger_audit` reads as the size of what was injected.
     """
 
-    mine = [i for i, (_s, _b, path) in enumerate(rules)
+    mine = [i for i, (_s, _b, path) in enumerate(matched)
             if str(label(path)).startswith(".wiki/")]
-    batch = [parts[i] for i in mine] + list(repo)
-    if not batch:
-        return parts, repo
-    done = translate.translate(batch, translate.KO_EN, deadline)
-    out = list(parts)
-    for at, i in enumerate(mine):
-        out[i] = done[at]
-    return out, done[len(mine):]
+    if not mine:
+        return matched
+    done = translate.translate(
+        [matched[i][1] for i in mine], translate.KO_EN, deadline
+    )
+    out = list(matched)
+    for body, i in zip(done, mine):
+        severity, _was, path = out[i]
+        out[i] = (severity, body, path)
+    return out
 
 
 def rendering(prompt: str, deadline: float | None = None) -> str:
@@ -336,7 +343,10 @@ def rendering(prompt: str, deadline: float | None = None) -> str:
     ran is worse.
     """
 
-    if not HANGUL.search(prompt):
+    if not HANGUL.search(prompt) or len(prompt) > MAX_RENDERED:
+        # A long utterance is usually pasted material, and the rendering would
+        # double it in a context that already holds the original. Skipping
+        # beats truncating: half a translation reads as a whole one.
         return ""
     english = translate.ko_to_en(prompt, deadline)
     if english == prompt:
@@ -368,7 +378,12 @@ def main() -> int:
     if not prompt:
         return 0
 
-    matched = match_pages(prompt, pages(args.adapter, args.project))
+    # Triggers are matched on the Korean the person typed, then the bodies are
+    # translated, then everything downstream measures the English that will
+    # actually go out. One deadline covers this and the utterance rendering
+    # below, so the hook's budget bounds the pair rather than each separately.
+    deadline = time.monotonic() + BUDGET
+    matched = localised(match_pages(prompt, pages(args.adapter, args.project)), deadline)
     rules, decisions, rule_parts, repo_parts, trimmed = render_parts(
         matched, budget(args.adapter, RULE_BUDGET, args.project),
         budget(args.adapter, REPO_BUDGET, args.project),
@@ -396,11 +411,6 @@ def main() -> int:
         print(f"trajectory skipped: {failed}", file=sys.stderr)
 
     # After `trajectory.record`, so the trajectory keeps the Korean original.
-    # One deadline covers both calls, so the hook's budget bounds the pair
-    # rather than each of them separately.
-    deadline = time.monotonic() + BUDGET
-    rule_parts, repo_parts = localised(rule_parts, rules, repo_parts, deadline)
-    parts = rule_parts + repo_parts
     english = rendering(prompt, deadline)
     if not parts and not english:
         return 0

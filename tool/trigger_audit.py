@@ -15,7 +15,13 @@ from inject import (
 
 
 def measure(prompt: str, available: list, rule_limit=None, repo_limit=None) -> dict:
-    """trajectory.cost와 같은 단위: 렌더링된 블록, 헤더·출처·구분자 제외."""
+    """렌더링된 블록의 크기. 헤더·출처·구분자는 뺀다.
+
+    **번역 전 크기다.** `inject` 는 대상 저장소의 `.wiki/` 본문을 영어로 옮긴
+    뒤에 렌더링하므로, 번역이 성공한 턴의 `trajectory.cost` 는 이 값보다 크다.
+    여기서 같은 수를 내려면 발화마다 왕복을 해야 하고, 그건 census 재생의
+    값어치를 없앤다. 두 수를 비교할 때는 이 차이를 빼고 봐라.
+    """
     matched = match_pages(prompt, available)
     rules, decisions, rule, repo, _trimmed = render_parts(matched, rule_limit, repo_limit)
     return {

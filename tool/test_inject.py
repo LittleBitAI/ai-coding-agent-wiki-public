@@ -255,18 +255,43 @@ def test_저장소_페이지와_결정_요약만_번역된다():
         "EN:" + t for t in texts
     ]
     try:
-        rules = [("contract", "규칙. 허브", Path("craft/x.md")),
-                 ("contract", "규칙. 저장소", Path(".wiki/y.md"))]
-        parts = ["<!-- wiki:craft/x -->\n규칙. 허브",
-                 "<!-- wiki:.wiki/y -->\n규칙. 저장소"]
-        repo = ["<!-- wiki:decisions -->\n한국어 요약"]
-        out, done = inject.localised(parts, rules, repo, time.monotonic() + 5)
+        matched = [("contract", "규칙. 허브", Path("craft/x.md")),
+                   ("contract", "규칙. 저장소", Path(".wiki/y.md")),
+                   ("contract", "왜. 한국어 이유", Path(".wiki/decisions/001.md"))]
+        out = inject.localised(matched, time.monotonic() + 5)
     finally:
         translate.translate = was
 
-    assert out[0] == parts[0], "허브 페이지는 이 단계에서 안 옮긴다"
-    assert out[1].startswith("EN:"), "저장소 페이지가 번역을 안 거쳤다"
-    assert done[0].startswith("EN:"), "결정 요약이 번역을 안 거쳤다"
+    assert out[0][1] == "규칙. 허브", "허브 페이지는 이 단계에서 안 옮긴다"
+    assert out[1][1].startswith("EN:"), "저장소 페이지가 번역을 안 거쳤다"
+    assert out[2][1].startswith("EN:"), "결정 본문이 번역을 안 거쳤다"
+
+
+def test_예산과_기록은_번역된_길이로_잰다():
+    """번역을 `render_parts` 뒤로 두면 둘이 같이 틀어진다.
+
+    `fit` 은 한국어 길이에 맞춰 줄이는데 영어가 대개 더 길어서, 방금 예산에
+    맞춘 블록이 번역 뒤 다시 넘친다. `trajectory.cost` 도 번역 전 숫자를
+    적는데 `trigger_audit` 은 그 값을 실제 주입량으로 읽는다.
+    """
+
+    import time
+
+    import inject
+    import translate
+
+    was = translate.translate
+    translate.translate = lambda texts, direction=None, deadline=None: [
+        t + "x" * 100 for t in texts
+    ]
+    try:
+        matched = [("contract", "규칙. 짧다", Path(".wiki/y.md"))]
+        grown = inject.localised(matched, time.monotonic() + 5)
+        _rules, _dec, parts, _repo, _trimmed = inject.render_parts(grown, None, None)
+    finally:
+        translate.translate = was
+
+    assert len(parts[0]) > 100, "렌더링이 번역된 본문을 안 썼다"
 
 
 def test_걸린_규칙이_없어도_영어본은_나간다():

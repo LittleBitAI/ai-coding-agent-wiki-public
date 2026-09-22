@@ -337,11 +337,6 @@ def _translate(
         masked: list[tuple[str, list[str]]] = [protect(texts[i], keep) for i in wanted]
         seconds = TIMEOUT if deadline is None else max(0.0, deadline - time.monotonic())
         answer = _ask(instruction(direction, fixed), [m for m, _ in masked], seconds)
-        # The socket timeout bounds one read, not the whole exchange, so a
-        # response can still land after the caller's budget is gone. Cache it,
-        # because it is a valid translation the next turn can have for free,
-        # and hand back the originals so this turn still assembles in time.
-        late = deadline is not None and time.monotonic() > deadline
         if answer is not None:
             fresh: list[tuple[str, str]] = []
             for i, reply, (_, spans) in zip(wanted, answer, masked):
@@ -349,8 +344,7 @@ def _translate(
                     continue  # keep the original; a mangled span is not a translation
                 done = restore(reply, spans)
                 fresh.append((keys[i], done))
-                if not late:
-                    out[i] = done
+                out[i] = done
             if db is not None and fresh:
                 try:
                     db.executemany("INSERT OR REPLACE INTO shots VALUES (?, ?)", fresh)
@@ -363,6 +357,15 @@ def _translate(
             db.close()
         except Exception:
             pass
+
+    # Checked here, after everything, rather than at the one moment the
+    # response landed. The socket timeout bounds a single read, and restoring
+    # spans and writing the cache take time of their own — measuring at any
+    # earlier point leaves a stretch where the budget can quietly run out and
+    # the caller still gets handed a translation it no longer has room for.
+    # The work is kept: it is cached, so the next turn has it for nothing.
+    if deadline is not None and time.monotonic() > deadline:
+        return list(texts)
     return out
 
 

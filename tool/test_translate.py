@@ -160,6 +160,24 @@ def test_a_response_that_lands_after_the_deadline_is_not_adopted(
     assert T.ko_to_en("훅이 조용히 죽는다") == "EN"
 
 
+def test_the_deadline_is_checked_after_the_work_not_at_the_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Restoring spans and writing the cache take time of their own.
+
+    Judging lateness the moment the response landed left a stretch where the
+    budget could run out afterwards and the caller still be handed a
+    translation it no longer had room for.
+    """
+
+    monkeypatch.setattr(T, "_ask", lambda _s, batch, _t: ["EN"] * len(batch))
+    monkeypatch.setattr(T, "restore", lambda text, spans: (time.sleep(0.2) or text))
+
+    assert T.translate(["훅이 조용히 죽는다"], T.KO_EN, time.monotonic() + 0.1) == [
+        "훅이 조용히 죽는다"
+    ]
+
+
 def test_a_deadline_already_past_returns_the_input_unchanged() -> None:
     """The caller's budget wins. Its output still has to be assembled."""
     assert T.ko_to_en("훅이 조용히 죽는다", deadline=0.0) == "훅이 조용히 죽는다"
