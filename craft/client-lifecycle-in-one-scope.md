@@ -5,7 +5,7 @@ triggers: ["async|비동기", "이벤트\\s*루프|event\\s*loop", "커넥션\\s
 slots: []
 sources: []
 sources_withheld: true
-links: [screen-ownership-before-wiring, diagnose-from-what-ran, comments-carry-why, verify-narrow-then-wide]
+links: [screen-ownership-before-wiring, diagnose-from-what-ran, comments-carry-why, verify-narrow-then-wide, gate-the-exit-not-the-callers]
 ---
 
 # 새 클라이언트를 들이면 생성·공유·닫기·소유를 같이 설계한다
@@ -39,5 +39,8 @@ links: [screen-ownership-before-wiring, diagnose-from-what-ran, comments-carry-w
 
 두 페이지가 말하는 것은 하나다 — **소유는 나중에 붙이는 층이 아니라,
 자원을 들일 때 같이 정하는 답이다.**
+
+같은 모양이 **나가는 것을 막을 때**도 난다. 게이트를 호출자마다 달면 리뷰가 회차마다
+남은 출구를 하나씩 찾아 온다 — [[gate-the-exit-not-the-callers]].
 
 계약을 바꿨으면 그것을 설명하는 주석까지가 한 벌이다. — [[comments-carry-why]].
