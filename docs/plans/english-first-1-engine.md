@@ -17,25 +17,25 @@ en_to_ko(text: str) -> str
 
 - 모델 `gemini-3.1-flash-lite`. 키는 `GEMINI_API_KEY` 환경변수 (이미 있다)
 
-  **실측이 계획을 고친 자리다.** 처음 적은 `gemini-2.5-flash` 는 이 계정에
+  실측이 계획을 고친 자리다. 처음 적은 `gemini-2.5-flash` 는 이 계정에
   404 다 — "no longer available to new users". `gemini-2.5-flash-lite` 도
   같은 404 라 2.5 세대는 통째로 못 쓴다. 후보를 재 보니 짧은 문자열
   2건 왕복이 `3.6-flash` 6.3초, `3.8-flash` 4.5초, `3.5-flash-lite` 1.2초였다.
   lite 둘만 세 회차씩 다시 재니 중앙값이 `3.1-flash-lite` 1.17초,
-  `3.5-flash-lite` 1.00초다. **0.17초 차이로는 두 세대의 가격차를 못 산다** —
+  `3.5-flash-lite` 1.00초다. 0.17초 차이로는 두 세대의 가격차를 못 산다 —
   사용자 판단으로 `3.1-flash-lite` 에 고정했다.
   큰 모델은 그 시간을 thinking 에 쓰는데, 보호 구간을 이미 빼낸 번역에서는
   그것이 사는 게 없다. lite 는 `thinkingConfig` 를 400 으로 거부한다 — 끌
   필요 없이 애초에 꺼져 있다. 발화마다 도는 경로이므로 싼 티어가 맞다.
 
-  **별칭은 안 쓴다.** `gemini-flash-latest` 는 캐시 키를 안 바꾸고 모델만
+  별칭은 안 쓴다. `gemini-flash-latest` 는 캐시 키를 안 바꾸고 모델만
   바꾸므로, 캐시가 지금 쓰지 않는 모델의 번역을 계속 내주게 된다.
-- **실패하면 원문을 그대로 돌려준다.** 예외도 타임아웃도 키 없음도 전부 그렇다.
+- 실패하면 원문을 그대로 돌려준다. 예외도 타임아웃도 키 없음도 전부 그렇다.
   번역이 세션을 못 멈추게 한다 — `craft/hooks-fail-open`
 - `stdin`·`stdout` UTF-8 고정, `subprocess` 를 쓸 일이 있으면
   `encoding="utf-8", errors="replace"`. `lint.fragile_tools`·`fragile_io` 가 검사한다
 
-**자리표시자 보호 — 번역기 판단에 안 맡긴다.**
+### 자리표시자 보호 — 번역기 판단에 안 맡긴다
 번역 전에 아래를 토큰(``+index 같은 사용자 영역 문자)으로 빼내고, 번역 뒤 되돌린다.
 
 | 보호 대상 | 왜 |
@@ -46,7 +46,7 @@ en_to_ko(text: str) -> str
 | YAML front matter | `triggers` 정규식이 여기 있다. 번역하면 주입이 죽는다 |
 | `<!-- wiki:... -->` 주석 | `inject.py` 가 심는 출처 표지 |
 
-**용어집 `tool/markers/glossary.toml`** (새 파일)
+### 용어집 `tool/markers/glossary.toml` (새 파일)
 
 ```toml
 # keep_korean — 영어로 옮기면 다른 것을 가리키게 되는 말. 원문 그대로 남긴다.
@@ -66,11 +66,18 @@ keep_korean = ["전자조달", "나라장터", "입찰공고", "지방계약법"
 두 표를 번역 프롬프트에 싣는다. `keep_korean` 은 "이 낱말은 한국어 그대로 두라",
 `fixed` 는 "이 낱말은 반드시 이 영어로 옮기라".
 
-**캐시 `raw/translate-cache.sqlite3`** — 방향·원문·모델·프롬프트·용어집 버전 → 번역.
+### 캐시 `raw/translate-cache.sqlite3`
+
+방향·원문·모델·프롬프트·용어집 버전 → 번역.
 stdlib SQLite로 훅·미러의 동시 쓰기를 처리한다. 실패 결과는 캐시하지 않는다.
 `raw/*`는 현재 `.gitignore` 대상이다.
 
-**`tool/translate.py --check --manifest docs/translation-baseline.json <경로...>`** —
+### `translate.py --check`
+
+```
+python tool/translate.py --check --manifest docs/translation-baseline.json <경로...>
+```
+
 Git 원문과 번역 산출물의 기계 검사. `--source-root`는 커밋 전 작업 검사용 대체 입력이다.
 
 | 검사 | 빨개지는 조건 |
@@ -84,7 +91,7 @@ Git 원문과 번역 산출물의 기계 검사. `--source-root`는 커밋 전 �
 ### `tool/test_translate.py`
 
 - 자리표시자 왕복 — 백틱·코드블록·`[[링크]]`·front matter 가 있는 문서를 넣어
-  **네트워크를 안 타고**(번역 함수를 가짜로 바꿔 대문자화 같은 것만 하게) 보호 구간이
+  네트워크를 안 타고(번역 함수를 가짜로 바꿔 대문자화 같은 것만 하게) 보호 구간이
   한 글자도 안 바뀌는지 본다
 - 키가 없을 때 `ko_to_en` 이 원문을 그대로 돌려주는지
 - 자식 프로세스로 불렀을 때 한글이 파이프에서 안 죽는지 — `test_edit_as_diff.py` 의
@@ -94,19 +101,19 @@ Git 원문과 번역 산출물의 기계 검사. `--source-root`는 커밋 전 �
 
 ### `tool/inject.py` — 입력 ko→en
 
-**순서가 전부다.**
+순서가 전부다. 아래 셋을 이 순서로 한다.
 
-1. 발화를 **한국어 원문 그대로** 받아 `triggers` 정규식에 매칭한다 — 지금 하던 대로
+1. 발화를 한국어 원문 그대로 받아 `triggers` 정규식에 매칭한다 — 지금 하던 대로
 2. 페이지를 고른다 — 지금 하던 대로
-3. **그 다음에** `ko_to_en(발화)` 를 불러 주입문 끝에 영어본을 덧붙인다
+3. 그 다음에 `ko_to_en(발화)` 를 불러 주입문 끝에 영어본을 덧붙인다
 
-2번과 3번을 바꾸면 트리거가 영어 문장에 한국어 정규식을 대는 꼴이 되어 **주입이
-전부 죽는다.** 죽는데 조용히 죽는다 — `craft/hooks-fail-open` 의 그 모양이다.
+2번과 3번을 바꾸면 트리거가 영어 문장에 한국어 정규식을 대는 꼴이 되어 주입이
+전부 죽는다. 죽는데 조용히 죽는다 — `craft/hooks-fail-open` 의 그 모양이다.
 
 - 발화에 한글이 없으면 번역을 건너뛴다. API 호출 하나를 아끼고, 영어 발화를
   다시 영어로 옮기는 헛일을 막는다
 - `.claude/settings.json` 의 이 훅 `timeout` 을 10 → 15 로 올린다. Gemini 왕복이
-  들어온다. 단 **훅은 예산을 넘겨도 통과**시켜야 하므로, `translate.py` 자체에
+  들어온다. 단 훅은 예산을 넘겨도 통과시켜야 하므로, `translate.py` 자체에
   더 짧은 자체 타임아웃(예: 6초)을 두고 넘으면 원문만 쓴다.
   설정 원본은 `apply.py::hook_entry/session_entry`다. 그곳을 고친 뒤
   `python tool/apply.py --project . --agent claude --write`와
@@ -135,8 +142,8 @@ English rendering of the user's message (Gemini; the Korean above is authoritati
   선택하게 한다. 고정 문자열의 영어 표기는 직접 제공하고 Gemini에 맡기지 않는다
 - `report()` 의 고정 산문(`## 브랜치`, `## 최근 결정 — 다시 뒤집기 전에 이유를 보라` 등)도
   마찬가지로 영어로 직접 고쳐 쓴다
-- `open_steps()` 의 `## 단계` 표 파서와 `완료`·`취소`·`상태` 판정은 **한국어 그대로
-  둔다.** 이 폴더의 계획서가 한국어 표를 쓰고, 사용자도 한국어로 쓴다.
+- `open_steps()` 의 `## 단계` 표 파서와 `완료`·`취소`·`상태` 판정은 한국어 그대로
+  둔다. 이 폴더의 계획서가 한국어 표를 쓰고, 사용자도 한국어로 쓴다.
   2단계에서 페이지가 영어로 가도 계획 문서는 사람이 쓰는 것이라 안 따라간다
 - 이 훅 `timeout` 은 15 → 25. 결정 4건 + 계획 표를 번역한다
 
@@ -156,14 +163,14 @@ Slack·인계의 한국어 보존을 기존 검사에 추가한다.
 | --- | --- |
 | `tool/prompts/chat-answer.md` | |
 | `tool/prompts/chat-explain.md` | |
-| `tool/prompts/slack-retro.md` | Slack 에 **출력**되는 문구는 한국어로 남긴다 |
+| `tool/prompts/slack-retro.md` | Slack 에 출력되는 문구는 한국어로 남긴다 |
 | `tool/prompts/slack-standup.md` | 같음 |
 | `skills/after-merge/SKILL.md` | `description` 의 한국어 트리거 낱말(`머지했다` 등)은 남긴다 |
 | `skills/review-loop/SKILL.md` | 같음 |
 | `skills/retrospect/SKILL.md` | 같음 |
 | `skills/design-pass/SKILL.md` | 같음 |
 
-**스킬 `description` 의 한국어 트리거는 `triggers` 정규식과 같은 성질이다** —
+스킬 `description` 의 한국어 트리거는 `triggers` 정규식과 같은 성질이다 —
 사용자 발화에 걸리라고 있는 것이라 영어로 바꾸면 스킬이 안 뜬다.
 
 `chat-answer.md`와 `chat-explain.md`는 이미 영어 지시문이다. 한국어 출력을 요구하는
@@ -184,7 +191,7 @@ Slack·인계의 한국어 보존을 기존 검사에 추가한다.
 | 1 | translate | `tool/translate.py` + `glossary.toml` + 캐시 | 완료 |
 | 2 | check | Git 기준 manifest·`translate.py --check`·원문/이름 변경/새 문서 표본·역번역 기록 | 완료 |
 | 3 | test | `tool/test_translate.py` — 자리표시자 왕복·키 없음·파이프 인코딩 | 완료 |
-| 4 | inject | `inject.py` 에 ko→en (트리거 매칭 **뒤에**) + timeout 15 | 미착수 |
+| 4 | inject | `inject.py` 에 ko→en (트리거 매칭 뒤에) + timeout 15 | 미착수 |
 | 5 | session | `report()`에서만 결정·계획 번역, 공용 함수 한국어 유지 + timeout 25 | 미착수 |
 | 6 | prompts | 프롬프트 4개·스킬 4개·chat 인라인 writer 2개 점검/영어화, 출력 한국어 유지 | 미착수 |
 | 7 | gate | `tool/lint.py --check` 와 `pytest tool/` 초록 | 미착수 |
@@ -198,9 +205,9 @@ Slack·인계의 한국어 보존을 기존 검사에 추가한다.
   `missing_hook_guards` 가 새 `translate.py` 를 통과하는지
 - `python tool/apply.py --project . --agent claude --check`와
   `python tool/apply.py --project . --agent codex --check` 초록 — 생성 원본과 배선을 대조한다
-- **실측**: 한국어 발화 하나를 실제로 쳐서 (a) 페이지가 여전히 주입되는가
+- 실측: 한국어 발화 하나를 실제로 쳐서 (a) 페이지가 여전히 주입되는가
   (b) 영어본이 붙는가 (c) 체감 지연이 얼마인가
-- **키를 일부러 빼고** 같은 발화 — 주입이 그대로 돌고 영어본만 없어야 한다
+- 키를 일부러 빼고 같은 발화 — 주입이 그대로 돌고 영어본만 없어야 한다
 
 ## 되돌리는 법
 
@@ -210,7 +217,7 @@ Slack·인계의 한국어 보존을 기존 검사에 추가한다.
 
 ## 리뷰 반영 — 번역 계약과 빠진 주입 경로
 
-- `--check`는 원문 없이는 비교할 수 없다. **원문의 정본은 git이다.** 1단계 check
+- `--check`는 원문 없이는 비교할 수 없다. 원문의 정본은 git 이다. 1단계 check
   담당자가 추적되는 `docs/translation-baseline.json` 형식과 검사기를 만든다. 각 대상에
   번역 전 고정 전체 commit SHA·원문 경로·산출물 경로·종류(번역/재작성/신규)를 기록한다.
   `HEAD`를 기본 원문으로 쓰거나 rename을 추측하지 않는다. 2단계 pages 담당자가 번역 전에

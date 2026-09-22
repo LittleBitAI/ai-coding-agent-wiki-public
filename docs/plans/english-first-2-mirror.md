@@ -1,11 +1,11 @@
 # 2단계 — 미러와 위키 산문
 
-**목표.** 사용자 화면에 뜨는 것이 영어가 되고, 그 옆에 한국어 미러가 선다.
+목표. 사용자 화면에 뜨는 것이 영어가 되고, 그 옆에 한국어 미러가 선다.
 
-**선행 조건.** 1단계가 끝나 `tool/translate.py` 가 있어야 한다.
+선행 조건. 1단계가 끝나 `tool/translate.py` 가 있어야 한다.
 
-**이 단계의 순서 규칙.** `mirror.py` 가 **먼저** 돌아야 `english_progress.py` 를 켠다.
-거꾸로 하면 사용자가 읽을 수단 없이 영어만 보는 구간이 생긴다.
+순서 규칙. `mirror.py` 가 먼저 돌아야 `english_progress.py` 를 켠다. 거꾸로
+하면 사용자가 읽을 수단 없이 영어만 보는 구간이 생긴다.
 
 ## 만들 것
 
@@ -19,7 +19,7 @@ Orca의 두 번째 셀은 사람이 열며 실행법을 `docs/mirror-setup.md`�
 
 - 로그 위치: `~/.claude/projects/<저장소 슬러그>/*.jsonl`.
   `tool/transcript.py` 가 같은 경로를 이미 안다 (`SESSIONS`, `census.transcript_dir`) —
-  **새로 쓰지 말고 그것을 부른다**
+  새로 쓰지 말고 그것을 부른다
 - 인자 없이 돌리면 이 저장소 슬러그에서 `mtime` 이 가장 최근인 jsonl 을 잡는다.
   `--session <경로>` 로 지정할 수 있다
 - 번역 대상:
@@ -28,10 +28,10 @@ Orca의 두 번째 셀은 사람이 열며 실행법을 `docs/mirror-setup.md`�
 | --- | --- |
 | `assistant` 의 `text` 블록 | 옮긴다 |
 | `assistant` 의 `tool_use` 중 `description` 필드 | 옮긴다 |
-| `tool_use` 의 나머지 입력 (명령·파일 내용·패치) | **안 옮긴다.** 코드다 |
-| `tool_result` | **안 옮긴다.** 양이 크고 대부분 코드다 |
+| `tool_use` 의 나머지 입력 (명령·파일 내용·패치) | 안 옮긴다. 코드다 |
+| `tool_result` | 안 옮긴다. 양이 크고 대부분 코드다 |
 | `user` (사람이 친 것) | 그대로 찍는다. 이미 한국어다 |
-| `<system-reminder>`·주입문 | **안 찍는다.** `census.INJECTED` 표지로 거른다 |
+| `<system-reminder>`·주입문 | 안 찍는다. `census.INJECTED` 표지로 거른다 |
 
 - 파일 끝을 폴링한다. 파일이 잘리거나 사라지면 다시 찾는다 (`/clear` 가 새 세션
   파일을 만든다). 기존 파일이 남은 채 새 파일이 생기는 경우도 재탐색한다.
@@ -41,7 +41,7 @@ Orca의 두 번째 셀은 사람이 열며 실행법을 `docs/mirror-setup.md`�
 - `stdout` UTF-8 고정. 이건 파이프가 아니라 터미널이지만 `craft/hooks-fail-open` 이
   범위를 `tool/*.py` 전부라고 못 박았다
 
-**실행 방법은 수동이다.** 셀 생성 자동화는 이 계획에 포함하지 않는다.
+실행 방법은 수동이다. 셀 생성 자동화는 이 계획에 포함하지 않는다.
 
 ### `tool/test_mirror.py`
 
@@ -53,14 +53,14 @@ Orca의 두 번째 셀은 사람이 열며 실행법을 `docs/mirror-setup.md`�
 
 ### 강제 뒤집기 — `korean_progress.py` → `english_progress.py`
 
-`mirror.py` 가 실제로 도는 것을 확인한 **뒤에** 한다.
+`mirror.py` 가 실제로 도는 것을 확인한 뒤에 한다.
 
-- 판정을 뒤집는다: 설명의 보호 구간 밖에 한글이 **있으면** deny.
+- 판정을 뒤집는다: 설명의 보호 구간 밖에 한글이 있으면 deny.
   용어집의 `keep_korean` 및 백틱 속 명령·경로는 허용한다
 - 사용자에게 보이는 차단 사유와 `systemMessage`는 한국어로 유지한다.
   `WATCHED = {"Bash", "Agent", "Task"}` 는 그대로
 - 예외는 그대로 통과 — 진입점 가드, `stdin`/`stdout` UTF-8 고정
-- **파일 이름이 바뀌므로 배선이 따라와야 한다.** `.claude/settings.json` 의
+- 파일 이름이 바뀌므로 배선이 따라와야 한다. `.claude/settings.json` 의
   `PreToolUse` 항목은 `tool/apply.py` 가 페이지 front matter 의
   `enforce: pretooluse:` 에서 생성한다. 페이지를 옮기고 `apply --write` 를 돌린다
 - Codex는 `codex_pretool.py`가 `korean_progress`를 직접 import하고 호출한다.
@@ -70,7 +70,7 @@ Orca의 두 번째 셀은 사람이 열며 실행법을 `docs/mirror-setup.md`�
 
 ### 페이지 옮기기 — `operator/korean-progress.md` → `operator/english-progress.md`
 
-- 본문을 영어로 다시 쓴다. 규칙이 뒤집혔으므로 번역이 아니라 **재작성**이다
+- 본문을 영어로 다시 쓴다. 규칙이 뒤집혔으므로 번역이 아니라 재작성이다
 - `triggers` 는 한국어 정규식 그대로 두되, 뒤집힌 규칙에 맞게 다시 고른다
 - `links` 와, 이 페이지를 가리키는 다른 페이지의 `[[korean-progress]]` 를 전부 고친다.
   `operator/ask-with-arrow-key-options.md`, `operator/report-without-stopping.md`,
@@ -79,8 +79,8 @@ Orca의 두 번째 셀은 사람이 열며 실행법을 `docs/mirror-setup.md`�
   옛 이름 참조도 전수 확인하고 동작 검사 변경은 3단계로 미루지 않는다
 - 전수 조사에서 실제로 나온 나머지 둘: `README.md:24` 의 `tool/` 목록에 적힌
   `korean_progress`, 그리고 `tool/test_apply.py:43` 의
-  `SCRIPTS = {"korean_progress.py": ...}`. 뒤엣것은 **이름을 안 고치면 테스트가
-  옛 이름으로 배선을 검증해 초록이 된다** — 배선이 바뀐 것을 검사가 못 본다
+  `SCRIPTS = {"korean_progress.py": ...}`. 뒤엣것은 이름을 안 고치면 테스트가
+  옛 이름으로 배선을 검증해 초록이 난다 — 배선이 바뀐 것을 검사가 못 본다
 - 프로젝트 지식인 `.wiki/graph.json`·`.wiki/corpus.json`과 허브 정책 지도인
   루트 `graph.json`은 별개다. 전자는 `python tool/sync.py --project .`, 후자는
   `python tool/graph.py`로 재생성하고 `/api/graph`에서 옛 페이지 ID가 없는지 확인한다
@@ -104,17 +104,22 @@ Orca의 두 번째 셀은 사람이 열며 실행법을 `docs/mirror-setup.md`�
 `MAINTENANCE`·`index`). 새 `docs/mirror-setup.md`는 이 32개에 별도로 추가한다.
 `docs/plans/` 네 문서는 한국어로 유지한다.
 
-**각 파일에서 건드리지 않는 것:**
+각 파일에서 건드리지 않는 것:
 
 - front matter 전체. 특히 `triggers` — 사용자 발화를 매칭한다.
   단 위 페이지 재작성의 enforce·links·trigger 변경은 manifest의 정확한 허용 차이로 기록한다
 - 백틱 안, 코드블록 안
-- `[[링크]]` 슬러그. 슬러그를 영어로 바꿀 거면 **전부 한 번에**, 그리고
+- `[[링크]]` 슬러그. 슬러그를 영어로 바꿀 거면 전부 한 번에, 그리고
   `graph.json` 재생성까지가 한 벌이다. 지금 슬러그는 이미 영어다 — 안 바꾼다
-- 페이지가 인용하는 **실제 한국어 문자열** — 예: `ko.toml` 의 표지 낱말,
+- 페이지가 인용하는 실제 한국어 문자열 — 예: `ko.toml` 의 표지 낱말,
   `declared_continuation.py` 가 보는 어미 `-겠습니다`. 이건 데이터지 산문이 아니다
 
-**번역이 아니라 재작성이 맞는 자리.** `craft/comments-carry-why.md` 의
+영어로 다시 쓰면서 `craft/emphasis-is-scarce` 도 같이 지킨다. 지금 훅이 막는
+기존 파일이 15장이다 — `craft/` 8, `operator/` 3, 루트 4. 전부 이 단계의 재작성
+대상이라 따로 정리하지 않고 여기서 한 번에 통과시킨다. 통과 여부는 `Write` 가
+실제로 안 막히는 것으로 확인된다.
+
+번역이 아니라 재작성이 맞는 자리가 있다. `craft/comments-carry-why.md` 의
 "줄바꿈은 의미 단위에서 한다" 절은 한국어 관형형·의존명사 이야기다. 영어에는
 그 문제가 없으므로 영어 기준(줄 끝에 남은 관사·전치사·접속사)으로 다시 쓴다.
 
@@ -124,10 +129,10 @@ Orca의 두 번째 셀은 사람이 열며 실행법을 `docs/mirror-setup.md`�
 | --- | --- |
 | `ends_adnominal` | 없앤다 |
 | `splits_a_phrase` | `orphan_tail(word)` — 줄 끝에 남은 관사·전치사·접속사·조동사 |
-| `prose_lines` | **그대로 쓴다.** 코드·표·목록·front matter 를 거르는 것은 언어와 무관 |
+| `prose_lines` | 그대로 쓴다. 코드·표·목록·front matter 를 거르는 것은 언어와 무관 |
 | `broken_wraps` | 이름 유지, 판정만 교체 |
 
-- `test_lint.py` 의 해당 테스트를 영어 표본으로 바꾼다. **검사가 실제로 빨개지는지**를
+- `test_lint.py` 의 해당 테스트를 영어 표본으로 바꾼다. 검사가 실제로 빨개지는지를
   보는 것이 요점이다 — 지금 테스트가 그렇게 쓰여 있다
 - `lint.py:260` 의 한글 표시폭 주석(61%·54% 통계)은 근거가 사라졌으므로 지운다
 
@@ -154,7 +159,7 @@ Orca의 두 번째 셀은 사람이 열며 실행법을 `docs/mirror-setup.md`�
 ## 검증
 
 - `python tool/translate.py --check --manifest docs/translation-baseline.json operator/ craft/ docs/ *.md` — 종료 코드 0. 계획서는 제외하고 재작성 예외는 manifest의 허용 차이와 대조한다
-- `raw/translate-review.md` 의 표본 역번역을 **사람이 읽는다.** 단계마다 페이지 3개
+- `raw/translate-review.md` 의 표본 역번역을 사람이 읽는다. 단계마다 페이지 3개
 - `python tool/lint.py --check` · `python tool/apply.py --project . --agent claude --check` ·
   `python tool/apply.py --project . --agent codex --check` · `pytest tool/`
 - `docs/development.md`의 직접 실행 검사 중 변경된 경로를 확인한다:
@@ -168,7 +173,7 @@ Orca의 두 번째 셀은 사람이 열며 실행법을 `docs/mirror-setup.md`�
   실제 발화 적중 검증은 보류로 남기며, 실측을 대신했다고 표시하지 않는다.
   이 도구는 자동 적중률 회귀 게이트가 아니다. progress 페이지 이름 변경은 대응시켜 비교하고,
   번역에 따른 비용 변화와 트리거 변화는 구별한다
-- **실측**: 한국어 발화 하나로 (a) 페이지가 영어로 주입되는가 (b) 미러 셀에
+- 실측: 한국어 발화 하나로 (a) 페이지가 영어로 주입되는가 (b) 미러 셀에
   한국어가 뜨는가 (c) 내가 한국어 `description` 을 쓰면 차단되는가
 
 ## 되돌리는 법

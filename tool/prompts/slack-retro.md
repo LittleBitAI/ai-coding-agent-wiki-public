@@ -10,8 +10,8 @@ Post today's retrospective to Slack, following the `retrospect` skill's steps ex
 python "<WIKI_ROOT>/tool/slack_brief.py" --project . --kind retro
 ```
 
-It gives today's commits, the size of the changes, and **the list of session
-log files touched today**. That last one is step 2's input.
+It gives today's commits, the size of the changes, and the list of session log
+files touched today. That last one is step 2's input.
 
 ## 2. Count where things went wrong — four kinds
 
@@ -19,7 +19,7 @@ Count corrections, re-entries, partial work and reversals, by the table in the
 `retrospect` skill. In the `.jsonl` files step 1 pointed at, a block with
 `type=user` that is not a tool result is what a person actually typed.
 
-**Give the counts.** "That happened a lot" is not a retrospective. Then check
+Give the counts. "That happened a lot" is not a retrospective. Then check
 whether each one is already a wiki page — if it is written down and was broken
 anyway, the problem is not that the sentence is weak but that it is a sentence.
 That calls for climbing the ladder, not rewriting the prose.
@@ -42,7 +42,7 @@ python "<WIKI_ROOT>/tool/chat_post.py" --project . --channel retro --source retr
 
 ## Rules
 
-- **Change no files.** A person picks what becomes a page. This run cannot ask
+- Change no files. A person picks what becomes a page. This run cannot ask
   with options, so write the candidates under `*제안*` and stop there.
 - Do not list what went well. A retrospective's value is in what went wrong.
 - Do not propose one page per incident. Something that happened in one

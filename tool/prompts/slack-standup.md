@@ -15,8 +15,8 @@ whether the plan page is stale. Do not recount the commits. This is that answer.
 
 ## 2. What comes next is held by the plan page
 
-Read `.wiki/plan-active.md`. **Read the table, do not recompute it.** The top
-one or two rows of its open table are what comes next.
+Read `.wiki/plan-active.md`. Read the table; do not recompute it. The top one
+or two rows of its open table are what comes next.
 
 ## 3. Put it together and post it
 
@@ -34,9 +34,9 @@ python "<WIKI_ROOT>/tool/chat_post.py" --project . --channel progress --source s
 
 ## Rules
 
-- **Do not strip the links out of step 1's output.** They are where the
-  original can be checked against, and that is this briefing's whole value.
-- If the plan page reports as stale, say so **at the very top**. A next step
+- Do not strip the links out of step 1's output. They are where the original
+  can be checked against, and that is this briefing's whole value.
+- If the plan page reports as stale, say so at the very top. A next step
   argued from a stale table is the wrong next step.
 - Change no files. Only post the briefing.
 - If nothing was merged, say nothing was merged. Do not go looking for filler.
