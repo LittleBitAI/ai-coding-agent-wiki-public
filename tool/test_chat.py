@@ -1,4 +1,5 @@
-"""두 단계의 데이터 경계·오류 보존과 실제 자식 프로세스의 Codex 이벤트를 검사한다."""
+"""The two stages' data boundary, error preservation, and Codex events from a
+real child process."""
 
 import json
 from pathlib import Path
@@ -55,7 +56,7 @@ def test_explanation_isolated(tmp_path):
 def test_stream_persists_both_and_keeps_original_on_rewrite_failure(tmp_path):
     class Original:
         def say(self, text):
-            # Codex는 문자 delta 없이 완성 응답을 보낼 수도 있다.
+            # Codex may send a finished response with no character deltas.
             yield Event("done", "정확한 원문 13건", {"session_id": "answer-session", "error": False})
 
     def rewrite(source, model, effort):

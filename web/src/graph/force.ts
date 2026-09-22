@@ -1,16 +1,19 @@
-// @ts-nocheck — 본문은 타입 검사를 안 받는다.
+// @ts-nocheck — the body is not type-checked.
 //
-// `graph_view.py` 에서 그대로 옮긴 바닐라 JS 라 클로저 인자가 서른 몇 개인데,
-// 전부 `any` 로 적으면 아무것도 보장하지 않으면서 diff 만 커진다. 검사가 필요한
-// 자리는 밖과의 접점 하나뿐이고, `mountGraph` 의 시그니처가 그것을 든다.
+// This is vanilla JS carried across from `graph_view.py` unchanged, with some
+// thirty closure parameters. Typing them all as `any` guarantees nothing and
+// only grows the diff. The one place that needs checking is the boundary with
+// the outside, and `mountGraph`'s signature holds that.
 //
-// 여기가 깨지면 지도가 안 그려진다. 조용히 틀리는 종류의 코드가 아니다.
+// If this breaks the map does not draw. It is not the kind of code that goes
+// wrong quietly.
 
-/* 규칙 그래프. `tool/graph_view.py` 의 SCRIPT 를 그대로 옮겼다.
+/* The rule graph, carried across from `tool/graph_view.py`'s SCRIPT unchanged.
 
-   바꾼 것은 셋뿐이다 — 데이터를 인자로 받고, DOM 을 문서가 아니라 뿌리에서
-   찾고, 멈출 손잡이를 돌려준다. 물리와 그리기는 손대지 않았다. 다시 쓰면
-   같은 화면을 두 번 만들게 되고, 두 벌은 어긋난다. */
+   Three things differ: the data arrives as an argument, the DOM is found from
+   a root rather than the document, and it returns a handle to stop. The
+   physics and the drawing were not touched. Rewriting them would build the
+   same screen a second time, and two copies drift. */
 
 export function mountGraph(root: HTMLElement, DATA: any): () => void {
   let stopped = false;
@@ -30,10 +33,11 @@ export function mountGraph(root: HTMLElement, DATA: any): () => void {
   let query = "";
   const layersOff = new Set();
 
-  /* --- 크기와 시작 자리 -----------------------------------------------------
-     크기는 주입 글자수다. 옵시디언은 링크 수로 재지만, 여기서 비싼 것은 많이
-     이어진 페이지가 아니라 한 턴에 많이 실리는 페이지다. 안 실리는 규칙은 작은
-     고정 크기다 — 비용이 0인 것이 커 보이면 뜻이 뒤집힌다. */
+  /* --- Size and starting position -------------------------------------------
+     Size is injected characters. Obsidian measures link count, but what is
+     expensive here is not a page with many links, it is a page carried into
+     many turns. A rule that is never injected gets a small fixed size —
+     something that costs nothing looking large would invert the meaning. */
   const maxChars = Math.max(...DATA.nodes.map(n => n.injected ? n.chars : 0), 1);
   DATA.nodes.forEach((n, i) => {
     n.r = n.injected ? 13 + 21 * Math.sqrt(n.chars / maxChars) : 8.5;
@@ -50,7 +54,7 @@ export function mountGraph(root: HTMLElement, DATA: any): () => void {
   let edges = edgesFor("all");
   let maxW = 1;
 
-  /* --- 힘 계산. 옵시디언처럼 살아 있게 돌린다 ------------------------------ */
+  /* --- The forces, kept running and alive the way Obsidian's are ----------- */
   const sim = {alpha: 1, running: false};
   function tick() {
     for (const a of DATA.nodes) {
@@ -95,7 +99,7 @@ export function mountGraph(root: HTMLElement, DATA: any): () => void {
     if (!sim.running) { sim.running = true; requestAnimationFrame(loop); }
   }
 
-  /* --- 그리기 -------------------------------------------------------------- */
+  /* --- Drawing ------------------------------------------------------------- */
   const NS = "http://www.w3.org/2000/svg";
   const make = (tag, attrs) => {
     const el = document.createElementNS(NS, tag);
@@ -143,10 +147,11 @@ export function mountGraph(root: HTMLElement, DATA: any): () => void {
     return {g, circle, label, n};
   });
 
-  /* 노드의 pointerleave 만 믿으면 안 된다. 배치가 살아 있어서 노드가 가만히 있는
-     커서 밑으로 들어왔다 나가고, 그 사이에 enter 만 오고 leave 가 안 오는 일이
-     생긴다. 실제로 탭을 바꾸자 강조가 한 노드에 붙어 안 풀렸다. 그래서 판 전체를
-     벗어나면 무조건 푼다. */
+  /* A node's own `pointerleave` cannot be trusted on its own. The layout is
+     alive, so nodes drift in and out from under a cursor that is not moving,
+     and an `enter` arrives without the matching `leave`. Switching tabs left
+     the highlight stuck on one node. So leaving the whole board clears it
+     unconditionally. */
   svg.addEventListener("pointerleave", () => { hovered = null; paint(); });
 
   function place() {
@@ -199,7 +204,7 @@ export function mountGraph(root: HTMLElement, DATA: any): () => void {
     }
   }
 
-  /* --- 끌기·확대·이동 ------------------------------------------------------ */
+  /* --- Drag, zoom, pan ----------------------------------------------------- */
   let tx = 0, ty = 0, k = 1, dragged = false;
   const applyView = () => view.setAttribute("transform", `translate(${tx} ${ty}) scale(${k})`);
   function pointer(e) {
@@ -257,7 +262,7 @@ export function mountGraph(root: HTMLElement, DATA: any): () => void {
     selected = null; panel.innerHTML = openingPanel(); kick(1); paint();
   });
 
-  /* --- 옆 패널 ------------------------------------------------------------- */
+  /* --- The side panel ------------------------------------------------------ */
   const esc = (s: unknown) =>
     String(s).replace(/[&<>]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;"})[c] ?? c);
   const TAG = {on: ["on", "붙음"], partial: ["partial", "일부만"], none: ["none", "안 붙음"],
@@ -279,7 +284,8 @@ export function mountGraph(root: HTMLElement, DATA: any): () => void {
       ["층", n.layers.map((x: number) => `<code>${x}</code>`).join(" ")],
       ["주입", n.injected ? `${n.chars.toLocaleString()}자 · 트리거 ${n.triggers.length}개` : "안 실림"],
     ];
-    // 본문에 남은 `{빈칸}` 은 고장이 아니라 슬롯이다. 값은 어댑터가 채운다.
+    // A `{placeholder}` left in the body is a slot, not a fault. The adapter
+    // fills the value.
     const slots = [...new Set(n.rule.match(/\{[a-z_]+\}/g) || [])];
     if (slots.length) rows.push(["슬롯", slots.map(s => `<code>${esc(s)}</code>`).join(" ") + " — 어댑터가 채운다"]);
     if (n.deny.length) rows.push(["차단", n.deny.map((d: string) => `<code>${esc(d)}</code>`).join(" ")]);
@@ -320,7 +326,7 @@ export function mountGraph(root: HTMLElement, DATA: any): () => void {
       rows.map(([a, b]) => `<dt>${a}</dt><dd>${b}</dd>`).join("") + "</dl>";
   }
 
-  /* --- 조작 ---------------------------------------------------------------- */
+  /* --- Controls ------------------------------------------------------------ */
   root.querySelectorAll(".tab").forEach(btn => {
     btn.addEventListener("click", () => {
       project = (btn as HTMLElement).dataset.project!;

@@ -1,8 +1,8 @@
-// 백엔드와의 접점 전부. 다른 곳에서 fetch 를 부르지 않는다.
+// Every point of contact with the backend. Nothing else calls fetch.
 //
-// SSE 인데 EventSource 를 안 쓴다. EventSource 는 GET 만 되고 발화는 본문에
-// 실어야 하기 때문이다. 그래서 fetch 의 스트림을 직접 읽는다 — 이십몇 줄이고,
-// 그 대가로 헤더도 본문도 마음대로 쓴다.
+// It is SSE without `EventSource`, because `EventSource` is GET only and an
+// utterance has to travel in the body. So the fetch stream is read directly —
+// about twenty lines, and in exchange the headers and the body are ours.
 
 export type Channel = {
   id: string
@@ -16,11 +16,11 @@ export type Channel = {
   effort: string
 }
 
-/** 정책 그래프. `tool/graph.py` 가 낸 `graph.json` 그대로다.
+/** The policy graph: `graph.json` exactly as `tool/graph.py` produced it.
  *
- *  모양을 여기서 다시 적지 않는다. 노드 하나에 열 몇 칸이 있고, 그것을 타입으로
- *  베끼면 파이썬 쪽이 칸을 더할 때마다 두 곳을 고쳐야 한다. 그리는 코드가
- *  자기가 쓰는 칸만 알면 된다. */
+ *  The shape is not restated here. A node has a dozen or so fields, and
+ *  copying them into a type means editing two places every time the Python
+ *  side adds one. The drawing code only needs to know the fields it uses. */
 export type GraphData = {
   ns: string
   nodes: { id: string; injected: boolean; chars: number }[]
@@ -122,7 +122,7 @@ async function json<T>(res: Response, what: string): Promise<T> {
     try {
       detail = (await res.json()).detail ?? ''
     } catch {
-      // 본문이 JSON 이 아니면 상태 코드만으로 말한다.
+      // With a body that is not JSON, the status code is all there is to say.
     }
     throw new Error(detail || `${what} — 서버가 ${res.status} 로 답했다`)
   }
@@ -150,27 +150,29 @@ export const getLog = (id: string, legacy = false) =>
 
 export const reset = (id: string) => post(`/api/reset/${id}`).then((r) => json(r, '문맥 지우기'))
 
-/** 프로젝트 선택은 모든 채널이 공유하고 대화는 프로젝트·채널별로 보존한다. */
+/** Every channel shares the project; conversations are kept per project and
+ *  per channel. */
 export const setConfig = (id: string, cfg: { repo: string; model: string; effort: string }) =>
   post(`/api/config/${id}`, cfg).then((r) => json<{ kept: boolean; switched: boolean }>(r, '설정'))
 
-/** 틀린 그 순간에 부류 하나를 찍는다. census 형식으로 쌓인다. */
+/** Name one category at the moment it went wrong, in the census's format. */
 export const mark = (
   id: string,
   body: { kind: Kind; user_text: string; assistant_text: string; session_id?: string },
 ) => post(`/api/mark/${id}`, body).then((r) => json<{ ok: boolean; total: number }>(r, '표시'))
 
-/** 다음 세션에 붙일 글. */
+/** The text to hand the next session. */
 export const handoff = (id: string) =>
   post(`/api/handoff/${id}`).then((r) => json<{ text: string }>(r, '인계'))
 
-/** 회고 후보 하나의 운명. wiki · claude_md 는 실제로 파일을 쓴다. */
+/** What becomes of one retro candidate. `wiki` and `claude_md` really do
+ *  write files. */
 export const decide = (id: string, candidate: string, target: 'wiki' | 'claude_md' | 'drop') =>
   post(`/api/decide/${id}`, { candidate, target }).then((r) =>
     json<{ text: string; error: boolean; changed?: string; cost_usd?: number }>(r, '결정'),
   )
 
-/** 인용된 경로:줄 의 그 자리. */
+/** The place a cited `path:line` points at. */
 export const peek = (repo: string, path: string, line: number) =>
   fetch(
     `/api/file?${new URLSearchParams({ repo, path, line: String(line), around: '25' })}`,
@@ -247,7 +249,7 @@ export async function mirrorStream(
   }
 }
 
-/** 발화 하나를 보내고 이벤트를 차례로 넘긴다. 중간에 끊으려면 signal 을 준다. */
+/** Send one utterance and hand back the events in order. `signal` cuts it short. */
 export async function say(
   id: string,
   text: string,
@@ -270,7 +272,8 @@ export async function say(
     if (done) break
     buffer += decoder.decode(value, { stream: true })
 
-    // SSE 는 빈 줄이 한 사건의 끝이다. 마지막 토막은 아직 안 끝났으니 남긴다.
+    // In SSE a blank line ends one event. The last piece has not ended yet,
+    // so it is carried over.
     const chunks = buffer.split('\n\n')
     buffer = chunks.pop() ?? ''
     for (const chunk of chunks) {
@@ -279,7 +282,7 @@ export async function say(
       try {
         onEvent(JSON.parse(line.slice(6)))
       } catch {
-        // 반쪽짜리 JSON 은 버린다. 다음 사건이 온다.
+        // Half a JSON object is dropped. The next event is coming.
       }
     }
   }

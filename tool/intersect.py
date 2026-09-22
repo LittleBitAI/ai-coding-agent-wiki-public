@@ -1,4 +1,4 @@
-"""여러 프로젝트의 census 를 겹쳐 무엇이 공유할 지식인가를 낸다."""
+"""Overlay several projects' censuses to find what is worth sharing."""
 
 from __future__ import annotations
 
@@ -28,7 +28,8 @@ def load(path: Path) -> tuple[str, list[str]]:
 
 
 def main() -> int:
-    # 출력이 파이프로 가면 기본이 cp949 다. 인코딩을 환경에 안 맡긴다.
+    # Down a pipe the default here is cp949. The encoding is not left to the
+    # environment.
     sys.stdout.reconfigure(encoding="utf-8")
 
     parser = argparse.ArgumentParser(description="census 들을 겹쳐 공유 후보를 낸다")
@@ -49,8 +50,8 @@ def main() -> int:
         print(f"- `{name}` 발화 {len(projects[name])}건")
     print()
 
-    # 프로젝트 A 의 각 발화 뼈대를 다른 프로젝트에서 찾는다.
-    # 어느 프로젝트에서 나왔는지를 함께 들고 다닌다.
+    # Look for each of project A's utterance skeletons in the other projects,
+    # carrying which project it came from along with it.
     buckets: list[tuple[str, dict[str, int]]] = []
     for name in names:
         for text in projects[name]:
@@ -71,8 +72,9 @@ def main() -> int:
     print("여기 있는 것이 `operator`/`craft` 페이지 후보다. "
           "프로젝트가 달라도 같은 말을 했다면 그것은 저장소가 아니라 "
           "사람이나 기술을 따라다니는 것이다.\n")
-    # 짧은 이름이 겹치면 어느 프로젝트인지 못 읽는다 — `example-wiki` 와
-    # `example-project` 가 둘 다 `ai` 가 됐다. 겹치지 않을 만큼만 자른다.
+    # A short name that collides says nothing about which project it is —
+    # `example-wiki` and `example-project` both became `ai`. Cut only as far
+    # as the names stay distinct.
     short = {name: name for name in names}
     for length in range(3, 40):
         cut = {name: name[:length] for name in names}

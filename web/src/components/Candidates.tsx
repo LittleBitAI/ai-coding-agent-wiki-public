@@ -1,22 +1,29 @@
 import { useState } from 'react'
+import { useOverlay } from '@/lib/overlay'
 
 type Target = 'wiki' | 'claude_md' | 'drop'
 type Props = {
   raw: string
+  korean: boolean
   onDecide: (candidate: string, target: Target) => Promise<string>
 }
 
 type State = { busy?: Target; result?: string; done?: Target }
 
-/** 회고가 낸 후보 한 줄에 버튼 셋.
+/** Three buttons per candidate the retro produced.
  *
- *  `retrospect` 스킬 5번 걸음은 "선택지로 물어라" 인데 헤드리스는 못 묻는다.
- *  여기가 그 자리다. 눌러야만 파일이 바뀐다 — 버튼이 곧 허가다. */
-export function Candidates({ raw, onDecide }: Props) {
+ *  Step 5 of the `retrospect` skill says to ask with options, and a headless
+ *  run cannot ask. This is where it asks. Nothing on disk changes until a
+ *  button is pressed: the button is the permission. */
+export function Candidates({ raw, korean, onDecide }: Props) {
   const lines = raw
     .split('\n')
     .map((l) => l.replace(/^[-*]\s*/, '').trim())
     .filter(Boolean)
+  // Shown translated, decided on the original. What a button sends becomes a
+  // rule on a page, and pages are English — handing `decide` a rendering
+  // would write a translation of a translation into the wiki.
+  const shown = useOverlay(lines, korean)
   const [state, setState] = useState<Record<number, State>>({})
 
   if (lines.length === 0) {
@@ -47,7 +54,7 @@ export function Candidates({ raw, onDecide }: Props) {
   return (
     <div className="not-prose my-2 space-y-2 rounded-md border border-border bg-card p-3">
       <div className="font-heading text-[11px] text-faint">위키 갱신 후보 — 무엇이 될지는 네가 정한다</div>
-      {lines.map((line, i) => {
+      {shown.map((line, i) => {
         const s = state[i] ?? {}
         return (
           <div key={i} className="space-y-1.5">

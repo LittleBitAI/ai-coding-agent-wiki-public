@@ -1,4 +1,8 @@
-"""PreToolUse 훅 — 이미 있는 파일을 통째로 되쓰면 막는다."""
+"""PreToolUse hook — block rewriting a file that already exists.
+
+The refusal and the `systemMessage` are read by the person and stay Korean.
+Everything else here is written for whoever maintains it.
+"""
 
 from __future__ import annotations
 
@@ -8,41 +12,48 @@ import re
 import sys
 from pathlib import Path
 
-# 파일에 쓰는 셸·파이썬 모양. 명령 모양은 무한하므로 전부 잡지 않는다 — 이 넷은
-# 한 세션에서 실제로 45회를 만든 것들이고, 못 잡는 나머지는 페이지 산문이 든다.
+# The shell and python shapes that write to a file. There is no end to what a
+# command can look like, so this does not try to catch them all — these four
+# are what one session actually produced 45 times, and the page's prose holds
+# whatever they miss.
 WRITERS = (
     # `cat > path`, `cat >> path`, `tee path`
     re.compile(r"\b(?:cat|tee)\s+(?:-a\s+)?>>?\s*(?P<path>\"[^\"]+\"|'[^']+'|[\w./$~-]+)"),
     re.compile(r"\btee\s+(?:-a\s+)?(?P<path>\"[^\"]+\"|'[^']+'|[\w./$~-]+)"),
-    # 리다이렉션. `2>&1` 과 `>/dev/null` 은 아래에서 걸러진다.
+    # Redirection. `2>&1` and `>/dev/null` are filtered out below.
     re.compile(r"(?<![0-9&>])>>?\s*(?P<path>\"[^\"]+\"|'[^']+'|[\w./$~-]+\.[A-Za-z0-9]+)"),
-    # 파이썬이 경로를 열어 쓰는 자리. heredoc 본문이 그대로 command 에 들어 있다.
+    # Python opening a path to write. A heredoc body arrives inside `command`
+    # exactly as written, which is why scanning the command text reaches it.
     re.compile(r"Path\(\s*(?P<path>\"[^\"]+\"|'[^']+')\s*\)\s*\.\s*write_"),
     re.compile(r"open\(\s*(?P<path>\"[^\"]+\"|'[^']+')\s*,\s*[\"'][wa]"),
 )
 
-# 경로를 변수에 받아 두고 나중에 쓰는 모양. 위의 두 패턴은 `Path(...)` 와
-# `.write_` 가 **붙어 있을 때만** 맞는데, 한 세션이 이것으로 다지점 치환을 열 번
-# 넘게 했고 훅은 한 번도 안 걸렸다. 변수 하나를 따라가는 것이 그 구멍을 덮는다.
+# The shape that puts the path in a variable and writes through it later. The
+# two patterns above only match when `Path(...)` and `.write_` sit together,
+# and one session did more than ten multi-point replacements this way without
+# the hook firing once. Following a single variable closes that gap.
 #
-# 따라가는 것은 **대입 한 번**이다. 그 이상은 파서가 필요하고,
-# 파서가 필요한 만큼 복잡한 스크립트는 이 규칙이 애초에 막으려는 것이다.
+# One assignment is followed, and no more. Beyond that needs a parser, and a
+# script complex enough to need one is the thing this rule exists to stop.
 #
-# 대입은 줄 처음이거나 `;` 뒤다. 줄 처음만 보던 첫 판은 이 규칙이 겨냥한 바로 그
-# 모양을 놓쳤다 — 아래 한 줄이 통째로 한 줄이고, 힙독 안에 넣어도 마찬가지다.
+# An assignment starts a line or follows a `;`. The first version looked only
+# at the start of a line and missed the exact shape this rule aims at — the
+# whole thing written as one line, and the same inside a heredoc.
 #
 #     python -c "import pathlib; p = pathlib.Path('README.md'); p.write_text('x')"
 #
-# ponytail: 리터럴 대입 한 번까지다. `for n in [...]: p = Path(n)` 처럼 인자가
-# 변수면 안 잡힌다. 그 경계를 넘는 것이 파서이고, 파서가 필요할 만큼 복잡한
-# 스크립트를 손으로 짜는 것 자체가 이 규칙이 말리려는 일이다.
+# ponytail: one literal assignment, no further. `for n in [...]: p = Path(n)`
+# passes because the argument is a variable. Past that boundary is a parser,
+# and hand-writing a script that needs one is what this rule talks people out
+# of in the first place.
 ASSIGNED_PATH = re.compile(
     r"(?:^|;)\s*(?P<name>\w+)\s*=\s*(?:[\w.]*\bPath|open)\(\s*"
     r"(?P<path>\"[^\"]+\"|'[^']+')",
     re.MULTILINE,
 )
-# 그 변수로 쓰는 자리. 읽기만 하는 것(`read_text`)은 여기 없다 — 읽기까지 막으면
-# 오탐이고, 오탐이 작업을 멈추면 사용자가 훅을 통째로 끈다.
+# Writing through that variable. Reading (`read_text`) is deliberately absent:
+# blocking a read is a false positive, and a false positive that stops the
+# work is how the person ends up turning the hook off entirely.
 WRITES_THROUGH = (
     r"\.\s*write_\w*\s*\(",
     r"\.\s*open\(\s*[\"'][wa]",
@@ -50,7 +61,7 @@ WRITES_THROUGH = (
     r"\.\s*write\s*\(",
 )
 
-# 저장소 밖이거나 diff 가 의미 없는 자리.
+# Outside the repository, or somewhere a diff would mean nothing.
 EXEMPT = re.compile(
     r"/dev/null|\$TMPDIR|\$\{TMPDIR|/tmp/|[Tt]emp[/\\]|scratchpad|\.git/|node_modules"
 )
@@ -73,24 +84,25 @@ def _unquote(raw: str) -> str:
     return raw[1:-1] if raw[:1] in {'"', "'"} and raw[-1:] == raw[:1] else raw
 
 
-# heredoc 본문을 *코드로* 받는 것들. 이 목록에 없는 수신자에게 가는 본문은
-# 데이터이므로 스캔에서 뺀다.
+# The receivers that take a heredoc body as *code*. A body going anywhere else
+# is data, and is dropped before the scan.
 INTERPRETERS = re.compile(r"\b(?:python[23]?|node|deno|bash|sh|zsh|perl|ruby)\b")
 HEREDOC = re.compile(r"<<-?\s*(?P<quote>['\"]?)(?P<delim>\w+)(?P=quote)")
 
 
 def strip_data_heredocs(command: str) -> str:
-    """수신자가 인터프리터가 아닌 heredoc 의 본문을 지운다.
+    """Drop the body of a heredoc whose receiver is not an interpreter.
 
-    **이 훅이 처음 쓰인 자리에서 자기 오탐으로 잡힌 것이 이것이다.** 커밋 메시지를
-    `git commit -F - <<'MSG'` 로 넘기는데 그 메시지가 `cat > docs/README.md` 라는
-    문장을 인용하고 있었고, 훅이 그 문자열을 보고 커밋을 막았다. 리뷰 지시문·PR
-    본문·문서가 명령을 인용하는 것은 정상이고 흔하다.
+    This is the hook's own false positive, caught the first time it was used
+    in anger. A commit message was being passed with `git commit -F - <<'MSG'`
+    and that message quoted the sentence `cat > docs/README.md`; the hook read
+    the string and blocked the commit. A review instruction, a PR body or a
+    document quoting a command is normal and common.
 
-    가르는 것은 본문이 무엇이 되느냐다. `python - <<'PY'` 의 본문은 *실행되는
-    코드*라 봐야 하고, `git commit -F - <<'MSG'` 의 본문은 *데이터*라 안 봐야 한다.
-    명령줄 자체의 리다이렉션은 본문 밖이므로 어느 쪽이든 그대로 남는다 --
-    `cat > file <<'PY'` 는 계속 잡힌다.
+    What decides it is what the body becomes. The body of `python - <<'PY'` is
+    code that will run and has to be read; the body of `git commit -F - <<'MSG'`
+    is data and must not be. Redirection on the command line itself sits
+    outside the body either way, so `cat > file <<'PY'` is still caught.
     """
     out, cursor = [], 0
     for opener in HEREDOC.finditer(command):
@@ -99,20 +111,20 @@ def strip_data_heredocs(command: str) -> str:
         out.append(command[cursor : opener.end()])
         cursor = opener.end()
         if INTERPRETERS.search(receiver):
-            continue  # 코드다. 본문을 그대로 둔다
+            continue  # code: the body stays in
         delimiter = opener.group("delim")
         closing = re.search(
             rf"^\s*{re.escape(delimiter)}\s*$", command[cursor:], re.MULTILINE
         )
         if closing is None:
-            continue  # 닫는 줄을 못 찾으면 판정하지 않는다
+            continue  # no closing line found: judge nothing
         cursor += closing.end()
     out.append(command[cursor:])
     return "".join(out)
 
 
 def _through_variables(command: str) -> list[str]:
-    """`p = Path("...")` 로 받아 두고 `p.write_text(...)` 로 쓰는 경로."""
+    """Paths taken with `p = Path("...")` and written through `p.write_text(...)`."""
 
     found: list[str] = []
     for match in ASSIGNED_PATH.finditer(command):
@@ -130,7 +142,7 @@ def _through_variables(command: str) -> list[str]:
 
 
 def targets(command: str) -> list[str]:
-    """명령이 쓰려는 경로 중 저장소 안의 것."""
+    """Of the paths this command would write, the ones inside the repository."""
     found: list[str] = []
     command = strip_data_heredocs(command)
     for pattern in WRITERS:
@@ -148,7 +160,7 @@ def targets(command: str) -> list[str]:
 
 
 def existing(paths: list[str], root: Path) -> list[str]:
-    """그중 지금 실제로 있는 파일. 없는 것은 새 파일이므로 통과."""
+    """Of those, the ones that exist. A path that does not is a new file, and passes."""
     live = []
     for path in paths:
         candidate = Path(path) if os.path.isabs(path) else root / path
@@ -156,17 +168,18 @@ def existing(paths: list[str], root: Path) -> list[str]:
             if candidate.is_file():
                 live.append(path)
         except OSError:
-            continue  # 경로로 안 읽히면 판정하지 않는다
+            continue  # does not read as a path: judge nothing
     return live
 
 
 def verdict(payload: dict, root: Path) -> dict | None:
-    """막아야 하면 훅 출력, 아니면 None."""
+    """The hook output when this has to be blocked, otherwise `None`."""
 
     tool = str(payload.get("tool_name"))
     given = payload.get("tool_input") or {}
 
-    # Write 는 경로가 인자로 온다. 페이지가 정한 대로 새 파일에만 쓴다.
+    # `Write` hands the path over as an argument. As the page decides, it is
+    # allowed for a new file and nothing else.
     if tool == "Write":
         path = str(given.get("file_path") or "")
         if not path or EXEMPT.search(path):
@@ -193,7 +206,8 @@ def verdict(payload: dict, root: Path) -> dict | None:
 
 
 def main() -> int:
-    # 판정 대상도 차단 사유도 한글이다. 인코딩을 환경에 안 맡긴다.
+    # What is judged and the reason given are both Korean. The encoding is not
+    # left to the environment, where the default on this pipe is cp949.
     sys.stdin.reconfigure(encoding="utf-8")
     sys.stdout.reconfigure(encoding="utf-8")
 
@@ -204,14 +218,15 @@ def main() -> int:
         root = Path(str(payload.get("cwd") or Path.cwd()))
         answer = verdict(payload, root)
     except Exception:
-        return 0  # 통과. 훅이 깨져서 작업이 멈추면 안 된다.
+        return 0  # pass: a broken hook must not stop the work
     if answer:
         json.dump(answer, sys.stdout, ensure_ascii=False)
     return 0
 
 
 if __name__ == "__main__":
-    # 첫머리의 규칙을 `main` 밖까지 덮는다. 무엇이든 잘못되면 통과시킨다.
+    # The rule at the top of this file, extended past `main`. Whatever goes
+    # wrong, pass.
     try:
         _code = main()
     except Exception as _error:  # noqa: BLE001

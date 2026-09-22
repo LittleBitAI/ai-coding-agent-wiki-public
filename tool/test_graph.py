@@ -1,4 +1,4 @@
-"""정책 그래프가 아티팩트로 온전한지 본다."""
+"""Whether the policy graph survives as an artifact."""
 
 import json
 import os
@@ -27,14 +27,15 @@ links: []
 """
 
 
-def test_왕복해도_한_글자도_안_바뀐다():
-    # 직렬화가 안 되는 값과, 왕복하며 타입이 바뀌는 값을 둘 다 잡는다. 읽는 쪽이
-    # 이 파일만 보므로, 여기서 잃은 것은 화면에서 영영 못 본다.
+def test_a_round_trip_changes_not_one_character():
+    # Catches both a value that will not serialise and one whose type changes
+    # on the way back. The reading side sees only this file, so whatever is
+    # lost here is never visible on screen again.
     data = build(load_pages([]), [])
     assert json.loads(json.dumps(data, ensure_ascii=False)) == data
 
 
-def test_아티팩트가_축을_선언한다():
+def test_the_artifact_declares_its_axis():
     root = Path(tempfile.mkdtemp())
     (root / "craft").mkdir()
     (root / "craft" / "a.md").write_text(PAGE, encoding="utf-8")
@@ -80,9 +81,11 @@ def test_the_rule_line_is_found_in_either_language():
     assert pages["craft/no"]["rule"] == ""
 
 
-def test_붙은_저장소를_스스로_찾는다():
-    # 이름을 손으로 들면 저장소가 늘 때마다 여기를 고쳐야 하고, 그것은 곧 안 고치는 것이다.
-    # 어댑터가 없거나 저장소가 아닌 폴더는 빼고, 워크스페이스 설정이 깨져도 그래프는 나와야 한다.
+def test_it_finds_the_attached_repositories_itself():
+    # Holding the names by hand means editing this every time a repository is
+    # added, which means not editing it. Folders with no adapter and folders
+    # that are not repositories drop out, and a broken workspace setting still
+    # has to produce a graph.
     import graph
 
     workspace = Path(tempfile.mkdtemp())
@@ -98,17 +101,18 @@ def test_붙은_저장소를_스스로_찾는다():
     with patch.object(graph, "WIKI", wiki), patch.object(graph, "HERE", wiki / "tool"):
         assert graph.connected() == [workspace / "붙은 저장소", wiki]
         (wiki / ".chat-local.json").write_text('{"workspace": "."}', encoding="utf-8")
-        assert graph.connected() == []          # 위키 아래에는 저장소가 없다
+        assert graph.connected() == []          # there are no repositories under the wiki
         (wiki / ".chat-local.json").write_text("깨진 JSON", encoding="utf-8")
         assert graph.connected() == [workspace / "붙은 저장소", wiki]
-    # WIKI_ROOT 로 다른 허브를 가리키면 그 상위 폴더를 뒤지지 않는다.
+    # With `WIKI_ROOT` pointing at another hub, its parent is not searched.
     with patch.object(graph, "WIKI", wiki):
         assert graph.connected() == []
 
 
-def test_그리는_코드가_여기_없다():
-    # 뷰는 소비자다. 이 도구가 화면을 만들면 같은 그래프를 그리는 코드가 두 벌이
-    # 되고, 두 벌은 어긋난다. 그래서 여기 HTML 이 한 글자도 없어야 한다.
+def test_the_drawing_code_is_not_in_here():
+    # The view is a consumer. If this tool builds a screen there are two
+    # copies of the code drawing the same graph, and two copies drift. So
+    # there must not be one character of HTML in here.
     source = (HERE / "graph.py").read_text(encoding="utf-8")
     assert "<svg" not in source and "<div" not in source
     assert not (HERE / "graph_view.py").exists()

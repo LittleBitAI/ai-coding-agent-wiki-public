@@ -1,4 +1,8 @@
-"""훅이 외부 제한으로 죽기 전에 로컬 스택을 남긴다. stdin은 읽지 않는다."""
+"""Leave a local stack behind before something outside kills the hook.
+
+Reads nothing from stdin, because the hook it is watching is usually blocked
+on exactly that.
+"""
 
 import atexit
 from datetime import datetime, timezone
@@ -11,7 +15,7 @@ import time
 
 
 def arm(hook: str, after: float) -> None:
-    """정상 실행은 지우고 느린 실행과 강제 종료의 기록은 보존한다."""
+    """Delete the record of a normal run, keep the slow one and the killed one."""
     stream = None
     armed = False
     try:
@@ -27,7 +31,9 @@ def arm(hook: str, after: float) -> None:
             "stack_after_seconds": after,
         }) + "\n")
         stream.flush()
-        # C watchdog은 stdin/GIL 대기 중에도 스택을 쓴다. 외부 kill의 finally에 의존하지 않는다.
+        # The C watchdog writes the stack even while blocked on stdin or the
+        # GIL. A `finally` cannot: the kill that this exists to catch comes
+        # from outside and never runs one.
         faulthandler.dump_traceback_later(after, file=stream)
 
         def finish():
@@ -43,7 +49,8 @@ def arm(hook: str, after: float) -> None:
 
         atexit.register(finish)
         armed = True
-        # 실행 중 파일은 건드리지 않는다. 다음 훅에서 오래된 진단만 정리한다.
+        # Never touch a file a run is still holding. The next hook clears what
+        # has gone cold instead.
         now = time.time()
         old = sorted(
             (p for p in directory.glob("*.log") if now - p.stat().st_mtime > 60),
@@ -53,13 +60,16 @@ def arm(hook: str, after: float) -> None:
             if index >= 100 or now - previous.stat().st_mtime > 7 * 86400:
                 previous.unlink(missing_ok=True)
     except (OSError, RuntimeError, ValueError):
-        # 진단 실패 때문에 기존 주입·차단 판정이 달라져서는 안 된다.
+        # A diagnostic that fails must not change an injection or a block.
+        # Watching the work is not worth being able to break it.
         if not armed and stream is not None:
             faulthandler.cancel_dump_traceback_later()
             stream.close()
 
 
-# 진입점의 첫 import에서 시작한다. apply/pytest가 이 모듈을 가져오면 켜지지 않는다.
+# Armed by the entry point's own first import, and only then. `apply` and
+# pytest import this module too, and arming there would write a diagnostic for
+# a run nobody is waiting on.
 _thresholds = {
     "codex_pretool.py": 8, "inject.py": 8, "declared_continuation.py": 8,
     "session_state.py": 13, "sync.py": 28,

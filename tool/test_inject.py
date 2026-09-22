@@ -1,4 +1,4 @@
-"""두 축의 예산이 실제로 갈려 있는지 본다."""
+"""Whether the two axes really do have separate budgets."""
 
 import json
 import os
@@ -41,8 +41,35 @@ triggers: ["{word}"]
 """
 
 
-def build(decisions: int, rule_budget: int | None, repo_budget: int | None) -> str:
-    """임시 위키와 임시 저장소를 세우고 훅을 한 번 돌린다. 주입문을 돌려준다."""
+def seed_cache(path: Path, korean: str, english: str) -> None:
+    """Put one translation in a throwaway cache, so the hook needs no network.
+
+    The cache is consulted before the key is, so a seeded row makes the real
+    `translate` path produce a rendering with no request. That is the only way
+    to measure what the hook assembles *with* a rendering without either
+    calling Gemini or faking the function the hook does not import from here.
+    """
+
+    import sqlite3
+
+    import translate
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _keep, _fixed, version = translate.glossary()
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE IF NOT EXISTS shots (k TEXT PRIMARY KEY, v TEXT)")
+    db.execute(
+        "INSERT OR REPLACE INTO shots (k, v) VALUES (?, ?)",
+        (translate._key(translate.KO_EN, version, korean), english),
+    )
+    db.commit()
+    db.close()
+
+
+def build(decisions: int, rule_budget: int | None, repo_budget: int | None,
+          rendered: str | None = None) -> str:
+    """Stand up a throwaway wiki and repository, run the hook once, return what
+    it injected."""
 
     root = Path(tempfile.mkdtemp())
     wiki, project = root / "wiki", root / "project"
@@ -64,18 +91,23 @@ def build(decisions: int, rule_budget: int | None, repo_budget: int | None) -> s
             DECISION.format(word=WORD, n=n, why="왜" * 60), encoding="utf-8"
         )
 
+    if rendered:
+        seed_cache(root / "translate-cache.sqlite3", f"{WORD} 를 쓴다", rendered)
+
     done = subprocess.run(
         [sys.executable, str(HERE / "inject.py"), "--adapter", "x",
          "--project", str(project)],
         input=json.dumps({"prompt": f"{WORD} 를 쓴다", "session_id": "t"}),
         capture_output=True, text=True, encoding="utf-8",
-        # 키를 빼서 번역을 fail-open 시킨다. 안 빼면 이 헬퍼를 부를 때마다
-        # 실제 Gemini 왕복이 일어나 스위트가 느려지고 흔들리고 돈이 든다.
-        # 영어본 자체는 아래 전용 시험이 가짜 번역기로 잰다.
+        # The key is removed so the translation fails open. Left in, every
+        # call to this helper makes a real Gemini round trip: the suite gets
+        # slow, flaky and expensive. The English rendering itself is measured
+        # below, by the dedicated tests, with a fake translator.
         #
-        # 캐시도 임시로 돌린다. **키를 빼는 것만으로는 모자란다** — 캐시가
-        # 키보다 먼저 답하므로, 앞선 회차가 이 발화를 캐시해 뒀으면 키 없이도
-        # 번역이 성공한다. 실제로 그렇게 이 시험이 한 번 빨갰다.
+        # The cache is redirected to a temporary one too. Removing the key is
+        # not enough on its own: the cache answers before the key is
+        # consulted, so an earlier run having cached this utterance makes the
+        # translation succeed without one. That is how this test went red once.
         env={k: v for k, v in os.environ.items() if k != "GEMINI_API_KEY"}
         | {
             "WIKI_ROOT": str(wiki),
@@ -88,14 +120,16 @@ def build(decisions: int, rule_budget: int | None, repo_budget: int | None) -> s
 
 
 def rule_half(text: str) -> str:
-    """주입문의 규칙 쪽만. 머리말과 부분 사이의 `---` 는 떼어 낸다.
+    """Only the rules half of the injection, with the `---` separators removed.
 
-    결정이 없으면 그 구분자도 없다. 안 떼면 결정의 유무 자체가 차이로 잡혀,
-    정작 재려는 것을 못 잰다.
+    With no decisions there is no separator either. Left in, the presence or
+    absence of decisions registers as the difference and the thing actually
+    being measured never gets measured.
 
-    머리말도 뺀다. 출처 표에 대상 저장소의 절대 경로가 들어 있고 `build` 는
-    부를 때마다 새 임시 폴더를 만들므로, 안 빼면 경로가 달라 매번 다르다고
-    나온다. 이 함수가 재려는 것은 **규칙이 줄었는가** 하나다.
+    The header goes too. The source table carries the target repository's
+    absolute path and `build` makes a fresh temporary folder on every call,
+    so leaving it in reports a difference every time because the path
+    differs. The one thing this function measures is whether the rules shrank.
     """
 
     head = text.split(MARK)[0]
@@ -104,9 +138,10 @@ def rule_half(text: str) -> str:
     return body.strip().rstrip("-").strip()
 
 
-def test_결정이_늘어도_규칙이_한_글자도_안_줄어든다():
-    # 예산은 규칙 혼자면 남고 결정까지 더하면 모자라도록 잡았다. 한 예산이던
-    # 시절이라면 여기서 규칙이 "규칙 한 줄" 로 줄어든다.
+def test_more_decisions_shrink_the_rules_by_not_one_character():
+    # The budget is set so the rules alone fit and the rules plus the
+    # decisions do not. Under the single budget this would be where the rules
+    # collapse to their one rule line.
     alone = build(decisions=0, rule_budget=700, repo_budget=None)
     crowded = build(decisions=10, rule_budget=700, repo_budget=None)
     assert MARK in crowded, "결정이 실리지 않았다. 시험이 아무것도 안 재고 있다"
@@ -114,37 +149,40 @@ def test_결정이_늘어도_규칙이_한_글자도_안_줄어든다():
     assert "shortened" not in rule_half(crowded), rule_half(crowded)[:200]
 
 
-def test_규칙_예산이_모자라면_규칙만_다듬는다():
+def test_a_tight_rule_budget_trims_only_the_rules():
     text = build(decisions=10, rule_budget=200, repo_budget=None)
     assert "shortened" in rule_half(text), rule_half(text)[:200]
-    # 규칙을 다듬었다고 결정이 사라지지는 않는다.
+    # Trimming the rules does not make a decision disappear.
     assert MARK in text
 
 
-def test_지식_예산은_결정만_다듬는다():
+def test_the_knowledge_budget_trims_only_the_decisions():
     wide = build(decisions=10, rule_budget=None, repo_budget=None)
     tight = build(decisions=10, rule_budget=None, repo_budget=300)
     assert rule_half(wide) == rule_half(tight)
     assert len(tight.split(MARK)[1]) < len(wide.split(MARK)[1])
 
 
-def test_지식을_아무리_조여도_이름은_남는다():
+def test_however_tight_the_knowledge_budget_the_names_survive():
     text = build(decisions=10, rule_budget=None, repo_budget=1)
     block = text.split(MARK)[1]
-    # 이름은 최신순 여덟까지만 보인다. 가장 새것은 어떤 예산에서도 안 사라진다.
+    # At most eight names are shown, newest first. The newest never
+    # disappears, at any budget.
     assert "2026-01-10-9" in block, block
     assert "10 decision(s) on this" in block, block
 
 
-def test_한_예산이었다면_지식이_규칙을_밀어냈다():
-    """왜 갈랐는지를 코드로 남긴다.
+def test_under_one_budget_knowledge_would_have_pushed_the_rules_out():
+    """Why the two were separated, written down as code.
 
-    `fit` 은 규칙만 다듬는다. 그런데 한 예산에 둘을 같이 넣으면 넘친 양을
-    규칙에서 빼게 되므로, 지식이 늘어난 만큼 규칙이 줄어든다. 다듬는 부담이
-    전부 안 늘어난 쪽으로 간다.
+    `fit` trims rules and nothing else. Put both under one budget and the
+    overflow comes off the rules, so the rules shrink by exactly as much as
+    the knowledge grew. The whole trimming burden lands on the side that did
+    not grow.
 
-    이 시험은 갈라 놓은 지금 코드가 아니라 **갈라 놓지 않았을 때**를 잰다.
-    그래야 이 설계가 무엇을 막고 있는지가 초록 하나로 안 지워진다.
+    This test measures what would happen without the split rather than the
+    split code as it stands. That is what keeps one green from erasing what
+    this design is preventing.
     """
 
     from inject import fit, knowledge
@@ -160,7 +198,8 @@ def test_한_예산이었다면_지식이_규칙을_밀어냈다():
     ]
     repo_parts = knowledge(decisions, None)
 
-    # 규칙 혼자면 남고, 지식까지 더하면 모자라는 예산. 같은 값을 두 방식에 준다.
+    # A budget the rules alone fit inside and the rules plus the knowledge do
+    # not. The same value is given to both arrangements.
     limit = len(rule_parts[0]) + 40
     assert len(rule_parts[0]) <= limit < len(rule_parts[0]) + len(repo_parts[0])
 
@@ -172,19 +211,21 @@ def test_한_예산이었다면_지식이_규칙을_밀어냈다():
     assert old[1] == repo_parts[0], "그런데 지식은 한 글자도 안 줄었다"
 
 
-def test_예산이_없으면_아무것도_안_다듬는다():
+def test_with_no_budget_nothing_is_trimmed():
     text = build(decisions=10, rule_budget=None, repo_budget=None)
     assert "shortened" not in text
 
 
-# ---- 발화의 영어본 --------------------------------------------------------
+# ---- The English rendering of the utterance --------------------------------
 #
-# 가짜 번역기로 잰다. 진짜를 부르면 시험이 네트워크와 돈에 매이고, 무엇보다
-# 번역이 실패한 회차와 성공한 회차가 같은 초록으로 보인다.
+# Measured with a fake translator. Calling the real one ties these tests to a
+# network and a bill, and worse, a run where the translation failed and one
+# where it succeeded look like the same green.
 #
-# `monkeypatch` 픽스처를 안 쓴다. 이 파일 끝의 직접 실행 러너가 인자 없이
-# 부르므로, 픽스처를 받으면 pytest 에서만 도는 검사가 된다. `docs/development.md`
-# 가 이 파일을 직접 실행하라고 적어 두었다.
+# No `monkeypatch` fixture. The direct-run runner at the bottom of this file
+# calls these with no arguments, so taking a fixture would make them checks
+# that only run under pytest — and `docs/development.md` says to run this file
+# directly.
 
 
 def _rendering(prompt: str, answer: str | None) -> str:
@@ -199,7 +240,7 @@ def _rendering(prompt: str, answer: str | None) -> str:
         translate.ko_to_en = was
 
 
-def test_영어본은_발화가_한국어일_때만_붙는다():
+def test_the_rendering_is_attached_only_when_the_utterance_is_korean():
     korean = _rendering("규칙을 지켜라", "Follow the rule")
     assert "Follow the rule" in korean
     assert "English rendering" in korean
@@ -207,23 +248,24 @@ def test_영어본은_발화가_한국어일_때만_붙는다():
     assert _rendering("just plain english", "SHOULD NOT BE CALLED") == ""
 
 
-def test_번역이_실패하면_영어본_표지를_안_붙인다():
-    """원문을 영어본이라고 이름 붙이는 것이 가장 나쁜 실패다.
+def test_a_failed_translation_gets_no_rendering_label():
+    """Labelling the original as a rendering is the worst failure here.
 
-    읽는 쪽은 그것이 번역된 것인지 아닌지 확인할 방법이 없으므로, 틀린
-    이름표가 붙은 한국어를 영어로 믿고 읽게 된다. 그래서 `ko_to_en` 이
-    원문을 그대로 돌려주면 — 즉 실패하면 — 블록 자체를 안 만든다.
+    The reading side has no way to check whether something was translated, so
+    mislabelled Korean gets read as English and trusted. When `ko_to_en`
+    returns the original unchanged — that is, when it failed — the block is
+    not built at all.
     """
 
     assert _rendering("규칙을 지켜라", None) == ""
 
 
-def test_트리거는_한국어_원문에_걸린다():
-    """순서가 이 변경의 전부다.
+def test_triggers_match_against_the_korean_original():
+    """The order is the whole of this change.
 
-    `match_pages` 에 번역본을 주면 한국어 정규식이 영어 문장을 훑게 되어
-    아무것도 안 걸리고, **아무것도 안 걸린 것은 아무것도 해당 안 되는 것과
-    구별되지 않는다.** 주입이 말없이 사라진다.
+    Hand `match_pages` the translation and the Korean regexes scan an English
+    sentence, match nothing — and nothing matching is indistinguishable from
+    nothing applying. The injection disappears without a word.
     """
 
     from inject import match_pages
@@ -231,18 +273,19 @@ def test_트리거는_한국어_원문에_걸린다():
     meta = {"severity": "contract", "triggers": [WORD]}
     available = [(meta, "규칙. 본문", Path("craft") / "x.md")]
 
-    assert match_pages(f"{WORD} 를 쓴다", available), "원문에는 걸려야 한다"
+    assert match_pages(f"{WORD} 를 쓴다", available), "the original has to match"
     assert not match_pages("writes the budget test word", available), (
-        "번역본에 걸리면 이 시험은 순서가 뒤집힌 것을 못 잡는다"
+        "matching the translation would leave this test blind to a swapped order"
     )
 
 
-def test_저장소_페이지와_결정_요약만_번역된다():
-    """계획서가 1단계로 적어 둔 것이고, 한 번 빠뜨렸던 자리다.
+def test_only_project_pages_and_decision_summaries_are_translated():
+    """What the plan set down for phase 1, and a place this once missed.
 
-    `.wiki/` 페이지 본문과 결정 요약은 에이전트 입력이므로 번역한다. 허브의
-    `operator/`·`craft/` 는 2단계에서 원본을 영어로 다시 쓰므로 여기서 옮기면
-    같은 낱말 값을 두 번 내고 두 번째를 버린다.
+    A `.wiki/` page body and a decision summary are agent input, so they are
+    translated. The hub's `operator/` and `craft/` have their originals
+    rewritten in English in phase 2, so translating them here pays for the
+    same words twice and throws the second one away.
     """
 
     import time
@@ -267,12 +310,13 @@ def test_저장소_페이지와_결정_요약만_번역된다():
     assert out[2][1].startswith("EN:"), "결정 본문이 번역을 안 거쳤다"
 
 
-def test_예산과_기록은_번역된_길이로_잰다():
-    """번역을 `render_parts` 뒤로 두면 둘이 같이 틀어진다.
+def test_the_budget_and_the_record_measure_the_translated_length():
+    """Put the translation after `render_parts` and both go wrong together.
 
-    `fit` 은 한국어 길이에 맞춰 줄이는데 영어가 대개 더 길어서, 방금 예산에
-    맞춘 블록이 번역 뒤 다시 넘친다. `trajectory.cost` 도 번역 전 숫자를
-    적는데 `trigger_audit` 은 그 값을 실제 주입량으로 읽는다.
+    `fit` trims against the Korean length while English is usually longer, so
+    a block that was just fitted to the budget overflows again once
+    translated. `trajectory.cost` would record the pre-translation number too,
+    and `trigger_audit` reads that value as the real injected size.
     """
 
     import time
@@ -294,11 +338,32 @@ def test_예산과_기록은_번역된_길이로_잰다():
     assert len(parts[0]) > 100, "렌더링이 번역된 본문을 안 썼다"
 
 
-def test_걸린_규칙이_없어도_영어본은_나간다():
-    """`if not parts: return 0` 이 원래 여기서 발화 번역을 통째로 삼켰다.
+def test_the_rendering_comes_before_the_rules():
+    """A host persists a large injection and hands the session a preview.
 
-    발화는 매 턴 에이전트 입력이다. 그것을 트리거에 매달면 어떤 규칙도 해당
-    안 되는 턴 — 즉 위키가 도울 말이 없는 턴 — 에서만 번역이 사라진다.
+    The rules alone reach 12,205 characters on an ordinary turn, past the
+    roughly 12 KB where that happens, so whatever sits after them is cut.
+    Measured on 2026-09-22 in a web chat session on both hosts: the rules
+    arrived, the rendering did not, and nothing reported it. Position is the
+    fix — this block is a few hundred characters and it is the one the person
+    reads to check what was understood.
+    """
+
+    context = build(decisions=1, rule_budget=None, repo_budget=None,
+                    rendered="writes the budget test word")
+
+    assert "wiki:english-rendering" in context, context[:200]
+    assert context.index("wiki:english-rendering") < context.index("Below is what the wiki"), (
+        "the rendering has to precede the rules, or a preview drops it"
+    )
+
+
+def test_the_rendering_goes_out_even_when_no_rule_matched():
+    """`if not parts: return 0` used to swallow the utterance translation here.
+
+    The utterance is agent input on every turn. Hanging it off the triggers
+    makes the translation disappear on exactly the turns where no rule applies
+    — the turns where the wiki has nothing else to offer.
     """
 
     assert _rendering("규칙을 지켜라", "EN").endswith("EN")

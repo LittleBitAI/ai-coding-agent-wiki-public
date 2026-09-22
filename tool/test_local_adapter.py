@@ -1,4 +1,5 @@
-"""프로젝트 이름 대신 checkout의 adapter를 설치·주입·검진이 함께 읽는다."""
+"""Install, injection and the health check all read the checkout's adapter
+rather than the project name."""
 
 import json
 from pathlib import Path

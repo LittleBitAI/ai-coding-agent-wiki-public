@@ -1,4 +1,4 @@
-"""transcript — 세션 로그에서 회고에 필요한 것만 뽑는다."""
+"""transcript — lift out of a session log only what a retro needs."""
 
 from __future__ import annotations
 
@@ -15,11 +15,11 @@ sys.path.insert(0, str(HERE))
 from census import INJECTED, MAX_HUMAN_CHARS, transcript_dir  # noqa: E402
 
 SESSIONS = Path.home() / ".claude" / "projects"
-MAX_TURN_CHARS = 600   # 한 발화를 몇 자까지 보일 것인가. 긴 붙여넣기는 잘라도 된다
+MAX_TURN_CHARS = 600   # How much of one utterance to show. A long paste may be cut
 
 
 def human_text(record: dict) -> str | None:
-    """census.human_turns 와 같은 규칙. 사람이 친 것이 아니면 None."""
+    """The same rule as `census.human_turns`. `None` if a person did not type it."""
 
     if record.get("type") != "user":
         return None

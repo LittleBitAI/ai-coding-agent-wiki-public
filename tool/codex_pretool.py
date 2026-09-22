@@ -1,6 +1,7 @@
-"""Codex PreToolUse: 공유 위키의 명령 차단과 기존 검사를 함께 적용한다."""
+"""Codex PreToolUse: the shared wiki's command blocks and its own checks, together."""
 
-import hook_diagnostics  # noqa: F401 -- 다른 import와 stdin 대기부터 관측한다.
+# First, so the wait on the other imports and on stdin is already being watched.
+import hook_diagnostics  # noqa: F401
 from fnmatch import fnmatchcase
 import json
 from pathlib import Path
@@ -16,9 +17,11 @@ def verdict(payload: dict) -> dict | None:
     tool = payload.get("tool_name")
     command = str(given.get("command") or "").strip()
     denies, _ = declared()
-    # 도구 전체 차단과 Bash 인자 패턴은 같은 enforce.deny 선언을 읽는다.
-    # ponytail: 직접 명령의 선언된 패턴만 대조한다. 중첩 셸과 동적 명령까지
-    # 보안 경계로 삼아야 한다면 Codex 실행 정책에서 강제해야 한다.
+    # Blocking a whole tool and blocking a Bash argument pattern read the same
+    # `enforce.deny` declaration.
+    # ponytail: only the declared pattern of the direct command is matched. A
+    # nested shell or a command built at runtime gets past it, and making this
+    # a security boundary means enforcing it in Codex's execution policy.
     for rule in denies:
         blocked = rule == tool
         if tool == "Bash" and rule.startswith("Bash(") and rule.endswith(")"):
@@ -36,8 +39,9 @@ def verdict(payload: dict) -> dict | None:
             "Edit", "apply_patch"
         ).replace("Write", "apply_patch")
         return answer
-    # Codex 는 PreToolUse 훅 하나만 걸리므로 여기서 이어 붙인다. Claude 쪽은
-    # `apply.py` 가 페이지의 `enforce.pretooluse` 에서 각각 따로 만든다.
+    # Codex takes one PreToolUse hook, so the checks are chained here. On
+    # Claude `apply.py` wires each one separately out of a page's
+    # `enforce.pretooluse`.
     return markdown_emphasis.verdict(payload) or english_progress.verdict(payload)
 
 

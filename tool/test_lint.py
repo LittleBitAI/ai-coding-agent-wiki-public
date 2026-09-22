@@ -1,4 +1,4 @@
-"""lint 의 검사가 실제로 빨개지는지 증명한다."""
+"""Prove each of `lint`'s checks actually goes red."""
 
 from __future__ import annotations
 
@@ -10,7 +10,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from lint import check  # noqa: E402
+import markdown_emphasis  # noqa: E402
+from lint import check, korean_prose  # noqa: E402
 
 PAGE = """---
 scope: {scope}
@@ -29,7 +30,7 @@ links: {links}
 
 
 def build(root: Path, pages: dict[str, dict]) -> None:
-    """페이지 표를 임시 위키로 쓴다. 근거 파일도 같이 만든다."""
+    """Write a table of pages as a throwaway wiki, grounds files and all."""
 
     (root / "raw").mkdir(parents=True, exist_ok=True)
     (root / "raw" / "c.jsonl").write_text("{}\n", encoding="utf-8")
@@ -57,7 +58,7 @@ CLEAN = {
 
 
 def _tool(root: Path, name: str, source: str) -> None:
-    """임시 위키에 도구 하나를 심는다. 인코딩 검사가 보는 곳은 `tool/` 이다."""
+    """Plant one tool in the throwaway wiki. The encoding check looks in `tool/`."""
     (root / "tool").mkdir(parents=True, exist_ok=True)
     (root / "tool" / name).write_text(source, encoding="utf-8")
 
@@ -66,21 +67,26 @@ FIXED = 'import sys\nsys.stdout.reconfigure(encoding="utf-8")\n'
 
 
 def _clean_tool(root: Path, name: str, source: str) -> None:
-    """인코딩만 고정해 둔 도구를 심는다.
+    """Plant a tool with its encoding already pinned.
 
-    한 결함이 두 검사를 빨갛게 하면 어느 검사가 잡은 것인지 못 가른다.
+    One defect turning two checks red leaves no way to tell which check
+    caught it.
     """
 
     _tool(root, name, FIXED + source)
 
 
-def kinds(root: Path) -> set[str]:
+def kinds_and_messages(root: Path) -> list[tuple[str, str]]:
     _loaded, _declared, findings = check(wiki=root, adapters=root / "none")
-    return {kind for kind, _msg in findings}
+    return findings
+
+
+def kinds(root: Path) -> set[str]:
+    return {kind for kind, _msg in kinds_and_messages(root)}
 
 
 def run(label: str, mutate, expect: str) -> bool:
-    """결함을 심고 그 검사가 빨개지는지 본다."""
+    """Plant a defect and watch that check go red."""
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -94,7 +100,8 @@ def run(label: str, mutate, expect: str) -> bool:
 
 
 def main() -> int:
-    # 출력이 파이프로 가면 기본이 cp949 다. 인코딩을 환경에 안 맡긴다.
+    # Down a pipe the default here is cp949. The encoding is not left to the
+    # environment.
     sys.stdout.reconfigure(encoding="utf-8")
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -146,9 +153,10 @@ def main() -> int:
             "인코딩 미고정",
         ),
         (
-            # 첫 판이 놓친 자리. 발견 메시지가 고치는 방법으로 그 이름을 담고
-            # 있어서, `lint.py` 자신이 "고쳤다" 로 판정됐다. 이름이 아니라
-            # 호출문을 세는지 보는 것이 이 줄의 전부다.
+            # What the first version missed. The finding message contained
+            # that name as the way to fix it, so `lint.py` itself was judged
+            # "already fixed". This line is entirely about whether the check
+            # counts the call or the name.
             "이름만 문자열에 있고 호출은 없다",
             lambda p, r: _tool(
                 r,
@@ -158,9 +166,11 @@ def main() -> int:
             "인코딩 미고정",
         ),
         (
-            # 판정이 한국어 관형형에서 잘린 스팬으로 바뀌었다. 영어에서 줄 끝의
-            # `the` 는 정상 조판이라 그 판이 1,515쌍 중 437건을 짚었다 — 29%는
-            # 검사가 아니라 끄게 되는 소음이다. 표본도 같이 바뀌어야 한다.
+            # The judgement moved from a Korean adnominal ending to a span cut
+            # in half. A `the` at the end of a line is ordinary English
+            # typesetting, and that version flagged 437 of 1,515 pairs — 29%
+            # is not a check, it is noise that gets switched off. The samples
+            # had to move with it.
             "주석의 코드 스팬이 줄바꿈에 잘린다",
             lambda p, r: _clean_tool(
                 r,
@@ -171,21 +181,40 @@ def main() -> int:
             "끊긴 줄바꿈",
         ),
         (
-            # 페이지 산문은 다른 경로로 읽는다 — front matter 를 건너뛰고 표와
-            # 코드 울타리를 거른다. 그 경로가 조용히 아무것도 안 읽으면 검사는
-            # 초록인 채로 남고, 그 초록이 검사가 도는 증거처럼 보인다.
+            # Page prose is read by a different path — front matter skipped,
+            # tables and code fences filtered out. If that path quietly reads
+            # nothing the check stays green, and that green looks like
+            # evidence the check ran.
             "페이지 산문에서 숫자와 단위가 갈린다",
             lambda p, r: p["operator/a"].update(
                 extra="\nMeasuring the corpus gave a median across the 21\npages already here."
             ),
             "끊긴 줄바꿈",
         ),
+        (
+            # A comment written in Korean. This check exists because the
+            # completion claim was asserted from a regex over `#` lines that
+            # counted no docstring at all.
+            "주석이 한국어로 적혀 있다",
+            lambda p, r: _clean_tool(r, "korean.py", "# 이 주석은 한국어 산문이다.\n"),
+            "주석이 한국어다",
+        ),
+        (
+            # The same, in a docstring rather than a comment. A regex on `#`
+            # sees nothing here, which is exactly how 104 lines stayed under a
+            # green gate.
+            "docstring 이 한국어로 적혀 있다",
+            lambda p, r: _clean_tool(
+                r, "korean_doc.py", 'def f():\n    """이 설명은 한국어다."""\n',
+            ),
+            "주석이 한국어다",
+        ),
     ]
 
     print(f"\n결함을 하나씩 심는다 ({len(checks)}건)\n")
     failed = [label for label, mutate, expect in checks if not run(label, mutate, expect)]
 
-    # 선언하면 지나가는가 — 모순 처리의 핵심이다
+    # Does declaring it let it pass — the heart of how contradictions work
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         pages = {name: dict(spec) for name, spec in CLEAN.items()}
@@ -203,6 +232,131 @@ def main() -> int:
     if not passed:
         failed.append("선언 무시")
 
+    # Citing Korean is not writing Korean, and the backtick is what says so.
+    # A check that stops correct work is the one that gets switched off, so
+    # the false-positive side is asserted as hard as the true-positive side.
+    # The doubled span is here and not in `lint.py`'s own comment, because
+    # written there this check reads it and goes red on itself. It is how
+    # CommonMark writes a citation that contains a backtick, and a one-
+    # backtick regex erased its two opening marks as an empty span and left
+    # the Korean standing in the open.
+    tick = chr(96)
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _clean_tool(root, "cited.py", f"# The marker {tick}왜.{tick} is parsed.\n")
+        _clean_tool(root, "run.py", f"# The marker {tick*2}왜.{tick*2} is parsed.\n")
+        _clean_tool(
+            root,
+            "cited_doc.py",
+            f'def f():\n    """English first.\n\n    It cites {tick}왜.{tick} and stops.\n    """\n',
+        )
+        quiet = korean_prose(root)
+    print(f"  {'통과 ' if not quiet else '실패 '} 백틱 인용은 안 잡는다        → {quiet or '없음'}")
+    if quiet:
+        failed.append("인용 오탐")
+
+    # A quotation mark is punctuation, not a marker, so pairing two of them
+    # is a guess. Three rounds added members to a set of quote characters and
+    # the fourth found the guess going wrong the expensive way: an unclosed
+    # `"` pairs with a later one and the Korean between the two disappears
+    # from the gate. Every one of these has to be caught.
+    #
+    # The HTML lines are here because a version that gathered the text of
+    # everything the parser did *not* call a code span had to decide what
+    # every other token kind contributes, and decided `html_block` wrong: a
+    # `<div>` around a Korean line hid it from the gate outright. Reading a
+    # parse out token kind by token kind is the hand-written lexer returning
+    # through the parser's own door. The line is kept whole now and only the
+    # spans are taken away, so a token kind nobody thought about cannot hide
+    # anything.
+    unmarked = {
+        "double quotes": '# The marker "왜." is parsed.',
+        "single quotes": "# The marker '왜.' is parsed.",
+        "an apostrophe": "# It doesn't parse 왜. and won't either.",
+        "an HTML block": "# <div>한국어 산문이다.</div>",
+        "an HTML tag inline": "# <span>한국어 산문이다.</span>",
+        "an image's alt text": "# ![한국어 산문이다.](x)",
+        "a fence marker": f"# {tick * 3}한국어 산문이다.",
+        "a table row": "# | 한국어 산문이다. |",
+        "indented under the marker": (
+            'def f():\n    """English first.\n\n        한국어 산문이다.\n    """\n'
+        ),
+        "indented behind a `#`": "#     한국어 산문이다.",
+        "one of two, the other cited": f"# {tick}왜{tick} 왜.",
+        "an unclosed quote": (
+            'def f():\n'
+            '    """The output starts with " but never closes it.\n'
+            '    한국어 산문이다.\n'
+            '    Later it names "done" as a separate token.\n'
+            '    """\n'
+        ),
+        "a span cut by a line wrap": (
+            f"# Fitting the width cut the span: {tick}왜.\n"
+            f"# 그리고 다음 줄{tick} was one span.\n"
+        ),
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        for n, (label, source) in enumerate(unmarked.items()):
+            _clean_tool(root, f"unmarked{n}.py", source)
+        caught = {at.split(":")[0] for at, _line in korean_prose(root)}
+    ok = len(caught) == len(unmarked)
+    print(f"  {'통과 ' if ok else '실패 '} 표지 없는 한국어는 다 잡는다 → {len(caught)}/{len(unmarked)}")
+    if not ok:
+        failed.append("표지 없는 한국어 미탐")
+
+    # The line number names the line the Korean is on — not the `def` above
+    # the docstring, and not a line that exists only after the literal is
+    # evaluated. A docstring is read as source for exactly this reason: `\n`
+    # written as an escape is one line on the page and two in the value, and
+    # two implicitly joined literals are two lines on the page and one in the
+    # value. Both pointed the reader somewhere they had to go looking.
+    slash = chr(92)
+    where = {
+        "a plain docstring": (
+            'def f():\n    """English first.\n    한국어 산문이다.\n    """\n', 5,
+        ),
+        "an escape, not a line": (
+            'def f():\n    """English' + slash + 'n한국어"""\n', 4,
+        ),
+        "two literals joined": (
+            'def f():\n    ("English "\n     "한국어")\n', 5,
+        ),
+        "a parenthesis on the line above": (
+            'def f():\n    (\n        """한국어 산문이다."""\n    )\n', 5,
+        ),
+    }
+    lines = []
+    for label, (source, line) in where.items():
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _clean_tool(root, "where.py", source)
+            found = korean_prose(root)
+        lines.append((label, [at for at, _text in found] == [f"tool/where.py:{line}"]))
+    ok = all(hit for _label, hit in lines)
+    print(f"  {'통과 ' if ok else '실패 '} 발견이 그 줄을 가리킨다     → "
+          f"{[label for label, hit in lines if not hit] or f'{len(lines)}/{len(lines)}'}")
+    if not ok:
+        failed.append("발견 줄 번호 어긋남")
+
+    # Without the parser the check cannot run, and a gate that cannot run a
+    # check says so in its report and finishes the rest. Raising took the
+    # header, the findings already gathered and the reason with it and left a
+    # traceback — red, but silent about what was examined.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        build(root, CLEAN)
+        real, markdown_emphasis.parser = markdown_emphasis.parser, lambda: None
+        try:
+            reported = [msg for kind, msg in kinds_and_messages(root)
+                        if kind == "주석이 한국어다"]
+        finally:
+            markdown_emphasis.parser = real
+    ok = len(reported) == 1 and "markdown-it-py" in reported[0]
+    print(f"  {'통과 ' if ok else '실패 '} 파서가 없으면 보고하고 계속한다 → {reported or '없음'}")
+    if not ok:
+        failed.append("파서 부재가 보고 안 됨")
+
     print()
     if failed:
         print(f"검사 {len(failed)}건이 심은 결함을 못 잡았다: {failed}")
@@ -212,5 +366,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    shutil.rmtree  # noqa: B018  (tempfile 이 정리한다)
+    shutil.rmtree  # noqa: B018  (tempfile does the cleaning up)
     raise SystemExit(main())

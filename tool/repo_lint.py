@@ -1,4 +1,7 @@
-"""repo_lint — 대상 저장소의 지식이 썩는 자리를 찾는다."""
+"""repo_lint — find where a target repository's knowledge is rotting.
+
+Every finding it returns is printed for a person, so those strings are Korean.
+"""
 
 from __future__ import annotations
 
@@ -12,14 +15,15 @@ sys.path.insert(0, str(HERE))
 
 from wikilib import metadata_errors, project_pages  # noqa: E402
 
-NEWER_ALLOWED = 3   # 목록이 이만큼 뒤처지는 것은 아직 안 짚는다
+NEWER_ALLOWED = 3   # A listing this far behind is not worth saying anything about
 
 
 def stale_index(repo: Path) -> list[tuple[str, str]]:
-    """문서 목록이 문서보다 낡았는가.
+    """Is the document listing older than the documents?
 
-    색인은 파생물이라 문서가 바뀌면 뒤처진다. 뒤처진 색인은 없는 색인보다
-    나쁘다 — 지워진 문서를 자신 있게 가리킨다.
+    The index is derived, so it falls behind whenever a document changes. An
+    index that has fallen behind is worse than none: it points confidently at
+    a document that was deleted.
     """
 
     index = repo / ".wiki" / "corpus.json"
@@ -57,11 +61,12 @@ def stale_index(repo: Path) -> list[tuple[str, str]]:
 
 
 def dangling_pointers(repo: Path) -> list[tuple[str, str]]:
-    """프로젝트 페이지가 가리키는 것이 실제로 있는가.
+    """Does what a project page points at actually exist?
 
-    프로젝트 페이지는 권위 문서를 통째로 싣지 않고 가리킨다. 그러면 가리키는
-    쪽이 움직였을 때 조용히 틀린 것을 자신 있게 말하게 되므로, 그 경로가
-    존재하는지는 기계가 매번 본다.
+    A project page points at the authoritative document rather than carrying
+    it. When the thing pointed at moves, the page goes on saying the wrong
+    thing confidently and quietly, so whether that path exists is checked by a
+    machine every time.
     """
 
     found = []
@@ -79,15 +84,17 @@ def dangling_pointers(repo: Path) -> list[tuple[str, str]]:
 
 
 def misplaced_scope(repo: Path) -> list[tuple[str, str]]:
-    """허브 범위 페이지가 대상 저장소에 들어와 있는가.
+    """Has a hub-scope page ended up inside a target repository?
 
-    `operator` 와 `craft` 는 저장소를 안 가리므로 허브가 든다. 그것이 여기 있으면
-    같은 교훈을 저장소마다 다시 배우게 되고, 그것이 이 위키를 만든 사고다.
+    `operator` and `craft` name no repository, so the hub holds them. A copy
+    sitting here means learning the same lesson again in every repository,
+    which is the accident this wiki was built out of.
 
-    산문이 아니라 검사인 이유. 두 곳 다 "위키" 라고 불리고, 한 세션이 "위키에
-    기록해라" 를 현재 저장소의 `.wiki/` 로 읽어 저장소를 안 가리는 규칙을 거기
-    적었다. 주입 헤더가 이제 출처를 절대 경로로 적지만, 그것은 읽는 사람이 그
-    줄을 읽어야 성립한다. **이 검사는 안 읽어도 빨개진다.**
+    Why this is a check and not prose: both places are called "the wiki", and
+    a session read "record it in the wiki" as the current repository's
+    `.wiki/` and wrote a repository-independent rule there. The injection
+    header now states the source as an absolute path, but that only works if
+    the reader reads that line. This goes red whether anyone reads or not.
     """
 
     found = []
@@ -105,7 +112,7 @@ def misplaced_scope(repo: Path) -> list[tuple[str, str]]:
 
 
 def check(repo: Path) -> list[tuple[str, str]]:
-    """이 저장소의 발견. 인쇄는 부르는 쪽이 한다."""
+    """This repository's findings. Printing them is the caller's job."""
 
     from apply import wiring_drift
     malformed = [
@@ -113,11 +120,12 @@ def check(repo: Path) -> list[tuple[str, str]]:
         for path in sorted((repo / ".wiki").glob("**/*.md"))
         for error in metadata_errors(path)
     ]
-    # 강조 검사가 여기 있어야 그 계약이 대상 저장소에서도 성립한다.
-    # 훅은 쓰기 전에 불리므로 `Edit` 과 패치가 만들 문서를 못 본다.
-    # 그 자리를 메우는 것이 실제 파일을 읽는 이 검사이고, 허브에만 걸어 두면
-    # 설치된 저장소에서는 조각이 통과한 뒤 아무도 안 본다 —
-    # 붙었다고 적힌 강제가 실제로는 안 걸리는 그 모양이다.
+    # The emphasis check belongs here so that its contract also holds in a
+    # target repository. A hook is called before the write, so it never sees
+    # the document an `Edit` or a patch is about to produce. This check reads
+    # the file on disk and closes that gap. Left only on the hub, a fragment
+    # passes in every installed repository and nobody looks again — which is
+    # enforcement that is written down as attached and is not.
     from lint import loud_emphasis
 
     return (stale_index(repo) + dangling_pointers(repo) + misplaced_scope(repo)
@@ -125,7 +133,8 @@ def check(repo: Path) -> list[tuple[str, str]]:
 
 
 def main() -> int:
-    # 출력이 파이프로 가면 기본이 cp949 다. 인코딩을 환경에 안 맡긴다.
+    # Down a pipe the default here is cp949. The encoding is not left to the
+    # environment.
     sys.stdout.reconfigure(encoding="utf-8")
 
     parser = argparse.ArgumentParser(description="대상 저장소의 지식을 검진한다")

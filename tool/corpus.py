@@ -1,4 +1,4 @@
-"""corpus — 대상 저장소의 문서 목록을 만든다. 고르는 것은 에이전트가 한다."""
+"""corpus — build a target repository's document listing. The agent chooses."""
 
 from __future__ import annotations
 
@@ -11,8 +11,9 @@ from pathlib import Path
 HEAD = re.compile(r"^(#{1,3})\s+(.+?)\s*$", re.M)
 SKIP_DIRS = {"node_modules", ".git", "artifacts", "__pycache__"}
 
-# 여기에는 상한이 없다. 목록은 원시 자료이고 원시 자료는 자란다.
-# 무엇을 얼마나 실을지 다듬는 것은 훅의 일이다. 세는 쪽은 있는 것을 다 센다.
+# No ceiling here. A listing is raw material and raw material grows. Trimming
+# what goes in and how much is the hook's job; the side that counts counts
+# everything there is.
 
 
 def summarize(path: Path, root: Path) -> dict:
@@ -36,13 +37,15 @@ DEFAULT_ROOTS = ["docs", "."]
 
 
 def walk(root: Path, roots: list[str]) -> list[Path]:
-    """문서 파일들. `.` 은 저장소 뿌리의 `*.md` 만이고 하위로는 안 내려간다.
+    """The document files. `.` means `*.md` at the repository root and no deeper.
 
-    뿌리에 흩어진 문서를 오래 못 봤다. 이 저장소의 목록이 README.md 한 장이었고
-    SCHEMA·ENFORCEMENT·MAINTENANCE·index 가 전부 빠져 있었다 — 위키가 자기
-    문서를 자기 목록에서 못 보고 있었다.
+    Documents scattered at the root went unseen for a long time. This
+    repository's own listing was a single README.md, with SCHEMA,
+    ENFORCEMENT, MAINTENANCE and index all missing — the wiki could not see
+    its own documents in its own listing.
 
-    같은 파일이 두 root 에 걸릴 수 있으므로 순서를 지키며 중복을 지운다.
+    One file can fall under two roots, so duplicates are removed while the
+    order is kept.
     """
 
     found: list[Path] = []
@@ -66,11 +69,11 @@ def collect(root: Path, roots: list[str]) -> list[dict]:
 
 
 def catalog(docs: list[dict]) -> str:
-    """디렉터리로 묶은 목록. 세션 시작에 이대로 실린다.
+    """The listing grouped by directory, carried at session start exactly as is.
 
-    경로와 제목뿐이다. 8,972자로 109개가 다 들어간다 — 본문을 조금이라도
-    넣으면 그 배가 되고, 목록의 값어치는 "무엇이 있는가" 이지 "무엇이라고
-    적혀 있는가" 가 아니다.
+    Paths and titles, nothing else. All 109 of them fit in 8,972 characters;
+    any amount of body text doubles that, and what a listing is worth is
+    "what exists" rather than "what it says".
     """
 
     from collections import defaultdict
@@ -98,7 +101,8 @@ def load(project: Path) -> dict | None:
 
 
 def main() -> int:
-    # 출력이 파이프로 가면 기본이 cp949 다. 인코딩을 환경에 안 맡긴다.
+    # Down a pipe the default here is cp949. The encoding is not left to the
+    # environment.
     sys.stdout.reconfigure(encoding="utf-8")
 
     parser = argparse.ArgumentParser(description="저장소 문서의 목록을 만든다")

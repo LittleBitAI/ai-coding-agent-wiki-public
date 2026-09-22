@@ -8,7 +8,8 @@ export function Composer({ busy, onSend }: Props) {
   const [text, setText] = useState('')
   const box = useRef<HTMLTextAreaElement>(null)
 
-  // 여러 줄을 붙여넣는 일이 잦다. 내용에 맞춰 자라되 한도를 둔다.
+  // Pasting several lines in is common. It grows with the content, up to a
+  // limit — past that the composer would push the conversation off screen.
   useEffect(() => {
     const el = box.current
     if (!el) return

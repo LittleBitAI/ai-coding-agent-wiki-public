@@ -1,4 +1,5 @@
-"""측정기·배선·검사의 사각지대를 임시 저장소에서 재현한다."""
+"""Reproduce the blind spots of the meters, the wiring and the checks in a
+throwaway repository."""
 
 import json
 import os
@@ -60,10 +61,11 @@ def test_wiring():
         path.write_text(original, encoding="utf-8")
         assert run("apply.py", "--project", project, "--adapter", "example", "--check").returncode == 0
 
-        # 남의 UserPromptSubmit 훅이 앞에 있어도 배선은 멀쩡하다. 드리프트가
-        # 자기 훅을 이름으로 고르면 남의 명령이 `commands[0]` 이 되고, 그
-        # 안의 첫 따옴표 토큰이 "설치된 인터프리터" 로 읽혀 정상 배선에
-        # 드리프트가 뜬다. 게이트가 그것 때문에 떨어진다.
+        # Somebody else's UserPromptSubmit hook sitting in front does not make
+        # the wiring wrong. If the drift check picks its own hook by name,
+        # their command becomes `commands[0]`, the first quoted token in it
+        # reads as "the installed interpreter", and sound wiring reports
+        # drift — which is then what fails the gate.
         theirs = project / "other"
         theirs.mkdir()
         (theirs / "inject.py").write_text("# 남의 것\n", encoding="utf-8")
@@ -75,8 +77,9 @@ def test_wiring():
         path.write_text(json.dumps(settings), encoding="utf-8")
         assert not apply.wiring_drift(project, agents), "남의 훅이 앞에 있다고 드리프트가 아니다"
 
-        # 그 남의 훅이 없는 파일을 가리키면 그때는 말한다. 지우지는 않는다 —
-        # 위키를 옮긴 흔적인지 잠깐 끊긴 공유인지 명령만으로는 모른다.
+        # When that foreign hook points at a file that is not there, it is
+        # reported — never removed. The command alone cannot say whether it is
+        # where the wiki used to live or a share that is offline for a minute.
         (theirs / "inject.py").unlink()
         assert apply.wiring_drift(project, agents), "없는 파일을 가리키는 훅은 말해야 한다"
         path.write_text(original, encoding="utf-8")
@@ -123,10 +126,11 @@ def test_measurement():
         response = run(
             "inject.py", "--adapter", "x", "--project", project,
             payload=json.dumps({"prompt": "시험 🐋", "session_id": "health-test"}, ensure_ascii=False).encode("utf-8"),
-            # 번역을 꺼서 잰다. `trigger_audit.measure` 는 오프라인 재생이라
-            # 번역을 못 하는데 훅은 하므로, 켜 두면 이 단언이 재는 것이
-            # 둘의 단위가 같은가가 아니라 번역이 돌았는가가 된다.
-            # 키만 빼는 것으로는 모자라다 — 캐시가 키보다 먼저 답한다.
+            # Measured with the translation off. `trigger_audit.measure` is
+            # an offline replay and cannot translate while the hook does, so
+            # leaving it on turns this assertion from "are the two in the same
+            # unit" into "did the translation run".
+            # Removing the key is not enough — the cache answers first.
             env={"WIKI_ROOT": str(project), "PYTHONIOENCODING": "cp949",
                  "LOCALAPPDATA": tmp, "GEMINI_API_KEY": "",
                  "TRANSLATE_CACHE": str(project / "translate-cache.sqlite3")},

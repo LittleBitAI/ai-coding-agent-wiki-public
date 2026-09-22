@@ -1,4 +1,4 @@
-"""수확이 줄끝에 흔들리지 않고, 있는 기록을 덮지 않는다."""
+"""Harvesting does not wobble on line endings and never overwrites a record."""
 import sys
 import tempfile
 from pathlib import Path
@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-from harvest import record, triggers_for  # noqa: E402 -- 위의 reconfigure 가 먼저 돌아야 한다
+from harvest import record, triggers_for  # noqa: E402 -- the reconfigure above runs first
 
 BODY = """## 왜 셀을 지우면 안 됐나
 
@@ -25,20 +25,27 @@ def _record(body: str) -> str:
     return record({**PR, "body": body})[1]
 
 
-def test_CRLF_본문도_LF_본문과_같은_기록을_낸다() -> None:
+def test_a_crlf_body_produces_the_same_record_as_an_lf_one() -> None:
+    """GitHub returns CRLF, and the paragraph split is on `\\n\\n`.
+
+    Without normalisation the whole body is one block: `왜` is always empty
+    and `무엇` swallows a truncated copy of everything. PR #95 came out that
+    way.
+    """
+
     lf = _record(BODY)
     crlf = _record(BODY.replace("\n", "\r\n"))
     assert lf == crlf, "줄끝만 다른 같은 본문이 다른 기록을 냈다"
 
 
-def test_이유가_있는_본문은_없다고_적히지_않는다() -> None:
+def test_a_body_that_has_a_reason_is_not_recorded_as_having_none() -> None:
     for body in (BODY, BODY.replace("\n", "\r\n")):
         assert "이 결정의 근거는 기록되지 않았다" not in _record(body)
         assert "혼합 문서" in _record(body)
 
 
-def test_이유가_정말_없으면_없다고_적는다() -> None:
-    """반대쪽 절반. 없는 것을 지어내지 않는지도 같이 못박는다."""
+def test_a_body_with_genuinely_no_reason_is_recorded_as_having_none() -> None:
+    """The other half: it must not invent a reason that is not there."""
     assert "이 결정의 근거는 기록되지 않았다" in _record("한 문단뿐인 본문.")
 
 
@@ -47,7 +54,13 @@ def _what(body: str) -> str:
     return line[len("무엇."):].strip()
 
 
-def test_무엇에_마크다운_제목이_그대로_들어가지_않는다() -> None:
+def test_a_markdown_heading_does_not_land_inside_the_what() -> None:
+    """Records 131 to 135 on 2026-09-10 all read `무엇. ## 결론`.
+
+    Almost every PR body here opens with a markdown heading, so taking the
+    first block as it stands puts the heading in the record.
+    """
+
     """또 실제로 난 사고다. 폴백이 첫 `\\n\\n` 덩어리를 무엇으로 쓰는데
     이 저장소들의 PR 본문은 거의 다 마크다운 제목으로 시작한다. 그래서
     `무엇. ## 결론` 이 그대로 기록이 됐다 -- 2026-09-10 의 131~135 전부.
@@ -60,17 +73,30 @@ def test_무엇에_마크다운_제목이_그대로_들어가지_않는다() -> 
         assert "대조군" in what, f"제목 뒤의 산문이 안 왔다: {what!r}"
 
 
-def test_제목과_본문_사이에_빈_줄이_없어도_산문을_찾는다() -> None:
+def test_prose_is_found_with_no_blank_line_between_heading_and_body() -> None:
+    """Why only the heading *line* is stripped, not the block.
+
+    With no blank line the heading and the body are one block, and dropping
+    the block would take the body with it.
+    """
+
     """제목 줄만 걷어내야 한다. 덩어리째 버리면 이 모양에서 본문까지 잃는다."""
     assert _what("## 결론\n붙어 있는 본문입니다.\n\n둘째 문단.") == "붙어 있는 본문입니다."
 
 
-def test_제목뿐인_본문은_요약이_없다고_적는다() -> None:
-    """걷어낸 뒤 남는 산문이 없으면 지어내지 않는다."""
+def test_a_body_of_nothing_but_headings_records_no_summary() -> None:
+    """With no prose left after the headings are stripped, it invents none."""
     assert "PR 본문에 요약 절이 없다" in _record("## 제목뿐\n\n### 또 제목뿐")
 
 
-def test_짧은_ascii_표지가_낱말_안에서_걸리지_않는다() -> None:
+def test_a_short_ascii_marker_does_not_match_inside_a_word() -> None:
+    """`ci` in `de-ci-sion`, `turn` in `re-turn`, `frame` in `frame-work`.
+
+    A domain brings triggers with it and `inject.py` injects anything with
+    triggers like a rule, so a misclassification surfaces that record in every
+    unrelated session.
+    """
+
     """`ci` 가 `de-ci-sion` 에 걸려 chore 배치 하나가 infra 로 분류됐다.
 
     도메인이 붙으면 트리거도 같이 붙고, `inject.py` 는 트리거가 있으면 규칙처럼
@@ -85,7 +111,14 @@ def test_짧은_ascii_표지가_낱말_안에서_걸리지_않는다() -> None:
         assert triggers == []
 
 
-def test_한글_표지는_아직_합성어_안에서도_걸린다() -> None:
+def test_a_korean_marker_still_matches_inside_a_compound() -> None:
+    """Deliberate, and the limit of the narrowing above.
+
+    A Korean marker routinely appears as a compound with a particle attached,
+    which a regex word boundary does not see. Requiring one would drop markers
+    that really are standing as words, so containment is kept here.
+    """
+
     """고친 것은 ASCII 쪽뿐이다. `프레임` 은 `프레임워크` 안에서 여전히 걸린다.
 
     한글에는 낱말 경계가 없어 같은 방법을 못 쓴다. 조사가 붙는 언어라 오른쪽
@@ -95,8 +128,8 @@ def test_한글_표지는_아직_합성어_안에서도_걸린다() -> None:
     assert triggers_for("프레임워크를 올립니다", "chore/deps")[0] == "vision"
 
 
-def test_낱말로_선_표지는_그대로_걸린다() -> None:
-    """엄격해지느라 진짜 양성을 놓치면 안 된다."""
+def test_a_marker_standing_as_a_word_still_matches() -> None:
+    """Getting stricter must not start missing the real positives."""
     assert triggers_for("CI 를 붙입니다", "feat/ci-pipeline")[0] == "infra"
     assert triggers_for("프레임 동기화", "feat/frame-sync")[0] == "vision"
     assert triggers_for("턴 조립", "feat/turn-assembly")[0] == "api"
@@ -104,7 +137,13 @@ def test_낱말로_선_표지는_그대로_걸린다() -> None:
     assert triggers_for("런처를 고칩니다", "fix/launcher")[0] == "infra"
 
 
-def test_손으로_쓴_기록은_번호가_이름에만_있어도_보인다() -> None:
+def test_a_handwritten_record_is_seen_with_the_number_only_in_its_name() -> None:
+    """Records written by hand follow the naming rule without a `pr:` line.
+
+    Reading only `pr:` misses them, and on 2026-09-17 records 013, 015 and 016
+    were overwritten through that gap.
+    """
+
     """`pr:` 줄만 보면 손으로 쓴 전문이 안 보이고, 캔 기록이 그 자리를 덮는다.
 
     2026-09-17 에 013·015·016 이 그렇게 통째로 날아갔다. 파일 이름의 번호도 읽는다.
@@ -122,7 +161,13 @@ def test_손으로_쓴_기록은_번호가_이름에만_있어도_보인다() ->
         assert sync.recorded(Path(tmp)) == {12, 13}, "이름의 번호와 pr: 줄을 둘 다 읽어야 한다"
 
 
-def test_있는_결정_파일은_절대_안_덮는다() -> None:
+def test_an_existing_decision_file_is_never_overwritten() -> None:
+    """The last stop if the number check is ever wrong again.
+
+    A harvested record is a PR body squeezed into shape; what sits at the same
+    path may be the full text somebody wrote by hand.
+    """
+
     """번호 판정이 또 틀려도 여기서 멈춘다. 사람이 쓴 전문이 그 자리에 있을 수 있다."""
     import sync
 

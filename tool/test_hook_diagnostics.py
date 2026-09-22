@@ -1,4 +1,5 @@
-"""강제 종료되어도 원문 없이 멈춘 위치가 남고 정상 출력은 보존된다."""
+"""Even when killed, where it stopped is recorded without the payload, and a
+normal run's output survives."""
 
 import os
 from pathlib import Path
@@ -8,13 +9,14 @@ import time
 
 import pytest
 
-# 이 파일이 스스로 찍지는 않는다. 그래도 고정한다 — `tool/*.py` 를 예외 없이
-# 보는 것이 `lint.py` 의 이 검사이고, 좁힌 자리가 다음 사고라고 그 검사 자신이
-# 적어 두었다.
+# This file does not print anything itself. The encoding is pinned anyway:
+# `lint.py`'s check looks at every `tool/*.py` without exception, and that
+# check itself records that a narrowed condition is the next incident.
 #
-# 좁혔으면 여기서 놓쳤다. 진짜 노출은 찍는 쪽이 아니라 **자식을 읽는 쪽**에
-# 있었다 — 아래 `text=True` 넷이 로케일로 디코딩해서, 한글을 내보내는
-# `codex_pretool.py` 를 읽다가 cp949 로 죽었다. 그래서 넷 다 인코딩을 적는다.
+# A narrowed condition would have missed it here. The real exposure was not
+# on the printing side but on the side reading a child: the four `text=True`
+# calls below decode by locale, and reading `codex_pretool.py` — which emits
+# Korean — died on cp949. So all four state their encoding.
 sys.stdout.reconfigure(encoding="utf-8")
 
 TOOL = Path(__file__).resolve().parent

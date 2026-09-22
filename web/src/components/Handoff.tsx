@@ -1,18 +1,28 @@
 import { useState } from 'react'
+import { useOverlay } from '@/lib/overlay'
 
-type Props = { text: string; onClose: () => void }
+type Props = { text: string; korean: boolean; onClose: () => void }
 
-/** 다음 세션에 붙일 글. 복사해서 새 터미널에 넣는다. */
-export function Handoff({ text, onClose }: Props) {
+/** The text to hand the next session. Copied, and pasted into a new terminal.
+ *
+ *  Two values, deliberately. What is shown is the Korean overlay; what is
+ *  copied is the original. The prompt carries the last exchange of this
+ *  channel, so with the answers in English the preview was English on a
+ *  screen whose default is Korean — and copying a translation would hand the
+ *  next session a reworded version of its own record. */
+export function Handoff({ text, korean, onClose }: Props) {
   const [copied, setCopied] = useState(false)
+  const [shown] = useOverlay([text], korean)
 
   async function copy() {
     try {
+      // The original, never `shown`.
       await navigator.clipboard.writeText(text)
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     } catch {
-      // 클립보드가 막힌 환경이면 본문을 직접 긁으면 된다.
+      // Where the clipboard is blocked, the body is still there to select by
+      // hand. A failed copy must not leave the person with nothing.
     }
   }
 
@@ -42,7 +52,7 @@ export function Handoff({ text, onClose }: Props) {
         </div>
         <textarea
           readOnly
-          value={text}
+          value={shown}
           className="h-64 w-full resize-y rounded-md border border-border bg-background p-2 font-mono text-[11.5px] leading-snug"
         />
       </div>

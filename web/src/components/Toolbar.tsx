@@ -12,19 +12,24 @@ type Props = {
   options: Options | null
   busy: boolean
   projectBusy: boolean
+  korean: boolean
+  onKorean: (on: boolean) => void
   onChange: (next: { repo: string; model: string; effort: string }) => void
 }
 
-// Radix Select 는 빈 문자열을 값으로 못 쓴다. "기본"(플래그를 안 붙임)을
-// 화면에서는 이 표로 들고, 서버로 보낼 때 다시 빈 문자열로 돌린다.
-// 고른 것을 다시 눌러 해제하면 `null` 이 오므로 그것도 "기본" 으로 친다.
+// A Radix Select cannot use the empty string as a value. "default" — meaning
+// no flag is passed — is carried on screen by this token and turned back into
+// an empty string on the way to the server. Pressing the selected item again
+// deselects it and yields `null`, which counts as "default" too.
 const NONE = '__default__'
 const out = (v: string | null) => (!v || v === NONE ? '' : v)
 const inn = (v: string) => v || NONE
 
 type Item = { value: string; label: string; note?: string }
 
-export function Toolbar({ channel, options, busy, projectBusy, onChange }: Props) {
+export function Toolbar({
+  channel, options, busy, projectBusy, korean, onKorean, onChange,
+}: Props) {
   const pick = (patch: Partial<Channel>) =>
     onChange({
       repo: channel.repo,
@@ -77,16 +82,42 @@ export function Toolbar({ channel, options, busy, projectBusy, onChange }: Props
         disabled={busy || !options}
         onPick={(v) => pick({ effort: out(v) })}
       />
+      <div
+        role="group"
+        aria-label="답변 언어"
+        className="inline-flex gap-0.5 rounded-lg border border-border p-0.5"
+      >
+        {[
+          { on: true, label: '한국어' },
+          { on: false, label: 'English' },
+        ].map((option) => (
+          <button
+            key={option.label}
+            type="button"
+            aria-pressed={korean === option.on}
+            onClick={() => onKorean(option.on)}
+            className={
+              'rounded-md px-2 py-1 text-[11.5px] ' +
+              (korean === option.on
+                ? 'bg-secondary font-medium'
+                : 'text-muted-foreground hover:bg-secondary/60')
+            }
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
       {options?.codex_error && <p role="status" className="w-full text-xs text-destructive">{options.codex_error}</p>}
     </div>
   )
 }
 
-/** 고르는 칸 하나.
+/** One picker.
  *
- *  `SelectValue` 에 표시를 직접 넘긴다. 목록이 서버에서 오는데, 그 전에 한 번
- *  그려지면 Radix 가 고른 값에 맞는 항목을 못 찾아 값 자체를 그대로 띄운다 —
- *  화면에 `__default__` 가 떴다. 라벨을 우리가 들면 그 일이 없다. */
+ *  The label is handed to `SelectValue` directly. The list comes from the
+ *  server, and on a render before it arrives Radix cannot find an item
+ *  matching the selected value and shows the raw value instead —
+ *  `__default__` appeared on screen. Holding the label ourselves stops that. */
 function Picker({
   label,
   width,

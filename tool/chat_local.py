@@ -1,4 +1,7 @@
-"""이 checkout의 설정과 현재 사용자의 실행 파일만 찾는다. 인증 파일은 다루지 않는다."""
+"""Find this checkout's settings and the current user's executables, nothing else.
+
+Credential files are never touched.
+"""
 
 import json
 from pathlib import Path
@@ -20,15 +23,17 @@ def settings():
 
 
 def cli_command(name):
-    """PATH의 CLI를 그대로 사용한다. Windows npm shim은 cmd를 거치지 않는다."""
+    """Use the CLI on PATH as it is. A Windows npm shim does not go through cmd."""
     binary = shutil.which(name)
     if not binary:
         raise FileNotFoundError(f"{name}을 PATH에서 찾지 못했습니다. docs/chat-setup.md의 설치 절차를 확인하세요.")
     path = Path(binary)
     if path.suffix.lower() not in (".cmd", ".bat", ".ps1"):
         return [binary]
-    # shim이 가리키는 실제 실행 파일을 읽는다. js든 네이티브 바이너리든 패키지 구조를 따라간다.
-    # npm.cmd처럼 경로가 여럿이면 마지막 것이 실제로 실행되는 진입점이다.
+    # Read the real executable the shim points at, following the package
+    # layout whether that ends at a js file or a native binary. When there are
+    # several paths, as in `npm.cmd`, the last one is the entry point that
+    # actually runs.
     found = re.findall(r"""node_modules[\\/][^"'\s%]+\.(?:js|cjs|mjs|exe)""",
                        path.read_text(encoding="utf-8", errors="replace"))
     target = path.parent / found[-1].replace("\\", "/") if found else None

@@ -1,4 +1,4 @@
-"""지식 그래프가 무엇을 고아로 세는지 본다."""
+"""What the knowledge graph counts as an orphan."""
 
 import json
 import os
@@ -26,7 +26,7 @@ reads: {reads}
 
 
 def repo(docs: dict[str, str], reads: str = "[]", body: str = "") -> Path:
-    """임시 저장소. `docs` 는 저장소 기준 경로 → 본문."""
+    """A throwaway repository. `docs` maps a repo-relative path to its body."""
 
     root = Path(tempfile.mkdtemp())
     (root / ".wiki").mkdir()
@@ -44,24 +44,25 @@ def repo(docs: dict[str, str], reads: str = "[]", body: str = "") -> Path:
     return root
 
 
-def test_아무도_안_가리키면_고아다():
+def test_pointed_at_by_nobody_is_an_orphan():
     data = repo_graph.build(repo({"docs/a.md": "", "docs/b.md": ""}))
     assert data["counts"]["orphans"] == 2
     assert data["orphans"] == ["docs/a.md", "docs/b.md"]
 
 
-def test_마크다운_링크를_센다():
+def test_a_markdown_link_counts():
     data = repo_graph.build(repo({"docs/a.md": "[비](b.md) 를 보라", "docs/b.md": ""}))
     assert data["orphans"] == ["docs/a.md"]
 
 
-def test_백틱_경로도_센다():
-    # 이 저장소들이 실제로 더 많이 쓰는 모양이다. 안 세면 고아가 부푼다.
+def test_a_backticked_path_counts_too():
+    # The shape these repositories actually use more. Not counting it inflates
+    # the orphan count.
     data = repo_graph.build(repo({"docs/a.md": "`docs/b.md` 를 읽어라", "docs/b.md": ""}))
     assert data["orphans"] == ["docs/a.md"]
 
 
-def test_상대_경로가_가리킨_자리에서_풀린다():
+def test_a_relative_path_resolves_from_where_it_was_written():
     data = repo_graph.build(repo({
         "docs/sub/a.md": "[위](../b.md)",
         "docs/b.md": "",
@@ -69,19 +70,19 @@ def test_상대_경로가_가리킨_자리에서_풀린다():
     assert data["orphans"] == ["docs/sub/a.md"]
 
 
-def test_없는_문서를_가리키는_것은_엣지가_아니다():
+def test_pointing_at_a_missing_document_is_not_an_edge():
     data = repo_graph.build(repo({"docs/a.md": "[없다](docs/없다.md) `또한.md`"}))
     assert data["edges"] == []
     assert data["counts"]["orphans"] == 1
 
 
-def test_바깥_링크는_안_센다():
+def test_an_external_link_does_not_count():
     body = "[깃헙](https://github.com/o/r/blob/main/docs/b.md)"
     data = repo_graph.build(repo({"docs/a.md": body, "docs/b.md": ""}))
     assert data["orphans"] == ["docs/a.md", "docs/b.md"]
 
 
-def test_페이지가_가리키면_고아가_아니고_축을_넘는다고_적힌다():
+def test_a_page_pointing_at_it_makes_it_a_cross_axis_edge():
     data = repo_graph.build(repo({"docs/a.md": ""}, reads="[docs/a.md]"))
     assert data["orphans"] == []
     crossing = [e for e in data["edges"] if e["kind"] == "reads"]
@@ -89,17 +90,19 @@ def test_페이지가_가리키면_고아가_아니고_축을_넘는다고_적�
     assert data["counts"]["read"] == 1
 
 
-def test_자기를_가리켜도_고아다():
+def test_pointing_at_itself_is_still_an_orphan():
     data = repo_graph.build(repo({"docs/a.md": "`docs/a.md` 자기 자신"}))
     assert data["orphans"] == ["docs/a.md"]
 
 
-def test_해시_씨앗이_달라도_같은_파일이_나온다():
-    """커밋되는 산출물이다. 내용이 그대로인데 순서가 흔들리면 diff 를 못 읽는다.
+def test_a_different_hash_seed_produces_the_same_file():
+    """This output is committed. Identical content in a shifting order makes
+    the diff unreadable.
 
-    실제로 집합을 그대로 돌다가 엣지 순서가 실행마다 바뀌었다. 한 프로세스에서
-    두 번 불러서는 못 잡는다 — 문자열 해시는 프로세스마다 정해지므로 같은
-    프로세스 안에서는 언제나 같은 순서가 나온다. 그래서 씨앗을 바꿔 따로 돌린다.
+    Iterating a set directly really did change the edge order from run to
+    run. Calling it twice inside one process cannot catch that: the string
+    hash is fixed per process, so the same process always produces the same
+    order. Hence two separate runs with different seeds.
     """
 
     root = repo({f"docs/{n}.md": "`docs/b.md` `docs/c.md` `docs/a.md`" for n in "abc"})
@@ -114,7 +117,7 @@ def test_해시_씨앗이_달라도_같은_파일이_나온다():
     assert runs[0] == runs[1]
 
 
-def test_목록이_없으면_아무것도_안_만든다():
+def test_with_no_listing_nothing_is_built():
     root = Path(tempfile.mkdtemp())
     (root / ".wiki").mkdir()
     assert repo_graph.build(root) is None

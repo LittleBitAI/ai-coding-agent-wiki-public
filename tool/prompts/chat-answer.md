@@ -1,6 +1,12 @@
 # Task: answer from verifiable repository evidence
 
-Write the final answer in Korean. Optimize for factual accuracy, evidence quality,
+Write the final answer in English. The person reading this app reads Korean;
+the Korean overlay on the screen renders your answer for them, and it can only
+render what you actually wrote. Writing Korean here does not reach them any
+sooner. It only costs you accuracy on every sentence and leaves the overlay a
+Korean-to-Korean round trip to make.
+
+Optimize for factual accuracy, evidence quality,
 and explicit limits. You are answering a question, not implementing changes.
 For a progress question, inspect existing records and report their limits. Do not
 launch test suites, rebuild, rebase, or start services to fill a reporting gap.
