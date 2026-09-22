@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -56,7 +57,15 @@ def script_arg(command: str) -> str | None:
     """
 
     args = ARGS.findall(command)
-    return args[1] if len(args) >= 2 else None
+    if len(args) < 2:
+        return None
+    # `"<python>" "<wiki>/tool/hook.py" <host> <script>` — the user-level form.
+    # The script it dispatches to is the one that counts, and it sits next to
+    # the dispatcher.
+    if Path(args[1].replace("\\", "/")).name == "hook.py":
+        words = command.split(f'"{args[1]}"', 1)[1].split()
+        return str(Path(args[1]).parent / words[1]) if len(words) >= 2 else None
+    return args[1]
 
 
 def runs(command: str, script: str) -> bool:
@@ -209,7 +218,7 @@ def session_entry(python: str, project: str) -> dict:
                 "type": "command",
                 "command": (
                     f'"{python}" "{(HERE / "session_state.py").as_posix()}"'
-                    f' --project "{project}"'
+                    + (f' --project "{project}"' if project else "")
                 ),
                 # Was 15. `report()` translates decisions, plans and document
                 # titles in one batch. Even batched, the first session is the
@@ -230,7 +239,7 @@ def sync_entry(python: str, project: str) -> dict:
                 "type": "command",
                 "command": (
                     f'"{python}" "{(HERE / "sync.py").as_posix()}"'
-                    f' --project "{project}" --quiet'
+                    + (f' --project "{project}"' if project else "") + " --quiet"
                 ),
                 "timeout": 30,
                 "statusMessage": "위키 갱신",
@@ -369,9 +378,25 @@ def merge(
     return changes
 
 
-def configure(settings: dict, project: Path, adapter: str | None, python: str, agent: str) -> list[str]:
-    """One wiring definition, shared by the install and the drift check."""
-    where = project.as_posix()
+def dispatched(entry: dict, agent: str) -> dict:
+    """The same hook, called through `hook.py` so it works out the project itself."""
+
+    hook = entry["hooks"][0]
+    script = script_arg(hook["command"])
+    name = Path(script).name
+    hook["command"] = hook["command"].replace(
+        f'"{(HERE / name).as_posix()}"', f'"{(HERE / "hook.py").as_posix()}" {agent} {name}', 1)
+    return entry
+
+
+def configure(settings: dict, project: Path | None, adapter: str | None, python: str, agent: str) -> list[str]:
+    """One wiring definition, shared by the install and the drift check.
+
+    `project=None` is the user-level install: no project in any command, every
+    hook going through `hook.py`.
+    """
+    where = project.as_posix() if project else ""
+    wrap = (lambda entry: dispatched(entry, agent)) if project is None else (lambda entry: entry)
     denies, scripts = declared()
     if agent == "codex":
         entries = [
@@ -384,6 +409,7 @@ def configure(settings: dict, project: Path, adapter: str | None, python: str, a
         ]
         changes = []
         for event, mark, entry in entries:
+            wrap(entry)
             if sys.platform == "win32":
                 # Codex runs this through PowerShell, where a quoted path
                 # without `&` in front of it is just a string.
@@ -400,11 +426,11 @@ def configure(settings: dict, project: Path, adapter: str | None, python: str, a
         changes = merge(
             settings,
             list(denies),
-            hook_entry(python, adapter, where),
-            {s: script_entry(python, s, "진행 설명 확인") for s in scripts},
-            session_entry(python, where),
-            sync_entry(python, where),
-            continuation_entry(python),
+            wrap(hook_entry(python, adapter, where)),
+            {s: wrap(script_entry(python, s, "진행 설명 확인")) for s in scripts},
+            wrap(session_entry(python, where)),
+            wrap(sync_entry(python, where)),
+            wrap(continuation_entry(python)),
         )
 
     return changes
@@ -421,9 +447,108 @@ def installed_agents(project: Path) -> list[str] | None:
     return agents
 
 
+# The hosts' user-level settings. `setup_agents --global` writes here, and
+# every checkout on the machine — a fresh worktree included — reads them.
+# `WIKI_USER_HOME` stands in for the home directory, so a test never reads —
+# or is judged against — the machine's real install.
+_HOME = os.environ.get("WIKI_USER_HOME")
+
+
+def user_files(agent: str) -> list[Path]:
+    """Every user-level settings file the host may start from on this machine.
+
+    Claude has one. Codex has one per `CODEX_HOME`, and Orca gives each Codex
+    account its own home under `%APPDATA%/orca/codex-accounts/` — a session
+    Orca opens never reads `~/.codex` at all.
+    """
+
+    home = Path(_HOME or Path.home())
+    if agent == "claude":
+        return [home / ".claude/settings.json"]
+    homes = [home / ".codex"]
+    if not _HOME:
+        if os.environ.get("CODEX_HOME"):
+            homes.append(Path(os.environ["CODEX_HOME"]))
+        orca = Path(os.environ.get("APPDATA") or home / "AppData/Roaming") / "orca/codex-accounts"
+        homes += sorted(orca.glob("*/home"))
+    seen: dict[str, Path] = {}
+    for path in homes:
+        if path.is_dir() or path == home / ".codex":
+            seen.setdefault(os.path.normcase(str(path.resolve())), path / "hooks.json")
+    return list(seen.values())
+
+
+def read_json(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+def drift(settings: dict, project: Path | None, agent: str) -> list[str]:
+    """What installing would change in these settings, plus what it cannot fix."""
+
+    settings = json.loads(json.dumps(settings))
+    # Only our own hooks. If somebody else's command becomes `commands[0]`,
+    # the first quoted token in it is read as "the installed interpreter", and
+    # perfectly sound wiring reports drift — which is what then fails the gate.
+    commands = [h.get("command", "") for g in settings.get("hooks", {}).get("UserPromptSubmit", [])
+                for h in g.get("hooks", []) if runs(h.get("command", ""), HOOK_MARK)]
+    # The executable is a per-machine value. Keeping the installed interpreter
+    # avoids reporting a path difference as drift.
+    quoted = re.match(r'(?:&\s*)?"([^"]+)"', commands[0]) if commands else None
+    python = quoted[1] if quoted else sys.executable
+    adapter_match = re.search(r'--adapter\s+(?:"([^"]+)"|(\S+))', commands[0]) if commands else None
+    adapter = (adapter_match[1] or adapter_match[2]) if adapter_match else (project.name if project else None)
+    changes = configure(settings, project, adapter, python, agent)
+    for event, groups in settings.get("hooks", {}).items():
+        for group in groups:
+            if group.get("matcher") not in (None, "", "*") and any(
+                HERE.as_posix() in h.get("command", "") for h in group.get("hooks", [])
+            ):
+                changes.append(f"{event} 위키 훅에 제한 matcher가 있다")
+    return changes + stale(settings)
+
+
+def user_wired(agent: str) -> bool:
+    """Is this wiki fully attached in every user-level file of this host?"""
+
+    try:
+        return all(not drift(read_json(path), None, agent) for path in user_files(agent))
+    except (OSError, ValueError, TypeError, AttributeError, KeyError):
+        return False
+
+
+OWNED = (HOOK_MARK, SESSION_MARK, SYNC_MARK, CONTINUATION_MARK, "codex_pretool.py")
+
+
+def unwire(settings: dict) -> list[str]:
+    """Drop this wiki's per-project hooks, for a machine that moved to the user level.
+
+    Only commands that run this wiki's own scripts directly. The dispatcher's
+    entries, and everybody else's, stay.
+    """
+
+    owned = {*OWNED, *declared()[1]}
+    changes: list[str] = []
+    for event, groups in (settings.get("hooks") or {}).items():
+        for group in list(groups):
+            kept = [h for h in group.get("hooks", [])
+                    if "hook.py" in str(h.get("command", ""))
+                    or not any(runs(str(h.get("command", "")), s) for s in owned)]
+            if len(kept) != len(group.get("hooks", [])):
+                changes.append(f"{event} 프로젝트 훅 제거")
+                group["hooks"] = kept
+            if not group.get("hooks"):
+                groups.remove(group)
+    return changes
+
+
 def wiring_drift(project: Path, agents: tuple[str, ...] | None = None) -> list[tuple[str, str]]:
     """Read-only. The adapter's expected agents, or for an unregistered project,
-    whichever agents are installed."""
+    whichever agents are installed.
+
+    A host wired at the user level is judged there, and a per-project install
+    left beside it is the drift: the dispatcher steps aside for it, so the
+    checkout keeps its old absolute paths.
+    """
     project = project.resolve()
     paths = {"claude": project / ".claude/settings.json", "codex": project / ".codex/hooks.json"}
     if agents is None:
@@ -439,27 +564,12 @@ def wiring_drift(project: Path, agents: tuple[str, ...] | None = None) -> list[t
     findings = []
     for agent in agents:
         try:
-            settings = json.loads(paths[agent].read_text(encoding="utf-8")) if paths[agent].exists() else {}
-            # Only our own hooks. If somebody else's command becomes
-            # `commands[0]`, the first quoted token in it is read as "the
-            # installed interpreter", and perfectly sound wiring reports
-            # drift — which is what then fails the gate.
-            commands = [h.get("command", "") for g in settings.get("hooks", {}).get("UserPromptSubmit", [])
-                        for h in g.get("hooks", []) if runs(h.get("command", ""), HOOK_MARK)]
-            # The executable is a per-machine value. Keeping the installed
-            # interpreter avoids reporting a path difference as drift.
-            quoted = re.match(r'(?:&\s*)?"([^"]+)"', commands[0]) if commands else None
-            python = quoted[1] if quoted else sys.executable
-            adapter_match = re.search(r'--adapter\s+(?:"([^"]+)"|(\S+))', commands[0]) if commands else None
-            adapter = (adapter_match[1] or adapter_match[2]) if adapter_match else project.name
-            changes = configure(settings, project, adapter, python, agent)
-            for event, groups in settings.get("hooks", {}).items():
-                for group in groups:
-                    if group.get("matcher") not in (None, "", "*") and any(
-                        HERE.as_posix() in h.get("command", "") for h in group.get("hooks", [])
-                    ):
-                        changes.append(f"{event} 위키 훅에 제한 matcher가 있다")
-            changes += stale(settings)
+            settings = read_json(paths[agent])
+            if user_wired(agent):
+                changes = [f"{c} — 전역 설치가 있다. `setup_agents.py --global --project` 로 걷어라"
+                           for c in unwire(json.loads(json.dumps(settings)))]
+            else:
+                changes = drift(settings, project, agent)
             findings.extend(("훅 배선 드리프트", f"{agent}: {change}") for change in changes)
         except (OSError, ValueError, TypeError, AttributeError, KeyError):
             findings.append(("훅 배선 드리프트", f"{agent}: 설정을 읽을 수 없다"))

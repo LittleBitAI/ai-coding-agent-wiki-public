@@ -12,6 +12,7 @@ import pytest
 
 import chat
 import chat_channels
+import chat_local
 import chat_session
 import mirror
 import translate
@@ -152,6 +153,9 @@ def test_provider_switch_and_config_validation(tmp_path):
         assert response.status_code == 200 and not response.json()["kept"]
         response = client.post("/api/config/wiki", json={"repo": "sample", "model": "codex:another-model"})
         assert response.json()["kept"] and response.json()["effort"] == "high"
+        # A Claude name typed by hand goes through; a shell-shaped one does not.
+        assert client.post("/api/config/wiki", json={"repo": "sample", "model": "claude-opus-5-5"}).status_code == 200
+        assert client.post("/api/config/wiki", json={"repo": "sample", "model": "opus; rm -rf"}).status_code == 400
         with patch.object(chat, "_busy", {"wiki"}):
             assert client.post("/api/reset/wiki").status_code == 409
 
@@ -224,8 +228,8 @@ for line in sys.stdin:
 
     chat_channels.codex_models.cache_clear()
     try:
-        with patch.object(chat_channels.subprocess, "Popen", spawn), \
-             patch.object(chat_channels, "cli_command", side_effect=lambda name: [name]):
+        with patch.object(chat_local.subprocess, "Popen", spawn), \
+             patch.object(chat_local, "cli_command", side_effect=lambda name: [name]):
             models = chat_channels.codex_models()
             assert [m["id"] for m in models] == ["codex:first", "codex:second"]
             assert models[0]["efforts"][-1]["id"] == "ultra"

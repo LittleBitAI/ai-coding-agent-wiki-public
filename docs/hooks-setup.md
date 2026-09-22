@@ -77,6 +77,39 @@ Raising the wiki version means reviewing the changes, replacing
 `--allow-dirty-wiki` is for development checks and does not substitute for
 verifying a released version.
 
+## 3a. Install once for the whole machine
+
+The per-project install above writes gitignored files into one checkout, with
+that checkout's absolute path in every command. A new worktree — which is
+what Orca opens after you restart a session for a CLI update — has none of
+them, and Codex drops its trust in a hook whenever the entry changes (a new
+timeout is enough). Both look like "the update broke the hooks".
+
+The user-level install writes the hooks once into `~/.claude/settings.json`
+and into every Codex home on the machine (`~/.codex`, `CODEX_HOME`, and each
+Orca account under `%APPDATA%/orca/codex-accounts/`). Every command calls
+`tool/hook.py`, which works out the project from the session's directory: a
+worktree is served by its main clone's `.wiki/adapter.toml`, and a directory
+with no adapter passes silently. Run it from the stable wiki checkout:
+
+```powershell
+python tool/setup_agents.py --global --trust-codex --project "../example-project"
+```
+
+`--project` (repeatable) removes that checkout's old per-project hooks, which
+would otherwise keep the job — the dispatcher steps aside for them.
+`--trust-codex` records trust only for commands that run this checkout's
+`hook.py`, through Codex's own config writer; leave it out to review them in
+Codex's `/hooks` instead.
+
+After updating Claude Code, Codex or this wiki, run the check. It re-reads
+every user-level file, reports Codex hooks waiting for trust, and runs the
+SessionStart hook once from each `--project` (or the current folder):
+
+```powershell
+python tool/setup_agents.py --global --check
+```
+
 ## 4. Confirm on the real host
 
 A successful `--check` is a settings-wiring check. That is different from the

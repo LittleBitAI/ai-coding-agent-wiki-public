@@ -1,7 +1,7 @@
 """Install a checkout's rules through `apply.py`.
 
-Downloads nothing and changes no host's trust setting — both are the person's
-decision, made in the CLI's own interface. Everything printed is read by
+Downloads nothing and changes no host's trust setting unless the person asks
+with `--trust-codex`, and then only for this wiki's own dispatcher. Everything printed is read by
 whoever is running the install, so those strings are Korean.
 """
 
@@ -180,19 +180,131 @@ def install(project, choice, check, allow_dirty=False):
           "이 명령은 실제 자동 이벤트·선택형 질문 UI를 검증하지 않습니다. 새 세션에서 별도로 확인하세요.")
 
 
+def codex_hooks(home, trust):
+    """This wiki's hooks as one Codex home sees them, trusted first if asked.
+
+    Codex runs a hook only while `hooks.state` holds the hash of exactly that
+    entry, and any change to the entry — a timeout, a path — drops it back to
+    "modified". Trust is still the person's call: only `--trust-codex` writes
+    it, only for commands that run this checkout's `hook.py`, and through
+    Codex's own config writer rather than by editing its file.
+    """
+    from chat_local import CodexServer
+
+    mine = f'"{(WIKI / "tool/hook.py").as_posix()}"'
+    with CodexServer(env={"CODEX_HOME": str(home)}, cwd=WIKI) as server:
+        listed = lambda: [h for d in server.request("hooks/list", {"cwds": [str(WIKI)]})["data"]  # noqa: E731
+                          for h in d["hooks"] if mine in h["command"]]
+        hooks = listed()
+        pending = {h["key"]: {"trusted_hash": h["currentHash"]} for h in hooks if h["trustStatus"] != "trusted"}
+        if trust and pending:
+            server.request("config/batchWrite", {"edits": [
+                {"keyPath": "hooks.state", "value": pending, "mergeStrategy": "upsert"}]})
+            hooks = listed()
+    return hooks
+
+
+def probe(project):
+    """Run the SessionStart hook the way a host would, from `project`."""
+    done = subprocess.run(
+        [sys.executable, str(WIKI / "tool/hook.py"), "claude", "session_state.py"],
+        input=json.dumps({"cwd": str(project)}), capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=60,
+    )
+    return "additionalContext" in done.stdout
+
+
+def install_global(choice, check, projects, trust):
+    """Attach the wiki once, at each host's user level.
+
+    Every checkout on the machine — a worktree Orca opens after an update
+    included — reads these files, and `hook.py` works out the project per
+    call. The commands carry nothing that changes with the project, so the
+    entries, and with them Codex's trust hashes, stay put.
+    """
+    if sys.version_info < (3, 11):
+        raise ValueError("Python 3.11 이상이 필요합니다. 새 Python으로 이 명령을 다시 실행하세요.")
+    for path in (WIKI, Path(sys.executable)):
+        if any(char in str(path) for char in ('"', '$', '`', '\n', '\r')):
+            raise ValueError(f"셸 인용이 지원하지 않는 문자가 경로에 있습니다: {path}")
+    os.environ["WIKI_ROOT"] = str(WIKI)
+    from apply import configure, read_json, unusable, unwire, user_files
+
+    missing = unusable(sys.executable)
+    if missing:
+        raise ValueError(f"{sys.executable} 이 {', '.join(missing)} 를 못 읽습니다. "
+                         "requirements-hooks.txt 를 설치한 Python으로 다시 실행하세요.")
+    agents = tuple(SETTINGS) if choice == "both" else (choice,)
+    broken = []
+    for agent in agents:
+        binary = shutil.which(agent)
+        if not binary:
+            raise ValueError(f"{agent} CLI를 PATH에서 찾지 못했습니다.")
+        print(run([binary, "--version"], WIKI).strip())
+        run([*hook_shell(agent), "exit 0"], WIKI)
+        for path in user_files(agent):
+            settings = read_json(path)
+            changes = configure(settings, None, None, sys.executable, agent)
+            if check:
+                broken += [f"{path}: {change}" for change in changes]
+            elif changes:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
+                                encoding="utf-8", newline="\n")
+                print(f"썼다: {path} ({len(changes)}건)")
+            else:
+                print(f"그대로: {path}")
+        for project in projects:
+            path = project / SETTINGS[agent]
+            if not path.exists():
+                continue
+            settings = read_json(path)
+            changes = unwire(settings)
+            if check:
+                broken += [f"{path}: 옛 프로젝트 훅이 남았다" for _ in changes[:1]]
+            elif changes:
+                path.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
+                                encoding="utf-8", newline="\n")
+                print(f"옛 프로젝트 훅을 걷었다: {path} ({len(changes)}건)")
+        if agent == "codex":
+            for path in user_files("codex"):
+                hooks = codex_hooks(path.parent, trust and not check)
+                untrusted = [h["key"] for h in hooks if h["trustStatus"] != "trusted"]
+                print(f"Codex {path.parent}: 위키 훅 {len(hooks)}개, 미신뢰 {len(untrusted)}개")
+                if untrusted:
+                    broken.append(f"{path.parent}: Codex 신뢰 대기 {len(untrusted)}개. "
+                                  "`--trust-codex` 로 신뢰하거나 Codex /hooks 에서 검토하세요")
+    for project in projects or [Path.cwd()]:
+        state = "주입됨" if probe(project) else "주입 없음 (adapter 없는 저장소거나 훅 실패)"
+        print(f"SessionStart 시험 — {project}: {state}")
+    if broken:
+        raise ValueError("전역 배선이 어긋났습니다:\n- " + "\n- ".join(broken))
+    print("전역 배선 검사 완료. CLI를 업데이트한 뒤에는 `--global --check` 만 다시 돌리세요.")
+
+
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--project", type=Path, default=Path.cwd(), help="대상 checkout (기본: 현재 폴더)")
+    parser.add_argument("--project", type=Path, action="append",
+                        help="대상 checkout (기본: 현재 폴더). --global 에서는 옛 프로젝트 훅을 걷을 곳, 여러 번 줄 수 있다")
     parser.add_argument("--agent", choices=("claude", "codex", "both"), default="both")
     parser.add_argument("--check", action="store_true", help="설정 쓰기 없이 선택한 호스트의 배선만 검사")
+    parser.add_argument("--global", dest="everywhere", action="store_true",
+                        help="사용자 단위 설정에 한 번 건다. 모든 checkout과 작업트리가 읽는다")
+    parser.add_argument("--trust-codex", action="store_true",
+                        help="--global 과 함께. 이 위키의 hook.py 를 부르는 Codex 훅만 신뢰로 기록한다")
     parser.add_argument("--allow-dirty-wiki", action="store_true", help="미커밋 위키 개발 검증 전용. SHA 일치는 여전히 필수")
     args = parser.parse_args()
+    projects = [p.expanduser().resolve() for p in args.project or []]
     try:
-        install(args.project.expanduser().resolve(), args.agent, args.check, args.allow_dirty_wiki)
+        if args.everywhere:
+            install_global(args.agent, args.check, projects, args.trust_codex)
+            return 0
+        install((projects or [Path.cwd().resolve()])[0], args.agent, args.check, args.allow_dirty_wiki)
         return 0
-    except (OSError, ValueError, TypeError, AttributeError, KeyError, subprocess.TimeoutExpired) as error:
+    except (OSError, ValueError, TypeError, AttributeError, KeyError, RuntimeError,
+            subprocess.TimeoutExpired) as error:
         print(f"설치 실패: {error}", file=sys.stderr)
         return 2
 

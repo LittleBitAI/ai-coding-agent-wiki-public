@@ -7,15 +7,11 @@ Korean.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import lru_cache
-import json
 from pathlib import Path
-import queue
-import subprocess
-import threading
+import re
 import time
 
-from chat_local import cli_command, settings
+from chat_local import CodexServer, settings
 
 WIKI = Path(__file__).resolve().parent.parent
 LOCAL = settings()
@@ -31,6 +27,10 @@ MODELS = [
     {"id": "fable", "label": "Fable", "note": ""},
 ]
 
+# What a hand-typed Claude model name may look like: `opus`, `claude-opus-5-5`,
+# `opus[1m]`. It reaches the CLI as one argument, never through a shell.
+CLAUDE_MODEL = re.compile(r"[a-z][a-z0-9.\-]{0,63}(\[1m\])?")
+
 # The five `--effort` takes. Further up thinks longer and costs more.
 EFFORTS = [
     {"id": "", "label": "기본", "note": "CLI 가 정한 것"},
@@ -44,53 +44,25 @@ EFFORTS = [
 ANSWER_PROMPT = (WIKI / "tool/prompts/chat-answer.md").read_text(encoding="utf-8")
 
 
-@lru_cache(maxsize=1)
+# How long a fetched Codex model list is served before asking again. Held for
+# the life of the server, a Codex update that brought new models stayed
+# invisible until the chat was restarted.
+CODEX_MODELS_TTL = 300
+_codex_cache: dict = {}
+
+
 def codex_models() -> list[dict]:
     """The installed Codex's public model list.
 
-    Cached for the life of the server. A failure is not cached — caching one
-    would make a CLI that came back up look permanently broken.
+    A failure is not cached — caching one would make a CLI that came back up
+    look permanently broken.
     """
-    proc = subprocess.Popen(
-        [*cli_command("codex"), "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
-    )
-    replies: queue.Queue = queue.Queue()
-
-    def read():
-        for line in proc.stdout:
-            try:
-                replies.put(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-        replies.put(None)
-
-    reader = threading.Thread(target=read, daemon=True)
-    reader.start()
-    deadline = time.monotonic() + 25
-
-    def request(rid, method, params):
-        proc.stdin.write(json.dumps({"id": rid, "method": method, "params": params}) + "\n")
-        proc.stdin.flush()
+    if _codex_cache and time.monotonic() - _codex_cache["at"] < CODEX_MODELS_TTL:
+        return _codex_cache["models"]
+    models, cursor = [], None
+    with CodexServer() as server:
         while True:
-            try:
-                message = replies.get(timeout=max(0, deadline - time.monotonic()))
-            except queue.Empty as exc:
-                raise RuntimeError("Codex 모델 목록 응답 시간 초과") from exc
-            if message is None:
-                raise RuntimeError("Codex 모델 목록 연결 종료")
-            if message.get("id") == rid:
-                if "error" in message:
-                    raise RuntimeError(str(message["error"]))
-                return message["result"]
-
-    try:
-        request(1, "initialize", {"clientInfo": {"name": "wiki-chat", "version": "0.1.0"}})
-        proc.stdin.write('{"method":"initialized"}\n')
-        proc.stdin.flush()
-        models, cursor, rid = [], None, 2
-        while True:
-            result = request(rid, "model/list", {"limit": 100, "includeHidden": False, "cursor": cursor})
+            result = server.request("model/list", {"limit": 100, "includeHidden": False, "cursor": cursor})
             for model in result["data"]:
                 default = model["defaultReasoningEffort"]
                 models.append({
@@ -105,20 +77,13 @@ def codex_models() -> list[dict]:
             cursor = result.get("nextCursor")
             if not cursor:
                 break
-            rid += 1
-        if not models:
-            raise RuntimeError("Codex가 사용 가능한 모델을 반환하지 않았습니다")
-        return models
-    finally:
-        proc.stdin.close()
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=5)
-        reader.join(timeout=1)
-        proc.stdout.close()
+    if not models:
+        raise RuntimeError("Codex가 사용 가능한 모델을 반환하지 않았습니다")
+    _codex_cache.update(at=time.monotonic(), models=models)
+    return models
+
+
+codex_models.cache_clear = _codex_cache.clear
 
 
 def projects() -> list[dict]:
