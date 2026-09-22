@@ -99,19 +99,25 @@ def build(decisions: int, rule_budget: int | None, repo_budget: int | None,
          "--project", str(project)],
         input=json.dumps({"prompt": f"{WORD} 를 쓴다", "session_id": "t"}),
         capture_output=True, text=True, encoding="utf-8",
-        # The key is removed so the translation fails open. Left in, every
+        # The key is emptied so the translation fails open. Left in, every
         # call to this helper makes a real Gemini round trip: the suite gets
         # slow, flaky and expensive. The English rendering itself is measured
         # below, by the dedicated tests, with a fake translator.
         #
-        # The cache is redirected to a temporary one too. Removing the key is
+        # Emptied rather than removed. `translate.api_key` falls through to
+        # the `.env` beside the repository when the variable is absent
+        # entirely, so removing it picks a real key up from there and makes
+        # the very round trip this comment exists to prevent. An empty value
+        # is the explicit "run with no key".
+        #
+        # The cache is redirected to a temporary one too. Emptying the key is
         # not enough on its own: the cache answers before the key is
         # consulted, so an earlier run having cached this utterance makes the
         # translation succeed without one. That is how this test went red once.
-        env={k: v for k, v in os.environ.items() if k != "GEMINI_API_KEY"}
-        | {
+        env=dict(os.environ) | {
             "WIKI_ROOT": str(wiki),
             "PYTHONIOENCODING": "utf-8",
+            "GEMINI_API_KEY": "",
             "TRANSLATE_CACHE": str(root / "translate-cache.sqlite3"),
         },
     )

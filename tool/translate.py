@@ -74,6 +74,20 @@ CACHE = Path(
 )
 GLOSSARY = HERE / "markers" / "glossary.toml"
 
+# The key lives beside the repository rather than in the machine's environment.
+# A user-level `GEMINI_API_KEY` is inherited by every process on the box, and
+# here that meant one Gemini bill covering a voice agent, an image pipeline and
+# this translator with no way to tell which of them spent what — the question
+# this file could not answer about itself. `ROOT` comes from `__file__`, so a
+# hook fired from inside someone else's repository still finds this file.
+#
+# An environment variable still wins when one is set, because that is how CI
+# and a throwaway shell hand over a key. Set but empty is not the same as
+# unset: it is an explicit "run with no key", which is what the suites use to
+# keep a test run from making real requests. Falling through to `.env` there
+# would put the money back that those tests exist to save.
+ENV = ROOT / ".env"
+
 KO_EN = "ko->en"
 EN_KO = "en->ko"
 
@@ -213,10 +227,26 @@ def instruction(direction: str, fixed: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
+def api_key() -> str:
+    """The key to spend on one request, or `""` when there is none to spend."""
+
+    given = os.environ.get("GEMINI_API_KEY")
+    if given is not None:
+        return given.strip()
+    try:
+        for line in ENV.read_text(encoding="utf-8").splitlines():
+            name, sep, value = line.partition("=")
+            if sep and name.strip() == "GEMINI_API_KEY":
+                return value.strip().strip("\"'")
+    except Exception:
+        pass
+    return ""
+
+
 def _ask(system: str, batch: list[str], seconds: float) -> list[str] | None:
     """One request. `None` for every failure, so callers keep their originals."""
 
-    key = os.environ.get("GEMINI_API_KEY")
+    key = api_key()
     if not key or seconds <= 0 or not batch:
         return None
     body = json.dumps(

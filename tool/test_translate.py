@@ -111,10 +111,44 @@ def test_a_duplicated_or_renumbered_placeholder_keeps_the_original(
 
 
 def test_a_missing_key_returns_the_input_unchanged(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """`ENV` is pointed away on purpose. This file makes no requests.
+
+    Deleting the variable stopped being enough the moment the key could also
+    live beside the repository: on a machine that has one, this test read it
+    and made the live call the module docstring promises never happens.
+    """
+
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr(T, "ENV", tmp_path / "absent")
     assert T.ko_to_en("훅이 조용히 죽는다") == "훅이 조용히 죽는다"
+
+
+def test_the_key_comes_from_the_env_file_only_when_no_variable_is_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Beside the repository first, and empty is an answer rather than a gap.
+
+    A machine-wide variable is inherited by every other project on the box,
+    which is how one Gemini bill came to cover four of them. `.env` keeps this
+    key where the thing spending it lives. An explicitly empty variable has to
+    stay empty: it is how a test says "make no requests", and reading the file
+    there would hand a real key to a suite written to stay offline.
+    """
+
+    envfile = tmp_path / ".env"
+    envfile.write_text('OTHER=x\nGEMINI_API_KEY="from-file"\n', encoding="utf-8")
+    monkeypatch.setattr(T, "ENV", envfile)
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    assert T.api_key() == "from-file"
+
+    monkeypatch.setenv("GEMINI_API_KEY", "from-variable")
+    assert T.api_key() == "from-variable"
+
+    monkeypatch.setenv("GEMINI_API_KEY", "")
+    assert T.api_key() == ""
 
 
 def test_a_cached_entry_is_served_without_a_key(
