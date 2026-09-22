@@ -294,7 +294,15 @@ def loud_emphasis(wiki: Path = WIKI) -> list[tuple[str, str]]:
             # UTF-8 로 적는 것이 규칙이므로, 못 읽은 것 자체가 발견이다.
             found.append(("강조 과다", f"`{name}`: 읽지 못했다 ({type(error).__name__})"))
             continue
-        for line in markdown_emphasis.findings(text):
+        try:
+            lines = markdown_emphasis.findings(text)
+        except Exception as error:  # noqa: BLE001
+            # 훅은 여기서 통과시키고 화면에 말한다. 게이트는 반대로 멈춰야
+            # 하지만, 크래시는 "이 파일 하나가 검사를 못 받았다" 가 아니라
+            # "나머지 파일도 아무도 안 봤다" 가 된다. 발견으로 바꿔 계속 본다.
+            found.append(("강조 과다", f"`{name}`: 검사가 실패했다 ({type(error).__name__})"))
+            continue
+        for line in lines:
             found.append(("강조 과다", f"`{name}`: {line.lstrip('- ')}"))
     return found
 

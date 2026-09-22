@@ -61,7 +61,7 @@ python tool/apply.py --project ~/PycharmProjects/<name> --write    # 쓴다
 
 `tool/setup_agents.py`는 환경·위키 버전·호스트를 검사한 다음 기존 `apply.py`로 설치·검증한다.
 프로젝트명이나 형제 폴더명에 의존하지 않으며 adapter를 허브에 복사하지 않는다.
-Python 3.11 이상·PyYAML·Git과 선택한 호스트 CLI가 필요하다.
+Python 3.11 이상·Git·`requirements-hooks.txt`의 패키지와 선택한 호스트 CLI가 필요하다.
 Windows의 이 위키 명령은 Claude에 Git Bash, Codex에 PowerShell을 사용한다.
 
 ```powershell

@@ -1,6 +1,7 @@
 """checkout의 규칙을 apply.py로 설치한다. 다운로드·호스트 신뢰 변경은 하지 않는다."""
 
 import argparse
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,11 @@ import sys
 
 WIKI = Path(__file__).resolve().parents[1]
 SETTINGS = {"claude": ".claude/settings.json", "codex": ".codex/hooks.json"}
+
+# requirements-hooks.txt 의 배포 이름과 임포트 이름. pip 이름으로는 설치 여부를
+# 못 물어보므로 짝이 필요하다. 이 표가 그 파일과 어긋나면 시험이 잡는다 —
+# 그게 이 표를 손으로 두 번 적는 것을 감당할 수 있게 만드는 유일한 이유다.
+NEEDED = {"PyYAML": "yaml", "markdown-it-py": "markdown_it"}
 
 
 def run(command, cwd):
@@ -57,11 +63,13 @@ def install(project, choice, check, allow_dirty=False):
         raise ValueError("Python 3.11 이상이 필요합니다. 새 Python으로 이 명령을 다시 실행하세요.")
     import tomllib
 
-    try:
-        import yaml  # noqa: F401 -- apply.py를 읽기 전에 해결 방법을 안내한다.
-    except ImportError as error:
-        raise ValueError("PyYAML이 없습니다. 프로젝트 가상환경에서 python -m pip install PyYAML 후 재실행하세요. "
-                         "공용 위키 README의 팀원 설치 안내를 참고하세요.") from error
+    missing = [name for name, module in NEEDED.items()
+               if importlib.util.find_spec(module) is None]
+    if missing:
+        raise ValueError(
+            f"hooks가 쓰는 패키지가 없습니다: {', '.join(missing)}. "
+            f"프로젝트 가상환경에서 python -m pip install -r "
+            f"{wiki / 'requirements-hooks.txt'} 후 재실행하세요.")
     if not (wiki / "tool/apply.py").is_file():
         raise ValueError(f"위키 경로에 tool/apply.py가 없습니다: {wiki}. 완전한 위키 checkout을 사용하세요.")
     for path in (project, wiki, Path(sys.executable)):

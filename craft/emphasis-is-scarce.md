@@ -41,8 +41,8 @@ judged at its `Move to:` destination, not at the file it came from.
 
 | What it refuses | Whole document | Fragment |
 | --- | --- | --- |
-| Two or more bolds on one line | yes | yes |
-| A bold run spanning a line break | yes | yes |
+| Two or more bolds in one paragraph | yes | yes |
+| A bold run holding a line break | yes | yes |
 | A bolded paragraph label | yes | no |
 | Over 15% of prose lines | yes | no |
 
@@ -72,11 +72,19 @@ next round found the next one. An inline lexer written a clause at a time
 inside a style hook is not a job that ends, and each wrong clause either let
 the rule be bypassed or refused correct prose.
 
-`markdown-it-py` is in `requirements-dev.txt` and is not optional. When it is
-missing the hook lets the write through and says so on screen, and `lint`
-raises it as a finding. Any other way the parse can fail reports the same way.
-A check that cannot run and reports nothing reads exactly like a check that ran
-and found nothing — that is how a gate stays green with the rule switched off.
+Counted per paragraph, never per line. Inline tokens carry no source position,
+and reconstructing one by stepping on each soft break is wrong: a code span's
+newlines are already spaces by then, so every line it swallowed is lost and
+every count after it is off. A block is a unit the parser hands over exactly,
+so that is the unit.
+
+`markdown-it-py` is in `requirements-hooks.txt`, the one file that says what a
+hooks install needs and which the chat and dev requirements both pull in. It is
+not optional. When it is missing the hook lets the write through and says so on
+screen, and `lint` raises it as a finding. Any other way the parse can fail
+reports the same way. A check that cannot run and reports nothing reads exactly
+like a check that ran and found nothing — that is how a gate stays green with
+the rule switched off.
 
 The parse is CommonMark with the table rule on, and nothing else. The
 `gfm-like` preset would also turn on linkify, which needs `linkify-it-py` — an

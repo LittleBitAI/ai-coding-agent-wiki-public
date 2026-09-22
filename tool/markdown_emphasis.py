@@ -38,12 +38,13 @@ MOVE_TO = re.compile(r"^\*\*\* Move to: (.+)$", re.M)
 # bypassed or refused correct prose.
 #
 # So the parser answers. `markdown-it-py` is a strict CommonMark
-# implementation, declared in requirements-dev.txt. It is not optional: a
+# implementation, declared in requirements-hooks.txt -- the one file that
+# says what a hooks install needs. It is not optional: a
 # missing parser is reported, never quietly skipped, because "every `.md`
 # passes" must not be able to mean "no `.md` was read".
 MISSING = (
     "markdown-it-py 가 없어 강조 검사를 돌리지 못했다 — "
-    "`python -m pip install -r requirements-dev.txt`"
+    "`python -m pip install -r requirements-hooks.txt`"
 )
 
 _PARSER: object | None = None
@@ -99,7 +100,7 @@ REASON = (
     "- Paragraph labels stay plain (`규칙.` `어겼을 때.` `목표.`). House style.\n"
     "- One or two bolds per document, only where the text reads wrong without\n"
     "- Commands, paths, identifiers and status names take backticks, not bold\n"
-    "- Two on a line, or one spanning a line break, is unreadable in the source\n"
+    "- Two in a paragraph, or one holding a line break, is unreadable in source\n"
     "- For the rest, fix the sentence instead of propping it up with emphasis\n"
     "\n"
     "`skills/write-markdown` holds the procedure."
@@ -123,17 +124,25 @@ def blanked(text: str) -> str:
     return "\n".join(lines)
 
 
-def scan(text: str) -> tuple[dict[int, int], int, list[str], int]:
-    """`(bolds per line, bolds crossing a line break, labels, prose lines)`.
+def scan(text: str) -> tuple[int, int, list[str], int, int]:
+    """`(crowded blocks, bolds holding a line break, labels, prose lines, bolds)`.
 
     Only what a reader reads as prose gets here. A fence, a table and inline
     code carry no emphasis tokens of their own, so nothing inside them is
     counted without a single rule about any of them being written here.
+
+    Counted per block, never per line. Inline children carry no source
+    positions, and the obvious reconstruction — start at the block's first line
+    and step on every soft break — is wrong: a code span's newlines are already
+    spaces by the time it is a token, so every line it swallowed is lost and
+    every count after it is off. A review round found both faces of that, a
+    missed line-spanning bold and two bolds from different lines reported as
+    one crowded line. What ends it is not counting lines. A block is a unit the
+    parser hands over exactly.
     """
 
     md = parser()
-    per_line: dict[int, int] = {}
-    wrapped = 0
+    crowded = bolds = wrapped = 0
     labels: list[str] = []
     rows: set[int] = set()
     table = 0
@@ -145,38 +154,52 @@ def scan(text: str) -> tuple[dict[int, int], int, list[str], int]:
         if token.type != "inline" or token.map is None or table:
             continue
         rows.update(range(token.map[0], token.map[1]))
-        # Inline children carry no line numbers, so count them off the block's
-        # first line: a soft or hard break is exactly one line down, and a code
-        # span's own newlines are already spaces by the time it is a token.
-        line = token.map[0]
-        opens: list[list] = []
-        # True until something printable has been seen on this block, which is
+        children = token.children or []
+        # Lines the block covers that no break accounts for. Those went into a
+        # code span, which is the one place a newline disappears from the token
+        # stream — it is how `**`+"`a\nb`"+`**` looks like a single-line bold.
+        breaks = sum(1 for c in children if c.type in ("softbreak", "hardbreak"))
+        folded = max(0, token.map[1] - token.map[0] - 1 - breaks)
+
+        here = 0
+        opens: list[dict] = []
+        # True until something printable has been seen in this block, which is
         # what makes a bold run a label rather than mid-sentence emphasis.
         first = True
-        for child in token.children or []:
+        for child in children:
             if child.type in ("softbreak", "hardbreak"):
-                line += 1
+                for frame in opens:
+                    frame["broken"] = True
                 first = False
             elif child.type == "strong_open":
-                opens.append([line, [], first])
+                opens.append({"parts": [], "opened": first, "broken": False,
+                              "code": False})
                 first = False
             elif child.type == "strong_close" and opens:
-                start, parts, opened = opens.pop()
-                if start == line:
-                    per_line[start] = per_line.get(start, 0) + 1
-                else:
+                frame = opens.pop()
+                here += 1
+                if frame["broken"] or (frame["code"] and folded):
                     wrapped += 1
-                inner = "".join(parts)
-                if opened and LABEL.match(inner):
+                inner = "".join(frame["parts"])
+                if frame["opened"] and LABEL.match(inner):
                     labels.append(inner)
                 if opens:
-                    opens[-1][1].append(inner)
+                    opens[-1]["parts"].append(inner)
+            elif child.type == "html_inline":
+                # A tag is not what the reader sees. Joining its source into
+                # the label text made `**<span>Rule.</span>**` stop matching.
+                first = False
             elif child.content:
                 for frame in opens:
-                    frame[1].append(child.content)
+                    frame["parts"].append(child.content)
+                    if child.type == "code_inline":
+                        frame["code"] = True
                 if child.content.strip():
                     first = False
-    return per_line, wrapped, labels, len(rows)
+        bolds += here
+        if here > 1:
+            crowded += 1
+    return crowded, wrapped, labels, len(rows), bolds
 
 
 def findings(text: str, whole: bool = True) -> list[str]:
@@ -196,20 +219,18 @@ def findings(text: str, whole: bool = True) -> list[str]:
     if parser() is None:
         return []
 
-    per_line, wrapped, labels, rows = scan(text)
+    crowded, wrapped, labels, rows, bold = scan(text)
 
     found = []
     if whole and labels:
         found.append(f"- 문단 라벨을 굵게 했다 ({len(labels)}곳): {labels[0]} …")
 
-    twice = sum(1 for count in per_line.values() if count > 1)
-    if twice:
-        found.append(f"- 한 줄에 굵게가 둘 이상인 줄이 {twice}개 있다")
+    if crowded:
+        found.append(f"- 한 문단에 굵게가 둘 이상인 문단이 {crowded}개 있다")
 
     if wrapped:
-        found.append(f"- 줄바꿈을 건너뛰는 굵게가 {wrapped}곳 있다")
+        found.append(f"- 줄바꿈을 품은 굵게가 {wrapped}곳 있다")
 
-    bold = sum(per_line.values()) + wrapped
     if whole and bold >= MIN_BOLD and rows >= MIN_LINES:
         share = bold / rows
         if share > LIMIT:

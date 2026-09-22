@@ -76,22 +76,60 @@ def test_bold_opening_a_wrapped_line_is_not_a_label() -> None:
     assert blocked(text) is None
 
 
-def test_two_bolds_on_one_line_are_refused() -> None:
+def test_two_bolds_in_one_paragraph_are_refused() -> None:
     text = CLEAN.replace(
         "여기서 하나만 **정말 중요한 것**을 짚는다.",
         "여기서 **이것**과 **저것**을 짚는다.",
     )
     why = blocked(text)
-    assert why and "한 줄에 굵게가 둘 이상" in why
+    assert why and "한 문단에 굵게가 둘 이상" in why
 
 
-def test_bold_across_a_line_break_is_refused() -> None:
+def test_bold_holding_a_line_break_is_refused() -> None:
     text = CLEAN.replace(
         "여기서 하나만 **정말 중요한 것**을 짚는다.",
         "여기서 하나만 **정말\n중요한 것**을 짚는다.",
     )
     why = blocked(text)
-    assert why and "줄바꿈을 건너뛰는" in why
+    assert why and "줄바꿈을 품은" in why
+
+
+def test_a_code_span_cannot_hide_the_line_break(tmp_path: Path) -> None:
+    """A newline folded into a code span is still a newline inside the bold.
+
+    `code_inline` content has its newlines replaced by spaces, so the token
+    stream shows none — which is how `**`+"`a\\nb`"+`**` passed as a
+    single-line bold, and how two bolds from different lines were reported as
+    one crowded line. The block's own map says how many lines it covers, and
+    the difference is what a code span swallowed.
+    """
+
+    tick = chr(96)
+    hidden = "**" + tick + "code\nspan" + tick + "**"
+    why = blocked(hidden, tool="Edit", path="docs/nowhere.md")
+    assert why and "줄바꿈을 품은" in why
+
+    apart = "**one** " + tick + "code\nspan" + tick + " **two**"
+    why = blocked(apart, tool="Edit", path="docs/nowhere.md")
+    assert why and "한 문단에 굵게가 둘 이상" in why
+
+    # And the ordinary shape still passes: one bold per paragraph, no folding.
+    assert blocked("**one** here\n\nand **two** there\n") is None
+
+
+def test_an_inline_tag_is_not_part_of_the_label(tmp_path: Path) -> None:
+    """The label is what the reader sees, so a tag's source is not in it.
+
+    Joining every child's content put `<span>` into the text `LABEL` matched
+    against, and a label wrapped in inline HTML stopped being a label in both
+    the hook and lint.
+    """
+
+    import markdown_emphasis
+
+    labelled = "**<span>규칙.</span>** 훅은 세션을 멈추지 않는다.\n"
+    assert markdown_emphasis.scan(labelled)[2] == ["규칙."]
+    assert blocked(CLEAN.replace("규칙. 훅은", "**<span>규칙.</span>** 훅은"))
 
 
 def test_density_over_the_limit_is_refused() -> None:
@@ -134,7 +172,7 @@ def test_a_fragment_is_judged_only_on_what_needs_no_context() -> None:
     assert blocked("**규칙.** 한 줄이다.\n", path=missing, tool="Edit") is None
 
     why = blocked("여기 **이것**과 **저것**이 있다.\n", path=missing, tool="Edit")
-    assert why and "한 줄에 굵게가 둘 이상" in why
+    assert why and "한 문단에 굵게가 둘 이상" in why
 
 
 def test_a_patch_is_judged_at_its_destination() -> None:
@@ -445,7 +483,7 @@ def test_the_parser_answers_not_a_regex() -> None:
 
 
 def test_the_parser_needs_no_undeclared_extra() -> None:
-    """The check must work with exactly what requirements-dev.txt installs.
+    """The check must work with exactly what requirements-hooks.txt installs.
 
     `gfm-like` turns on linkify, and linkify needs `linkify-it-py` — an extra
     of markdown-it-py that a plain requirement does not pull in. Where it is
@@ -506,6 +544,60 @@ def test_a_broken_parse_is_not_a_silent_pass() -> None:
     assert answer is not None
     assert "permissionDecision" not in json.dumps(answer)
     assert "RuntimeError" in answer["systemMessage"]
+
+
+def test_the_official_install_provides_the_parser() -> None:
+    """Declaring it in a dev-only file left the supported install without it.
+
+    `docs/hooks-setup.md` installs one package list on the target machine's
+    interpreter. A parser named anywhere else is a parser that machine does not
+    get, and the hook then fails open there — wired, reported as enforced,
+    never once firing. So one file says what a hooks install needs, and this
+    holds the three readers of it together: the file, `setup_agents.NEEDED`
+    which refuses to install without them, and the documents that name it.
+    """
+
+    import setup_agents
+
+    root = HERE.parent
+    declared = {
+        line.split("=")[0].split(">")[0].split("<")[0].split(";")[0].strip()
+        for line in (root / "requirements-hooks.txt").read_text(
+            encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith(("#", "-"))
+    }
+    assert declared == set(setup_agents.NEEDED), (declared, setup_agents.NEEDED)
+    assert "markdown-it-py" in declared, "강조 훅이 쓰는 파서가 설치 목록에 없다"
+
+    # The chat and dev installs must inherit it rather than restate it.
+    assert "-r requirements-hooks.txt" in (
+        root / "requirements-chat.txt").read_text(encoding="utf-8")
+
+    for doc in ("docs/hooks-setup.md", "README.md"):
+        assert "requirements-hooks.txt" in (root / doc).read_text(
+            encoding="utf-8"), f"{doc} 가 설치 목록을 안 가리킨다"
+
+
+def test_the_install_refuses_when_a_hook_package_is_missing(tmp_path) -> None:
+    """`install()` stops rather than wiring a hook that cannot run."""
+
+    import setup_agents
+
+    real = setup_agents.importlib.util.find_spec
+
+    def hidden(name, *args, **kwargs):
+        return None if name == "markdown_it" else real(name, *args, **kwargs)
+
+    setup_agents.importlib.util.find_spec = hidden
+    try:
+        setup_agents.install(tmp_path, "claude", check=True)
+    except ValueError as error:
+        assert "markdown-it-py" in str(error)
+        assert "requirements-hooks.txt" in str(error)
+    else:
+        raise AssertionError("파서가 없는데 설치가 통과했다")
+    finally:
+        setup_agents.importlib.util.find_spec = real
 
 
 def test_a_missing_parser_is_said_out_loud(monkeypatch, tmp_path) -> None:
