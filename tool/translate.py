@@ -15,11 +15,13 @@ a guarantee.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 import time
 import tomllib
@@ -76,14 +78,19 @@ TOKEN = re.compile(rf"{OPEN}(\d+){CLOSE}")
 # fenced block's inner backticks get masked one at a time and the fence itself
 # never matches.
 SPANS = (
-    re.compile(r"\A---\n.*?\n---\n", re.S),     # YAML front matter: triggers live here
-    re.compile(r"```.*?```", re.S),             # fenced code
-    re.compile(r"<!--.*?-->", re.S),            # the source markers inject.py plants
-    re.compile(r"\[\[[^\]\n]*\]\]"),            # wiki links: the slug keys graph.json
-    re.compile(r"\]\([^)\n]*\)"),               # markdown link destinations
-    re.compile(r"`[^`\n]+`"),                   # inline code, paths, identifiers
-    re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}"),  # slots that apply.py fills
+    ("front_matter", re.compile(r"\A---\n.*?\n---\n", re.S)),  # triggers live here
+    ("fence", re.compile(r"```.*?```", re.S)),
+    ("comment", re.compile(r"<!--.*?-->", re.S)),   # the markers inject.py plants
+    ("wikilink", re.compile(r"\[\[[^\]\n]*\]\]")),  # the slug keys graph.json
+    ("linkdest", re.compile(r"\]\([^)\n]*\)")),
+    ("code", re.compile(r"`[^`\n]+`")),             # commands, paths, identifiers
+    ("slot", re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")),  # apply.py fills these
 )
+
+# Category names a manifest entry may waive for a rewritten page. Waiving one
+# exempts that category alone; everything else is still compared, because a
+# page whose rule was inverted still must not lose its commands or its links.
+KINDS = tuple(name for name, _ in SPANS) + ("keep_korean",)
 
 
 def glossary() -> tuple[tuple[str, ...], dict[str, str], str]:
@@ -104,22 +111,48 @@ def glossary() -> tuple[tuple[str, ...], dict[str, str], str]:
     return keep, fixed, hashlib.sha256(raw).hexdigest()[:12]
 
 
-def protect(text: str, keep: tuple[str, ...] = ()) -> tuple[str, list[str]]:
-    """Lift every span the model must not see out of `text`."""
+def _mask(text: str, keep: tuple[str, ...]) -> tuple[str, list[str], list[str]]:
+    """`(masked, spans, kinds)`. `kinds[i]` is the category of `spans[i]`."""
 
     spans: list[str] = []
+    kinds: list[str] = []
+    kind = ""
 
     def take(match: re.Match[str]) -> str:
         spans.append(match.group(0))
+        kinds.append(kind)
         return f"{OPEN}{len(spans) - 1}{CLOSE}"
 
-    for pattern in SPANS:
+    for kind, pattern in SPANS:
         text = pattern.sub(take, text)
+    kind = "keep_korean"
     # Longest first, so a term that contains another does not get cut in half.
     for term in sorted(keep, key=len, reverse=True):
         if term:
             text = re.sub(re.escape(term), take, text)
-    return text, spans
+    return text, spans, kinds
+
+
+def protect(text: str, keep: tuple[str, ...] = ()) -> tuple[str, list[str]]:
+    """Lift every span the model must not see out of `text`."""
+
+    masked, spans, _ = _mask(text, keep)
+    return masked, spans
+
+
+def by_kind(text: str, keep: tuple[str, ...] = ()) -> dict[str, list[str]]:
+    """Every protected span, bucketed by category, for comparing two versions.
+
+    Order inside a bucket is document order, which is what makes a moved link
+    read as a difference. That is deliberate: a translation reorders sentences,
+    not commands.
+    """
+
+    _masked, spans, kinds = _mask(text, keep)
+    out: dict[str, list[str]] = {name: [] for name in KINDS}
+    for span, kind in zip(spans, kinds):
+        out[kind].append(span)
+    return out
 
 
 def intact(text: str, count: int) -> bool:
@@ -322,14 +355,216 @@ def en_to_ko(text: str, deadline: float | None = None) -> str:
     return translate([text], EN_KO, deadline)[0]
 
 
+# --------------------------------------------------------------------------
+# `--check`: hold a translation against the original it was made from.
+#
+# The original lives in git, not in a snapshot directory. `raw/` is ignored, so
+# a snapshot is absent from every other clone, and a comparison that only works
+# on one machine is not a gate.
+# --------------------------------------------------------------------------
+
+BASELINE = ROOT / "docs" / "translation-baseline.json"
+REVIEW = ROOT / "raw" / "translate-review.md"
+
+# Written by hand in Korean and never translated, so they are not targets.
+SKIP = ("docs/plans/",)
+
+SCOPES = ("operator", "craft", ".wiki")
+SHA = re.compile(r"\A[0-9a-f]{40}\Z")
+
+
+def original(commit: str, path: str) -> str | None:
+    """The pinned original, read out of history. `None` when it is not there.
+
+    Bytes on purpose. A byte-exact comparison is the whole point of this check,
+    and `text=True, errors="replace"` would quietly turn a mismatch into a match.
+    """
+
+    done = subprocess.run(
+        ["git", "-C", str(ROOT), "show", f"{commit}:{path}"],
+        capture_output=True,
+        check=False,
+    )
+    if done.returncode != 0:
+        return None
+    try:
+        return done.stdout.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def baseline(path: Path) -> tuple[dict[str, dict], list[str]]:
+    """`({output: entry}, problems)`. A malformed manifest is a failure."""
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        rows = data["entries"]
+    except Exception as error:
+        return {}, [f"{path}: 읽을 수 없다 ({type(error).__name__})"]
+
+    entries: dict[str, dict] = {}
+    problems: list[str] = []
+    for row in rows:
+        name = str(row.get("output") or "")
+        kind = str(row.get("kind") or "")
+        where = name or "<output 없음>"
+        if not name or kind not in ("translation", "rewrite", "new"):
+            problems.append(f"{where}: output 과 kind(translation|rewrite|new) 가 있어야 한다")
+            continue
+        if kind != "new":
+            if not str(row.get("source") or ""):
+                problems.append(f"{where}: {kind} 에는 source 가 있어야 한다")
+            if not SHA.match(str(row.get("commit") or "")):
+                # A branch name or a short sha moves. The point of pinning is
+                # that the thing compared against cannot change under the check.
+                problems.append(f"{where}: commit 은 40자리 전체 SHA 여야 한다")
+        waived = row.get("allow") or []
+        if waived and kind != "rewrite":
+            problems.append(f"{where}: allow 는 rewrite 에서만 쓴다")
+        if any(k not in KINDS for k in waived):
+            problems.append(f"{where}: allow 는 {list(KINDS)} 중에서만 고른다")
+        if waived and not str(row.get("why") or "").strip():
+            problems.append(f"{where}: allow 를 쓰면 why 에 이유를 적는다")
+        entries[name] = row
+    return entries, problems
+
+
+def links(text: str) -> list[str]:
+    return [s[2:-2].strip() for s in by_kind(text)["wikilink"]]
+
+
+def inspect(entry: dict, keep: tuple[str, ...], root: Path | None) -> list[str]:
+    """Everything wrong with one translated file. Empty means it is sound."""
+
+    name = str(entry["output"])
+    produced = ROOT / name
+    if not produced.exists():
+        return [f"{name}: 산출물이 없다"]
+    made = produced.read_text(encoding="utf-8")
+    if not made.strip():
+        return [f"{name}: 산출물이 비었다"]
+
+    found = []
+    for slug in links(made):
+        if not any((ROOT / scope / f"{slug}.md").exists() for scope in SCOPES):
+            found.append(f"{name}: 깨진 링크 [[{slug}]]")
+
+    if entry["kind"] == "new":
+        return found  # written in English from the start; there is no original
+
+    source = str(entry["source"])
+    was = original(str(entry["commit"]), source)
+    if was is None and root is not None:
+        spare = root / source
+        was = spare.read_text(encoding="utf-8") if spare.exists() else None
+    if was is None:
+        return found + [f"{name}: 원문을 못 읽는다 ({entry['commit'][:12]}:{source})"]
+
+    waived = set(entry.get("allow") or ())
+    before, after = by_kind(was, keep), by_kind(made, keep)
+    for kind in KINDS:
+        if kind in waived:
+            continue
+        if kind == "keep_korean":
+            lost = [t for t in set(before[kind]) if t not in after[kind]]
+            if lost:
+                found.append(f"{name}: 보존 용어가 사라졌다 — {', '.join(sorted(lost))}")
+        elif before[kind] != after[kind]:
+            found.append(
+                f"{name}: {kind} 가 원문과 다르다 "
+                f"(원문 {len(before[kind])}개, 산출물 {len(after[kind])}개)"
+            )
+    return found
+
+
+def targets(given: list[str]) -> list[str]:
+    """Expand directories and globs to repo-relative Markdown paths."""
+
+    out: list[str] = []
+    for raw in given:
+        base = (ROOT / raw) if not Path(raw).is_absolute() else Path(raw)
+        found = sorted(base.rglob("*.md")) if base.is_dir() else sorted(
+            ROOT.glob(raw)
+        ) or ([base] if base.exists() else [])
+        for path in found:
+            name = path.resolve().relative_to(ROOT).as_posix()
+            if not name.startswith(SKIP) and path.suffix == ".md":
+                out.append(name)
+    return sorted(dict.fromkeys(out))
+
+
+def check(given: list[str], manifest: Path, root: Path | None, samples: int) -> int:
+    keep, _fixed, _version = glossary()
+    entries, problems = baseline(manifest)
+
+    chosen = targets(given)
+    if not chosen:
+        # Silence is the failure this guards against: a gate that checked
+        # nothing exits 0 and reads exactly like a gate that checked everything.
+        problems.append("검사 대상이 없다. 경로가 비었거나 전부 제외됐다")
+
+    for name in chosen:
+        if name not in entries:
+            problems.append(f"{name}: manifest 에 없다. 빠뜨린 것과 새 문서를 구별할 수 없다")
+        else:
+            problems += inspect(entries[name], keep, root)
+
+    print(f"# translate --check — 대상 {len(chosen)}개, manifest {len(entries)}건")
+    if root is not None:
+        print("\n**`--source-root` 로 돌렸다. 배포 게이트 통과로 세지 않는다.**")
+    print()
+    for line in problems:
+        print(f"- {line}")
+    if not problems:
+        print("결함 없음.")
+
+    if samples > 0 and chosen:
+        review(chosen[:samples])
+    return 1 if problems else 0
+
+
+def review(names: list[str]) -> None:
+    """Back-translate a few files so a person can read what the meaning became.
+
+    Never part of the exit code. Whether meaning survived is a judgement, and
+    a machine that claimed to have made it would only hide that nobody did.
+    """
+
+    made = [(ROOT / n).read_text(encoding="utf-8") for n in names]
+    back = translate(made, EN_KO, time.monotonic() + 120)
+    body = ["# 표본 역번역 — 사람이 읽는 자리다", ""]
+    for name, english, korean in zip(names, made, back):
+        body += [f"## {name}", "", "### 영어 산출물", "", english,
+                 "", "### 되돌린 한국어", "", korean, ""]
+    try:
+        REVIEW.parent.mkdir(parents=True, exist_ok=True)
+        REVIEW.write_text("\n".join(body), encoding="utf-8")
+        print(f"\n표본 역번역 {len(names)}건 → `{REVIEW.relative_to(ROOT).as_posix()}`")
+    except Exception as error:
+        print(f"\n표본 역번역을 못 썼다: {type(error).__name__}")
+
+
 def main() -> int:
     # Output is a pipe more often than not, and the default there is cp949.
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stdin.reconfigure(encoding="utf-8")
 
-    direction = EN_KO if "--en-to-ko" in sys.argv[1:] else KO_EN
-    rest = [a for a in sys.argv[1:] if not a.startswith("--")]
-    text = " ".join(rest) if rest else sys.stdin.read()
+    parser = argparse.ArgumentParser(description="번역과 그 검사")
+    parser.add_argument("paths", nargs="*")
+    parser.add_argument("--check", action="store_true", help="산출물을 원문과 대조한다")
+    parser.add_argument("--manifest", type=Path, default=BASELINE)
+    parser.add_argument("--source-root", type=Path,
+                        help="커밋 전 작업 검사용 대체 원문. 게이트 통과로 안 센다")
+    parser.add_argument("--review", type=int, default=0, metavar="N",
+                        help="표본 N건을 역번역해 사람이 읽을 파일에 적는다")
+    parser.add_argument("--en-to-ko", action="store_true")
+    args = parser.parse_args()
+
+    if args.check:
+        return check(args.paths, args.manifest, args.source_root, args.review)
+
+    direction = EN_KO if args.en_to_ko else KO_EN
+    text = " ".join(args.paths) if args.paths else sys.stdin.read()
     print(translate([text], direction, time.monotonic() + 30)[0])
     return 0
 
