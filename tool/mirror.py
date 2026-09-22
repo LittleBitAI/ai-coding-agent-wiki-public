@@ -462,6 +462,26 @@ def render(records: list[dict], host: str, translator=T.translate) -> list[str]:
     ]
 
 
+# How many bytes behind the read position to keep as proof. One poll's worth
+# of re-reading, and it happens once per pass.
+SEAM = 64
+
+
+def seam(path: Path, offset: int) -> bytes:
+    """The bytes just before `offset`, as the file holds them now.
+
+    The first bytes of the file cannot do this job: every record in a session
+    log opens with the same keys, so a rewritten file matches on its opening
+    for far longer than any prefix worth reading. The bytes at the seam are
+    the ones that were actually just consumed, and a rewrite changes them.
+    """
+
+    start = max(0, offset - SEAM)
+    with path.open("rb") as fh:
+        fh.seek(start)
+        return fh.read(offset - start)
+
+
 def follow(pick, session: Path | None = None, poll: float = POLL, announce=None):
     """Yield one batch of records per pass, `[]` when there is nothing new.
 
@@ -480,12 +500,12 @@ def follow(pick, session: Path | None = None, poll: float = POLL, announce=None)
 
     if announce is None:
         announce = lambda path: print(f"── {path.name}", flush=True)  # noqa: E731
-    path, offset, tail = session, 0, b""
+    path, offset, tail, read = session, 0, b"", b""
     while True:
         if path is None or not path.exists():
             found = pick()
             if found != path:
-                path, offset, tail = found, 0, b""
+                path, offset, tail, read = found, 0, b"", b""
                 if path is not None:
                     announce(path)
         if path is None:
@@ -495,18 +515,26 @@ def follow(pick, session: Path | None = None, poll: float = POLL, announce=None)
 
         try:
             size = path.stat().st_size
+            # Two ways the file underneath stops being the file already read.
+            # It shrinks, which the size catches. Or it is rewritten between
+            # polls with *more* content than was read — and then the size says
+            # "grown", the read resumes in the middle of content nobody has
+            # seen, and everything before that point is gone with nothing to
+            # say so. The size cannot tell those apart; the bytes that were
+            # just read still sitting where they were read from can.
+            moved = read and seam(path, offset) != read
         except OSError:
             path = None
             yield []
             continue
 
-        if size < offset:
-            offset, tail = 0, b""
+        if size < offset or moved:
+            offset, tail, read = 0, b"", b""
         if size == offset:
             if session is None:
                 found = pick()
                 if found is not None and found != path:
-                    path, offset, tail = found, 0, b""
+                    path, offset, tail, read = found, 0, b"", b""
                     announce(path)
                     continue
             yield []
@@ -522,6 +550,8 @@ def follow(pick, session: Path | None = None, poll: float = POLL, announce=None)
             path = None
             yield []
             continue
+
+        read = (read + chunk)[-SEAM:]
 
         # Split the bytes, then decode whole lines. A poll lands wherever the
         # writer happened to be, which is routinely inside a Korean character —

@@ -271,6 +271,36 @@ def test_a_read_that_lands_inside_a_korean_character_does_not_break_it(tmp_path)
     assert [record["content"] for record in second] == ["가"]
 
 
+def test_a_file_rewritten_larger_between_polls_is_read_from_the_top(tmp_path):
+    """A grown size is not proof the file grew.
+
+    Rotation and a rewrite at the same path both replace what was already
+    read. If the replacement is longer than the old offset the size says
+    "appended", the read resumes in the middle of content it has never seen,
+    and everything before that point is gone with nothing to say so. The
+    opening bytes do not move while a log is appended to, which is what makes
+    them the answer the size cannot give.
+    """
+
+    log = tmp_path / "session.jsonl"
+    said = lambda text: json.dumps(  # noqa: E731
+        {"type": "queue-operation", "operation": "enqueue", "content": text}
+    ) + "\n"
+
+    log.write_text(said("old"), encoding="utf-8")
+    steps = M.follow(lambda: log, log, poll=0, announce=lambda _p: None)
+    first = next(steps)
+
+    log.write_text(said("replaced, and deliberately much longer than what was there"),
+                   encoding="utf-8")
+    second = next(steps)
+
+    assert [r["content"] for r in first] == ["old"]
+    assert [r["content"] for r in second] == [
+        "replaced, and deliberately much longer than what was there"
+    ]
+
+
 def test_codex_prints_the_same_things():
     records = [
         codex({"type": "UserMessage", "content": [{"type": "text", "text": "진행해라"}]}),

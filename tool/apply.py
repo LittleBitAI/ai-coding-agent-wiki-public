@@ -35,8 +35,22 @@ SYNC_MARK = "sync.py"
 CONTINUATION_MARK = "declared_continuation.py"
 
 # The quoted arguments of a hook command. Our own writer emits
-# `"<python>" "<wiki>/tool/<script>"`, so the paths are always quoted.
+# `"<python>" "<wiki>/tool/<script>"`, optionally behind `& ` for PowerShell
+# and followed by flags, so the script is always the second quoted argument.
 ARGS = re.compile(r'"([^"]*)"')
+
+
+def script_arg(command: str) -> str | None:
+    """The argument our writer puts the script in, or `None`.
+
+    The position is the point. Scanning every quoted argument answers "does
+    this command mention the path" and a command can mention it as data —
+    `"python" "audit.py" --watch "<wiki>/tool/inject.py"` is somebody else's
+    hook watching our file, and reading it as ours overwrote their hook.
+    """
+
+    args = ARGS.findall(command)
+    return args[1] if len(args) >= 2 else None
 
 
 def runs(command: str, script: str) -> bool:
@@ -64,17 +78,16 @@ def runs(command: str, script: str) -> bool:
     `stale` reports them instead and the person decides.
     """
 
-    mine = (HERE / script).resolve()
-    for arg in ARGS.findall(command):
-        where = Path(arg.replace("\\", "/"))
-        if where.name != script or not where.is_absolute():
-            continue
-        try:
-            if where.resolve() == mine:
-                return True
-        except OSError:
-            continue
-    return False
+    arg = script_arg(command)
+    if arg is None:
+        return False
+    where = Path(arg.replace("\\", "/"))
+    if where.name != script or not where.is_absolute():
+        return False
+    try:
+        return where.resolve() == (HERE / script).resolve()
+    except OSError:
+        return False
 
 
 def stale(settings: dict) -> list[str]:
@@ -95,20 +108,21 @@ def stale(settings: dict) -> list[str]:
     for groups in (settings.get("hooks") or {}).values():
         for group in groups:
             for entry in group.get("hooks", []):
-                command = str(entry.get("command", ""))
-                for arg in ARGS.findall(command):
-                    where = Path(arg.replace("\\", "/"))
-                    if where.name not in owned or not where.is_absolute():
+                arg = script_arg(str(entry.get("command", "")))
+                if arg is None:
+                    continue
+                where = Path(arg.replace("\\", "/"))
+                if where.name not in owned or not where.is_absolute():
+                    continue
+                try:
+                    if where.exists() or where.resolve() == (HERE / where.name).resolve():
                         continue
-                    try:
-                        if where.exists() or where.resolve() == (HERE / where.name).resolve():
-                            continue
-                    except OSError:
-                        continue
-                    found.append(
-                        f"훅이 없는 파일을 가리킨다: {where.as_posix()}. "
-                        "이 위키를 옮겼다면 그 항목을 지워라. 남의 훅이면 그대로 둬라"
-                    )
+                except OSError:
+                    continue
+                found.append(
+                    f"훅이 없는 파일을 가리킨다: {where.as_posix()}. "
+                    "이 위키를 옮겼다면 그 항목을 지워라. 남의 훅이면 그대로 둬라"
+                )
     return found
 
 

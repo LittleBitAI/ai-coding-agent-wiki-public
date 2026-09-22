@@ -235,6 +235,10 @@ def main() -> int:
              False, "대상 프로젝트의 상대경로 훅"),
             ('"python" "tool/korean_progress.py"', "korean_progress.py",
              False, "상대경로 — 지운 이름이어도 남의 것"),
+            # 우리 경로를 *데이터로* 넘기는 남의 훅. 따옴표 인자를 전부 훑으면
+            # 이것이 우리 것이 되고, `put_hook` 이 남의 audit.py 훅을 덮는다.
+            (f'"C:/Python/python.exe" "C:/project/audit.py" --watch "{here}/inject.py"',
+             "inject.py", False, "우리 경로를 인자로 받는 남의 훅"),
             (f'"py" "{here}/inject.py" --adapter x', "sync.py",
              False, "다른 스크립트"),
         ]:
@@ -279,6 +283,15 @@ def main() -> int:
         "멀쩡한 자기 훅은 안 말한다",
         stale({"hooks": {"UserPromptSubmit": [hook]}}) == [],
         str(stale({"hooks": {"UserPromptSubmit": [hook]}})),
+    ))
+    # 실행되는 것은 `audit.py` 다. 없는 경로는 그 훅이 지켜보는 대상일 뿐이라
+    # "훅이 없는 파일을 가리킨다" 는 말이 사실이 아니다.
+    watcher = {"hooks": {"PreToolUse": [{"hooks": [{
+        "type": "command",
+        "command": '"py" "C:/project/audit.py" --watch "Z:/archive/tool/inject.py"',
+    }]}]}}
+    results.append(check(
+        "인자로 받은 없는 경로는 안 말한다", stale(watcher) == [], str(stale(watcher)),
     ))
 
     print()
