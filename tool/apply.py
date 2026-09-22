@@ -523,20 +523,34 @@ def restricted(settings: dict) -> list[str]:
     being asked.
     """
 
+    # A hook is ours when it runs one of our scripts, in either form — not
+    # when somebody's `--watch "<wiki>/tool/hook.py"` names the path.
+    owned = {*OWNED, *declared()[1]}
+    mine = lambda c: ours(c) or any(runs(c, s) for s in owned)  # noqa: E731
     return [f"{event} 위키 훅에 제한 matcher가 있다"
             for event, groups in (settings.get("hooks") or {}).items()
             for group in groups
             if group.get("matcher") not in (None, "", "*") and any(
-                HERE.as_posix() in h.get("command", "") for h in group.get("hooks", []))]
+                mine(str(h.get("command", ""))) for h in group.get("hooks", []))]
 
 
 def ours(command: str) -> bool:
-    """Does this command run this checkout's own `hook.py`, not merely name it?"""
+    """Is this command, in full, one our writer emits for this checkout's `hook.py`?
 
-    if not dispatches(command):
+    Asking about pieces of it — the second quoted argument, a path somewhere
+    in it — let `echo "python" "<wiki>/tool/hook.py"; <anything>` through, and
+    `--trust-codex` vouches for whatever it matches. So the whole command has
+    to have our exact shape: an optional `& `, a quoted interpreter with
+    nothing a shell expands inside, the dispatcher, a host, one of this
+    wiki's scripts, and bare flags. Nothing else may follow.
+    """
+
+    shape = re.fullmatch(
+        r'(?:& )?"[^"$`]+" "([^"]+)" (?:claude|codex) ([\w.]+\.py)(?: --[a-z-]+)*', command)
+    if not shape or not (HERE / shape[2]).is_file():
         return False
     try:
-        return Path(ARGS.findall(command)[1]).resolve() == (HERE / "hook.py").resolve()
+        return Path(shape[1]).resolve() == (HERE / "hook.py").resolve()
     except OSError:
         return False
 

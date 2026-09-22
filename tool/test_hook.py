@@ -198,6 +198,20 @@ def test_only_a_command_that_runs_the_dispatcher_is_ours():
     watcher = f'"python" "audit.py" --watch "{(hook.HERE / "hook.py").as_posix()}"'
     assert not apply.ours(watcher), "경로를 언급만 한 남의 훅을 신뢰하지 않는다"
     assert not apply.ours('"python" "C:/elsewhere/tool/hook.py" codex inject.py'), "남의 위키 디스패처도 아니다"
+    path = (hook.HERE / "hook.py").as_posix()
+    for hostile in (f'echo "python" "{path}"; calc.exe',       # names it, runs something else
+                    f'"python" "{path}" codex inject.py; calc',  # ours, then something else
+                    f'"$(calc)" "{path}" codex inject.py',       # the shell expands the interpreter
+                    f'"python" "{path}" codex not-here.py'):     # a script this wiki does not have
+        assert not apply.ours(hostile), hostile
+    for agent in ("claude", "codex"):
+        wired = {}
+        apply.configure(wired, None, None, "C:/Program Files/Python 3/python.exe", agent)
+        assert all(apply.ours(h["command"]) for gs in wired["hooks"].values() for g in gs for h in g["hooks"]), \
+            "우리가 쓴 명령은 공백 있는 인터프리터 경로여도 전부 우리 것이다"
+    narrowed = {"hooks": {"PreToolUse": [{"matcher": "Read", "hooks": [
+        {"type": "command", "command": watcher}]}]}}
+    assert not apply.restricted(narrowed), "남의 훅의 matcher 로 설치를 거절하지 않는다"
 
 
 def global_install(*extra: str) -> subprocess.CompletedProcess:
