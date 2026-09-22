@@ -1,8 +1,14 @@
-"""sync — 위키를 저장소의 현재 상태에 맞춘다."""
+"""sync — bring the wiki level with where the repository actually is.
+
+A Stop hook. Everything it prints is read by a person, so the strings stay
+Korean while the reasoning around them does not.
+"""
 
 from __future__ import annotations
 
-import hook_diagnostics  # noqa: F401 -- 진입점의 제한 시간 전 스택 보존
+# First import of the entry point: it keeps the stack from before whatever
+# time limit kills this.
+import hook_diagnostics  # noqa: F401
 import argparse
 import json
 import re
@@ -19,11 +25,15 @@ import repo_graph  # noqa: E402
 import repo_lint  # noqa: E402
 
 STAMP = ".sync"
-DEFAULT_EVERY = 6 * 3600  # 결정 수확을 몇 초마다 한 번 볼 것인가
+DEFAULT_EVERY = 6 * 3600  # How many seconds between looking for new decisions
 
 
 def stale_docs(repo: Path, roots: list[str]) -> tuple[bool, str]:
-    """목록이 문서보다 낡았는가. 파일 시각만 본다."""
+    """Is the listing older than the documents? File times only.
+
+    The reason comes back with the answer because it is printed: "rebuilt" on
+    its own tells the person nothing about what moved.
+    """
 
     index = repo / ".wiki" / "corpus.json"
     if not index.exists():
@@ -47,12 +57,12 @@ SEQUENCE = re.compile(r"^\d{4}-\d{2}-\d{2}-(\d{1,4})-")
 
 
 def recorded(repo: Path) -> set[int]:
-    """이미 기록된 PR 번호.
+    """The PR numbers already written down.
 
-    `pr:` 줄만 보면 손으로 쓴 기록을 못 본다. 그것들은 같은 이름 규칙
-    (`<날짜>-<번호>-<슬러그>`)을 따르면서 frontmatter 에는 `pr:` 을 안 적는다.
-    그래서 파일 이름의 번호도 같이 읽는다 — 2026-09-17 에 013·015·016 이
-    그 구멍으로 통째로 덮였다.
+    Reading only the `pr:` line misses every record written by hand. Those
+    follow the same naming rule — `<date>-<number>-<slug>` — without putting
+    `pr:` in the front matter, so the number in the filename is read as well.
+    On 2026-09-17 records 013, 015 and 016 were overwritten through that gap.
     """
 
     found = set()
@@ -87,10 +97,11 @@ def touch(repo: Path) -> None:
 
 
 def new_decisions(repo: Path, limit: int) -> list[str]:
-    """기록에 없는 결정을 캐서 쓴다. 쓴 파일 이름을 돌려준다.
+    """Harvest the decisions not yet recorded. Returns the filenames written.
 
-    PR 을 먼저 보고, 원격이 없거나 `gh` 가 안 되면 커밋에서 읽는다. 두 저장소가
-    서로 다른 방식으로 일해도 같은 기록이 남게 하려는 것이다.
+    PRs first, then commits when there is no remote or `gh` cannot run. Two
+    repositories working in different ways should still end up with the same
+    kind of record.
     """
 
     known = recorded(repo)
@@ -103,8 +114,10 @@ def new_decisions(repo: Path, limit: int) -> list[str]:
         out = repo / ".wiki" / "decisions"
         out.mkdir(parents=True, exist_ok=True)
         path = out / f"{name}.md"
-        # 있는 파일은 절대 안 덮는다. 캔 기록은 PR 본문을 눌러 담은 것이고, 같은
-        # 자리에 있는 것은 사람이 쓴 전문일 수 있다. 번호 판정이 또 틀려도 여기서 멈춘다.
+        # Never overwrite a file that is there. A harvested record is a PR
+        # body squeezed into shape; what sits at the same path may be the full
+        # text somebody wrote by hand. If the number check is wrong again,
+        # this is where it stops being destructive.
         if path.exists():
             continue
         path.write_text(text, encoding="utf-8", newline="\n")
@@ -113,7 +126,9 @@ def new_decisions(repo: Path, limit: int) -> list[str]:
 
 
 def main() -> int:
-    # 훅 stdout 은 파이프고 기본이 cp949 다. 인코딩을 환경에 안 맡긴다.
+    # A hook's stdout is a pipe and its default here is cp949. The encoding is
+    # not left to the environment: the first Korean character would end the
+    # write, and with it the message this hook exists to deliver.
     sys.stdout.reconfigure(encoding="utf-8")
 
     parser = argparse.ArgumentParser(description="위키를 저장소 상태에 맞춘다")
@@ -140,8 +155,9 @@ def main() -> int:
         )
         lines.append(f"목록을 다시 만들었다 — {why} (문서 {len(docs)}개)")
 
-        # 지식 그래프는 목록 위에 얹히므로 목록이 바뀔 때만 다시 만든다. 매번
-        # 만들면 문서 전부를 읽게 되고, 그러면 이 훅이 비싸져서 꺼진다.
+        # The knowledge graph sits on top of the listing, so it is rebuilt
+        # only when the listing moved. Rebuilding every time reads every
+        # document, and a hook that expensive is a hook the person turns off.
         graph = repo_graph.write(repo)
         if graph:
             counts = graph["counts"]
@@ -161,9 +177,10 @@ def main() -> int:
                 f"결정 기록 {len(fresh)}건을 캤다: " + ", ".join(fresh[:4])
             )
 
-    # 이 저장소의 축만 본다. 허브 위키의 검진은 허브의 게이트와 `after-merge`
-    # 가 든다 — 남의 축의 발견을 여기 뿌리면 이 세션에서 할 수 있는 일이 없는
-    # 줄이 매번 뜨고, 그러면 읽는 쪽이 전체를 안 읽게 된다.
+    # This repository's axis only. The hub wiki's own health is held by the
+    # hub's gate and by `after-merge` — spilling another axis's findings here
+    # prints a line this session can do nothing about, every time, and a
+    # reader who learns to skip one line learns to skip the block.
     findings = repo_lint.check(repo)
     if findings:
         lines.append(f"검진 발견 {len(findings)}건")
@@ -183,7 +200,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    # 훅은 무슨 일이 있어도 세션을 멈추면 안 된다. 이름만 남기고 통과시킨다.
+    # Whatever happens, a hook does not stop the session. Leave the name of
+    # what went wrong and pass.
     try:
         _code = main()
     except Exception as _error:  # noqa: BLE001

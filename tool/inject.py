@@ -1,4 +1,9 @@
-"""UserPromptSubmit 훅 — 발화를 보고 맞는 위키 페이지를 컨텍스트에 넣는다."""
+"""UserPromptSubmit hook — read the utterance, put the matching page in context.
+
+What this injects is agent input, so it goes out in English. The pages and
+decision records it reads are Korean, and the translation happens on the way
+out rather than in the files.
+"""
 
 from __future__ import annotations
 
@@ -18,40 +23,48 @@ INJECTABLE = {"landmine", "contract"}
 SLOT = re.compile(r"\{([a-z][a-z0-9_]*)\}")
 HANGUL = re.compile(r"[가-힣]")
 
-# 번역 전체에 주는 시간. 훅 예산 15초 아래에 둔다 — 넘기면 번역이 아니라
-# 주입 전체를 잃는다. 못 끝낸 것은 한국어 원문으로 나간다.
+# The budget for the whole translation, kept under the hook's own 15 seconds.
+# Going over does not cost the translation, it costs the entire injection.
+# Whatever is not done by then goes out as the Korean original.
 BUDGET = 8.0
 
-# 발화 영어본을 붙이지 않는 길이. 규칙 예산과 달리 이 블록은 다듬을 수가 없다 —
-# 잘린 번역은 온전한 번역처럼 읽히기 때문이다. 그래서 상한이 아니라 문턱이다.
+# The length past which no English rendering of the utterance is attached.
+# Unlike the rule budget, this block cannot be trimmed: a cut translation
+# reads exactly like a whole one. So it is a threshold, not a ceiling.
 MAX_RENDERED = 4000
 
-# 기본 예산은 없다. 걸린 규칙은 다 싣는다.
+# No budget by default. Every rule that matched is carried.
 #
-# 버리면 안 되기 때문이다. 버려질 것은 트리거에 걸린 규칙 — 이 발화에
-# 필요하다고 판정된 바로 그것이고, 규칙이 안 실려서 어기는 것이 이 위키가
-# 막으려는 실패다. 상한이 그 실패를 스스로 만들어서는 안 된다.
+# Because nothing here may be dropped. What would be dropped is a rule the
+# triggers selected — the one judged necessary for this utterance — and a rule
+# broken because it was never carried is the failure this wiki exists to
+# prevent. A ceiling must not manufacture that failure itself.
 #
-# 예산을 두더라도 자르지 않고 다듬는다. 등급이 낮은 것부터
-# 전문에서 규칙 한 줄로 줄이고, 그래도 넘으면 제목과 경로만 남긴다.
-# 사라지는 페이지는 없다.
-# 예산은 프로젝트가 어댑터로 정한다. 대상 저장소의 프롬프트 상한과는 무관하다 —
-# 훅의 `additionalContext` 는 그 경로를 안 지나가므로, 그쪽 숫자를 여기
-# 가져오면 남의 상한이 된다.
+# Where a budget is set, it trims rather than cuts. The lowest severity goes
+# from full text to its one rule line first, and past that to a title and a
+# path. No page disappears.
 #
-# **축마다 따로다.** 하나로 두면 모자랄 때 줄어드는 것이 언제나 규칙이다 —
-# `fit` 은 규칙만 다듬고 결정 기록은 한 글자도 안 건드리기 때문이다. 실제로 잰
-# 가장 무거운 턴이 규칙 20,620자에 결정 2,173자였다. 지식이 9%인데 다듬는
-# 부담은 100% 규칙이 진다. 늘어나는 쪽이 지켜야 할 쪽을 밀어내면 안 된다.
+# The project sets the budget through its adapter. It has nothing to do with
+# the target repository's prompt limit: a hook's `additionalContext` does not
+# travel that path, so borrowing that number here imposes someone else's
+# ceiling.
+#
+# One budget per axis, deliberately. Sharing one means the thing that shrinks
+# under pressure is always the rules, because `fit` trims rules and does not
+# touch a decision record. The heaviest turn actually measured held
+# 20,620 characters of rules against 2,173 of decisions: knowledge is 9% of
+# it and carries 0% of the trimming. The side that grows must not push out
+# the side that has to hold.
 RULE_BUDGET = "rule_budget"
 REPO_BUDGET = "repo_budget"
 
-# 한 턴에 전문으로 실을 결정 기록의 수. 넘는 것은 버리지 않고 이름만 남긴다.
+# How many decision records go in as full text in one turn. What is over that
+# is not dropped; its name stays.
 MAX_DECISIONS = 3
 
 
 def budget(adapter: str | None, slot: str, project: str | Path | None = None) -> int | None:
-    """그 축에 이 프로젝트가 정한 예산. 안 정했으면 None — 상한이 없다."""
+    """This project's budget for that axis. `None` when unset — no ceiling."""
 
     raw = slots_for(adapter, project).get(slot)
     try:
@@ -61,10 +74,11 @@ def budget(adapter: str | None, slot: str, project: str | Path | None = None) ->
 
 
 def shrink(body: str, path: Path, severity: str, hard: bool) -> str:
-    """전문을 줄인다. 지우지 않는다.
+    """Shorten the full text. Never remove it.
 
-    `hard` 면 제목과 경로만, 아니면 규칙 한 문단까지. 어느 쪽이든 그 페이지가
-    걸렸다는 사실과 어디를 열면 되는지는 남는다 — 그것이 버리는 것과의 차이다.
+    `hard` leaves a title and a path, otherwise the rule paragraph survives.
+    Either way the fact that this page matched, and where to open it, are
+    still there — which is the whole difference from dropping it.
     """
 
     title = next((x[2:].strip() for x in body.splitlines() if x.startswith("# ")), path.stem)
@@ -81,10 +95,10 @@ def shrink(body: str, path: Path, severity: str, hard: bool) -> str:
 
 
 def fit(parts: list[str], rules: list, limit: int | None) -> tuple[list[str], int]:
-    """예산에 맞춰 다듬는다. 넘쳐도 아무것도 안 버린다.
+    """Trim to the budget. Over it, still nothing is thrown away.
 
-    등급이 낮은 것부터 규칙 한 줄로 줄이고, 그래도 넘으면 제목만 남긴다.
-    예산이 없으면 아무것도 안 한다 — 그것이 기본값이다.
+    Lowest severity first, down to the one rule line, then to the title alone.
+    With no budget this does nothing, which is the default.
     """
 
     if not limit or sum(len(p) for p in parts) <= limit:
@@ -104,15 +118,16 @@ def fit(parts: list[str], rules: list, limit: int | None) -> tuple[list[str], in
 
 
 def digest(body: str, path: Path) -> str:
-    """결정 기록을 두 줄로 줄인다.
+    """Reduce a decision record to two lines.
 
-    전문을 실으면 안 된다. 한 저장소에 88건이고 각 700자라, 셋만 걸려도 규칙을
-    밀어낸다. 실제로 통째로 싣자 한 턴 최대가 13,241자로 상한을 넘었고 적중률이
-    67%가 됐다 — 40%를 넘으면 다 실어서 아무것도 안 읽히는 것과 같아진다는 게
-    이 위키 자신의 기준이다.
+    The full text must not go in. One repository holds 88 of them at about
+    700 characters each, so three matches alone push the rules out. Carrying
+    them whole was measured: the heaviest turn reached 13,241 characters, over
+    the ceiling, at a 67% hit rate — and this wiki's own standard is that past
+    40% you are carrying everything, which reads the same as carrying nothing.
 
-    주입 시점에 필요한 것은 "이건 이미 정했고 이유는 이것" 이지 전문이 아니다.
-    전문은 경로를 따라가면 있다.
+    What is needed at injection time is "this was already decided, and here is
+    why", not the record. The record is at the end of the path.
     """
 
     title = next((x[2:].strip() for x in body.splitlines() if x.startswith("# ")), path.stem)
@@ -130,13 +145,14 @@ def digest(body: str, path: Path) -> str:
 
 
 def knowledge(decisions: list, limit: int | None) -> list[str]:
-    """결정 기록 블록. 규칙과 **다른 예산**을 쓴다.
+    """The decision-record block. A different budget from the rules, on purpose.
 
-    지식이 규칙의 자리를 먹으면 안 된다. 규칙이 안 실려서 어기는 것이 이 위키가
-    막으려는 실패이고, 그 실패를 지식이 만들어서는 안 되기 때문이다.
+    Knowledge must not eat the rules' place. A rule broken because it was
+    never carried is the failure this wiki exists to prevent, and knowledge
+    must not be what creates it.
 
-    넘칠 때는 전문을 하나씩 이름으로 내린다. 여기서도 사라지는 것은 없다 —
-    무엇이 걸렸는지는 남고 어디를 열면 되는지도 남는다.
+    Over the budget, full texts drop to names one at a time. Nothing vanishes
+    here either: what matched stays, and so does where to open it.
     """
 
     if not decisions:
@@ -165,7 +181,7 @@ def knowledge(decisions: list, limit: int | None) -> list[str]:
 
 
 def label(path: Path) -> str:
-    """페이지를 부르는 이름. 공유 위키는 `범위/이름`, 프로젝트는 `.wiki/이름`."""
+    """What a page is called: `scope/name` in the shared wiki, `.wiki/name` in a project."""
 
     if path.parent.name == "decisions":
         return f".wiki/decisions/{path.stem}"
@@ -175,12 +191,12 @@ def label(path: Path) -> str:
 
 
 def source_map(matched: list, project: str | None) -> str:
-    """실린 페이지가 **어느 저장소에서 왔는지.** 경로를 절대 경로로 적는다.
+    """Which repository the injected pages came from, written as absolute paths.
 
-    이 줄이 없어서 한 세션이 "위키에 기록해라" 를 현재 저장소의 `.wiki/` 로
-    읽었다. 주입된 페이지 대부분이 허브에서 왔는데 헤더가 "이 저장소의 위키"
-    라고 말했고, 허브의 경로는 어디에도 안 나왔다. 이름만으로는 못 고른다 -
-    두 곳 다 "위키" 라고 불린다.
+    Without this line a session read "record it in the wiki" as the current
+    repository's `.wiki/`. Most of the injected pages had come from the hub,
+    the header said "this repository's wiki", and the hub's path appeared
+    nowhere. A name cannot decide it — both places are called "the wiki".
 
     범위별로 갈리는 규칙도 같이 적는다. `operator`·`craft` 는 저장소를 안
     가리므로 허브에, 저장소의 게이트·런처·포트·불변식은 그 저장소의 `.wiki/`
@@ -210,7 +226,8 @@ def source_map(matched: list, project: str | None) -> str:
 
 
 def adapter_path(adapter=None, project=None, *, wiki=None) -> Path | None:
-    """checkout 원본 우선. 없는 기존 설치만 허브 이름 조회를 유지한다."""
+    """The checkout's own file first. Only an older install with none falls back
+    to looking the name up in the hub."""
     if project:
         local = Path(project).expanduser().resolve() / ".wiki/adapter.toml"
         if local.exists():
@@ -219,7 +236,7 @@ def adapter_path(adapter=None, project=None, *, wiki=None) -> Path | None:
 
 
 def slots_for(adapter: str | None, project: str | Path | None = None) -> dict[str, str]:
-    """선택한 checkout의 슬롯 값. adapter가 없으면 빈 표."""
+    """The chosen checkout's slot values. No adapter means an empty table."""
 
     path = adapter_path(adapter, project)
     if path is None or not path.exists():
@@ -231,18 +248,18 @@ def slots_for(adapter: str | None, project: str | Path | None = None) -> dict[st
 
 
 def fill(body: str, values: dict[str, str]) -> str:
-    """`{슬롯}` 만 바꾼다.
+    """Replace `{slot}` and nothing else.
 
-    `str.format` 을 쓰면 트리거의 `{0,10}` 과 코드 블록의 중괄호까지 건드린다.
-    아는 이름만 갈아 끼우고 모르는 것은 그대로 둔다 — 안 채워진 채로 남으면
-    `apply` 가 짚는다.
+    `str.format` would also reach a trigger's `{0,10}` and every brace in a
+    code block. Only known names are swapped; an unknown one is left standing,
+    and `apply` points at whatever is still unfilled.
     """
 
     return SLOT.sub(lambda m: values.get(m.group(1), m.group(0)), body)
 
 
 def project_wiki(project: str | Path | None) -> Path | None:
-    """대상 저장소의 `.wiki/`. 없으면 None."""
+    """The target repository's `.wiki/`, or `None`."""
 
     if not project:
         return None
@@ -254,11 +271,11 @@ def pages(
     adapter: str | None = None,
     project: str | Path | None = None,
 ) -> list[tuple[dict[str, object], str, Path]]:
-    """공유 위키의 규칙 + 그 프로젝트의 지식.
+    """The shared wiki's rules plus that project's knowledge.
 
-    프로젝트 페이지는 `decisions/` 까지 훑는다. 결정 기록은 수가 많아서
-    (한 저장소에 90건) 전부 실으면 예산이 터지므로, 고르는 쪽에서 몇 개만
-    남긴다. 여기서는 읽기만 한다.
+    Project pages include `decisions/`. There are many of those — 90 in one
+    repository — so carrying them all would blow the budget, and the selecting
+    side keeps a few. This function only reads.
     """
 
     values = slots_for(adapter, project)
@@ -280,7 +297,7 @@ def pages(
 
 
 def match_pages(prompt: str, available: list) -> list:
-    """주입과 감사가 같은 등급·정규식 판정을 쓴다."""
+    """Injection and the audit share one severity and regex judgement."""
     matched = []
     for meta, body, path in available:
         severity = str(meta.get("severity") or "")
@@ -298,7 +315,8 @@ def match_pages(prompt: str, available: list) -> list:
 
 
 def render_parts(matched: list, rule_limit: int | None, repo_limit: int | None) -> tuple:
-    """실제로 보내는 두 축. 감사도 슬롯 치환·요약·이름 목록까지 센다."""
+    """The two axes as actually sent. The audit counts the same thing — slots
+    filled, summaries, the name list — rather than a tidier version of it."""
     decisions = sorted(
         (m for m in matched if m[2].parent.name == "decisions"),
         key=lambda m: m[2].name, reverse=True,
@@ -369,7 +387,8 @@ def rendering(prompt: str, deadline: float | None = None) -> str:
 
 
 def main() -> int:
-    # 들어오는 발화도 나가는 주입문도 한글이다. 인코딩을 환경에 안 맡긴다.
+    # The utterance coming in and the injection going out are both Korean. The
+    # encoding is not left to the environment.
     sys.stdin.reconfigure(encoding="utf-8")
     sys.stdout.reconfigure(encoding="utf-8")
 
@@ -398,15 +417,19 @@ def main() -> int:
     )
     parts = rule_parts + repo_parts
 
-    # 저장소 문서는 여기서 안 고른다. 목록 전체를 세션 시작에 한 번 싣고,
-    # 고르는 일은 그 목록을 이미 들고 있는 쪽이 한다. `tool/session_state.py`.
+    # Repository documents are not selected here. The whole listing goes in
+    # once at session start and the choosing is done by whoever already holds
+    # it — `tool/session_state.py`.
 
     loaded = [label(p) for _s, _b, p in rules + decisions]
 
-    # 아무것도 안 걸린 턴도 남긴다. 무엇이 실렸는지만큼 **무엇이 안 실렸는지**가
-    # 라우팅의 근거이고, 안 걸린 발화만 모아 보는 것이 미탐을 찾는 유일한 길이다.
-    # 읽기와 달리 쓰기는 `.wiki/` 가 아직 없어도 해야 한다. `project_wiki` 는
-    # 없으면 None 을 주므로, 갓 붙은 저장소에서 조용히 아무것도 안 남게 된다.
+    # A turn that matched nothing is recorded too. What was not carried is as
+    # much evidence about routing as what was, and reading only the utterances
+    # that matched nothing is the one way to find a miss.
+    #
+    # Unlike reading, writing has to work before `.wiki/` exists.
+    # `project_wiki` returns `None` when it does not, which would leave a
+    # freshly attached repository silently recording nothing at all.
     failed = trajectory.record(
         Path(args.project).expanduser() / ".wiki" if args.project else None,
         prompt,
@@ -415,7 +438,9 @@ def main() -> int:
         str(payload.get("session_id") or ""),
     )
     if failed:
-        # 이름만 남긴다. 한글이 섞이면 이 stderr 쓰기가 또 죽는다.
+        # The name and nothing else. Non-ASCII in the message kills this very
+        # stderr write under a cp949 console, which is how the report of a
+        # failure became a second failure.
         print(f"trajectory skipped: {failed}", file=sys.stderr)
 
     # After `trajectory.record`, so the trajectory keeps the Korean original.
@@ -463,7 +488,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    # 훅은 무슨 일이 있어도 세션을 멈추면 안 된다. 이름만 남기고 통과시킨다.
+    # Whatever happens, a hook does not stop the session. Leave the name of
+    # what went wrong and pass.
     try:
         _code = main()
     except Exception as _error:  # noqa: BLE001
