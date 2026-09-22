@@ -189,12 +189,14 @@ def codex_hooks(home, trust):
     it, only for commands that run this checkout's `hook.py`, and through
     Codex's own config writer rather than by editing its file.
     """
+    from apply import ours
     from chat_local import CodexServer
 
-    mine = f'"{(WIKI / "tool/hook.py").as_posix()}"'
+    # `ours`, not a substring: `audit.py --watch "<wiki>/tool/hook.py"` names
+    # the dispatcher as data, and trusting it would vouch for someone else's code.
     with CodexServer(env={"CODEX_HOME": str(home)}, cwd=WIKI) as server:
         listed = lambda: [h for d in server.request("hooks/list", {"cwds": [str(WIKI)]})["data"]  # noqa: E731
-                          for h in d["hooks"] if mine in h["command"]]
+                          for h in d["hooks"] if ours(h["command"])]
         hooks = listed()
         pending = {h["key"]: {"trusted_hash": h["currentHash"]} for h in hooks if h["trustStatus"] != "trusted"}
         if trust and pending:
@@ -228,7 +230,7 @@ def install_global(choice, check, projects, trust):
         if any(char in str(path) for char in ('"', '$', '`', '\n', '\r')):
             raise ValueError(f"셸 인용이 지원하지 않는 문자가 경로에 있습니다: {path}")
     os.environ["WIKI_ROOT"] = str(WIKI)
-    from apply import configure, keep_denies, read_json, unusable, unwire, user_files
+    from apply import configure, keep_denies, ours, read_json, restricted, unusable, unwire, user_files
 
     missing = unusable(sys.executable)
     if missing:
@@ -250,36 +252,46 @@ def install_global(choice, check, projects, trust):
             raise ValueError(f"{agent} CLI를 PATH에서 찾지 못했습니다.")
         print(run([binary, "--version"], WIKI).strip())
         run([*hook_shell(agent), "exit 0"], WIKI)
-    broken = []
+    # Every file is read and every change worked out before the first write:
+    # a broken JSON in the last file must not leave the first one rewritten.
+    plan = []
+    refusals = []
     for agent in agents:
         for path in user_files(agent):
             settings = read_json(path)
-            changes = configure(settings, None, None, sys.executable, agent)
-            if check:
-                broken += [f"{path}: {change}" for change in changes]
-            elif changes:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
-                                encoding="utf-8", newline="\n")
-                print(f"썼다: {path} ({len(changes)}건)")
-            else:
-                print(f"그대로: {path}")
+            plan.append((path, settings, configure(settings, None, None, sys.executable, agent)))
+            refusals += [f"{path}: {r}" for r in restricted(settings)]
         for project in projects:
             path = project / SETTINGS[agent]
             if not path.exists() and agent != "claude":
                 continue
             settings = read_json(path)
-            changes = unwire(settings)
             # The named checkout keeps its deny rules where the host enforces
             # them, so a failed hook does not let `git reset --hard` through.
-            changes += keep_denies(settings) if agent == "claude" else []
-            if check:
-                broken += [f"{path}: {change}" for change in changes]
-            elif changes:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
-                                encoding="utf-8", newline="\n")
-                print(f"프로젝트 설정 정리: {path} ({len(changes)}건)")
+            changes = unwire(settings) + (keep_denies(settings) if agent == "claude" else [])
+            plan.append((path, settings, changes))
+    # Claude honours `disableAllHooks` from any layer, and nothing here can
+    # tell from the files alone that the host will skip what they wire.
+    if "claude" in agents:
+        for path in [*user_files("claude"), *(p / ".claude" / name for p in projects
+                                              for name in ("settings.json", "settings.local.json"))]:
+            if read_json(path).get("disableAllHooks"):
+                refusals.append(f"{path}: disableAllHooks 가 켜져 있다")
+    if refusals:
+        raise ValueError("설치로 고칠 수 없는 설정이 있습니다. 직접 검토하세요:\n- " + "\n- ".join(refusals))
+
+    broken = []
+    for path, settings, changes in plan:
+        if check:
+            broken += [f"{path}: {change}" for change in changes]
+        elif changes:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
+                            encoding="utf-8", newline="\n")
+            print(f"썼다: {path} ({len(changes)}건)")
+        else:
+            print(f"그대로: {path}")
+    for agent in agents:
         if agent == "codex":
             for path in user_files("codex"):
                 hooks = codex_hooks(path.parent, trust and not check)
@@ -287,7 +299,7 @@ def install_global(choice, check, projects, trust):
                 # What Codex actually loaded, against what the file holds. Zero
                 # untrusted out of zero loaded is Codex not reading the file —
                 # hooks switched off, or a home it does not start from.
-                wired = sum(f'"{(WIKI / "tool/hook.py").as_posix()}"' in h.get("command", "")
+                wired = sum(ours(h.get("command", ""))
                             for gs in read_json(path).get("hooks", {}).values()
                             for g in gs for h in g.get("hooks", []))
                 print(f"Codex {path.parent}: 위키 훅 {len(hooks)}/{wired}개 읽힘, 미신뢰 {len(untrusted)}개")

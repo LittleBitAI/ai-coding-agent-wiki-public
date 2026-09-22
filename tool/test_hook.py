@@ -188,3 +188,62 @@ def test_a_missing_second_host_leaves_the_first_unwritten():
         assert done.returncode == 2 and "codex" in done.stderr, done.stdout + done.stderr
         assert not any(Path(os.environ["WIKI_USER_HOME"]).glob(".claude/settings.json")), \
             "한 호스트만 설치된 채로 끝나지 않는다"
+
+
+def test_only_a_command_that_runs_the_dispatcher_is_ours():
+    settings = {}
+    apply.configure(settings, None, None, "C:/py.exe", "codex")
+    dispatcher = settings["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+    assert apply.ours(dispatcher)
+    watcher = f'"python" "audit.py" --watch "{(hook.HERE / "hook.py").as_posix()}"'
+    assert not apply.ours(watcher), "경로를 언급만 한 남의 훅을 신뢰하지 않는다"
+    assert not apply.ours('"python" "C:/elsewhere/tool/hook.py" codex inject.py'), "남의 위키 디스패처도 아니다"
+
+
+def global_install(*extra: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, str(HERE / "setup_agents.py"), "--global", *extra],
+        capture_output=True, text=True, encoding="utf-8", timeout=180,
+    )
+
+
+def test_settings_that_install_cannot_repair_are_refused_before_writing():
+    import shutil
+
+    if not shutil.which("claude"):
+        return
+    home = Path(os.environ["WIKI_USER_HOME"])
+    user = home / ".claude/settings.json"
+    user.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        for bad in ({"disableAllHooks": True}, None):
+            if bad is None:
+                # A wiki hook group narrowed to one tool.
+                bad = {}
+                apply.configure(bad, None, None, sys.executable, "claude")
+                bad["hooks"]["PreToolUse"][0]["matcher"] = "Read"
+            user.write_text(json.dumps(bad), encoding="utf-8")
+            before = user.read_bytes()
+            for mode in ((), ("--check",)):
+                done = global_install("--agent", "claude", *mode)
+                assert done.returncode == 2 and "직접 검토" in done.stderr, done.stdout + done.stderr
+            assert user.read_bytes() == before, "고칠 수 없으면 아무것도 쓰지 않는다"
+    finally:
+        user.unlink(missing_ok=True)
+
+
+def test_a_broken_later_file_leaves_the_earlier_ones_unwritten():
+    import shutil
+
+    if not (shutil.which("claude") and shutil.which("codex")):
+        return
+    home = Path(os.environ["WIKI_USER_HOME"])
+    codex = home / ".codex/hooks.json"
+    codex.parent.mkdir(parents=True, exist_ok=True)
+    codex.write_text("{ broken", encoding="utf-8")
+    try:
+        done = global_install("--agent", "both")
+        assert done.returncode == 2, done.stdout + done.stderr
+        assert not (home / ".claude/settings.json").exists(), "앞 호스트만 설치된 채 끝나지 않는다"
+    finally:
+        codex.unlink(missing_ok=True)

@@ -512,13 +512,33 @@ def drift(settings: dict, project: Path | None, agent: str) -> list[str]:
     adapter_match = re.search(r'--adapter\s+(?:"([^"]+)"|(\S+))', commands[0]) if commands else None
     adapter = (adapter_match[1] or adapter_match[2]) if adapter_match else (project.name if project else None)
     changes = configure(settings, project, adapter, python, agent)
-    for event, groups in settings.get("hooks", {}).items():
-        for group in groups:
+    return changes + restricted(settings) + stale(settings)
+
+
+def restricted(settings: dict) -> list[str]:
+    """This wiki's hooks sitting in a group whose `matcher` narrows them.
+
+    Installing cannot repair it — `put_hook` finds the entry and leaves the
+    group alone — and a `matcher: "Read"` quietly keeps a Bash block from ever
+    being asked.
+    """
+
+    return [f"{event} 위키 훅에 제한 matcher가 있다"
+            for event, groups in (settings.get("hooks") or {}).items()
+            for group in groups
             if group.get("matcher") not in (None, "", "*") and any(
-                HERE.as_posix() in h.get("command", "") for h in group.get("hooks", [])
-            ):
-                changes.append(f"{event} 위키 훅에 제한 matcher가 있다")
-    return changes + stale(settings)
+                HERE.as_posix() in h.get("command", "") for h in group.get("hooks", []))]
+
+
+def ours(command: str) -> bool:
+    """Does this command run this checkout's own `hook.py`, not merely name it?"""
+
+    if not dispatches(command):
+        return False
+    try:
+        return Path(ARGS.findall(command)[1]).resolve() == (HERE / "hook.py").resolve()
+    except OSError:
+        return False
 
 
 def user_wired(agent: str) -> bool:
