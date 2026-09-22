@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import io
 import re
 import subprocess
@@ -269,6 +270,35 @@ def tracked_markdown(root: Path) -> list[str]:
     )
 
 
+SHA256 = re.compile(r"\b[0-9a-f]{64}\b")
+
+
+def pinned_originals(root: Path, names: list[str]) -> set[str]:
+    """저장소가 바이트를 못 박아 둔 `.md`. 고칠 수 없으므로 문체를 안 따진다.
+
+    대회 자료나 남의 원문을 보관하는 저장소는 그 파일의 SHA-256 을 자기 문서에
+    적어 "이동 전후 동일" 을 주장한다. 그 파일은 백틱 하나를 넣어도 기록이
+    거짓이 되므로, 문체 발견을 내도 고칠 방법이 없다 — 검진에 영원히 1건이
+    떠 있게 되고, 다음 사람이 매번 같은 판단을 다시 한다.
+
+    이름으로 걸지 않는다. `tracked_markdown` 이 적어 둔 대로 `archive/` 같은
+    이름 목록은 남의 저장소에서 진짜 문서를 통째로 지웠다. 여기서 보는 것은
+    이름이 아니라 그 저장소가 실제로 적어 둔 해시다 — 못 박기를 풀면 검사가
+    다시 돈다. 스스로의 해시를 적을 수는 없으므로 순환도 없다.
+    """
+
+    digests: dict[str, str] = {}
+    recorded: set[str] = set()
+    for name in names:
+        try:
+            raw = (root / name).read_bytes()
+        except OSError:
+            continue
+        digests[name] = hashlib.sha256(raw).hexdigest()
+        recorded.update(SHA256.findall(raw.decode("utf-8", "replace").lower()))
+    return {name for name, digest in digests.items() if digest in recorded}
+
+
 def loud_emphasis(wiki: Path = WIKI) -> list[tuple[str, str]]:
     """강조가 소음이 된 `.md`. 훅이 못 보는 자리를 여기서 본다.
 
@@ -285,7 +315,11 @@ def loud_emphasis(wiki: Path = WIKI) -> list[tuple[str, str]]:
         # 검사를 못 돌린 것과 돌려서 깨끗한 것은 다른 일이다. 여기서 조용히
         # 빈 목록을 돌려주면 게이트가 초록인 채로 이 규칙만 꺼져 있게 된다.
         return [("강조 과다", markdown_emphasis.MISSING)]
-    for name in tracked_markdown(wiki):
+    names = tracked_markdown(wiki)
+    pinned = pinned_originals(wiki, names)
+    for name in names:
+        if name in pinned:
+            continue
         path = wiki / name
         try:
             text = path.read_text(encoding="utf-8")

@@ -396,6 +396,52 @@ def test_the_scan_follows_git_rather_than_a_hand_written_exclusion_list(
     assert "vendor/skip.md" not in seen, "무시 대상까지 봤다"
 
 
+def test_a_byte_pinned_original_is_not_judged_on_style(tmp_path: Path) -> None:
+    """저장소가 해시로 못 박은 원문은 고칠 수 없으므로 문체를 안 따진다.
+
+    대회가 준 원문에 `if __name__ == "__main__":` 이 백틱 없이 적혀 있으면
+    CommonMark 가 `__name__` 과 `__main__` 을 둘 다 강조로 읽는다. 백틱을
+    넣으면 그 저장소가 적어 둔 "이동 전후 동일한 SHA-256" 이 거짓이 된다.
+    그래서 이 발견은 고칠 방법이 없고, 검진에 영원히 한 건으로 남는다.
+
+    기준은 이름이 아니라 그 저장소가 실제로 적어 둔 해시다. 못 박기를 지우면
+    같은 파일이 다시 발견으로 돌아오는지까지 본다 — 이름으로 거른 것이었다면
+    그 대목에서 초록이 남는다.
+    """
+
+    import hashlib
+
+    import lint
+
+    for args in (["init", "-q"], ["config", "user.email", "t@e.com"],
+                 ["config", "user.name", "t"]):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True,
+                       capture_output=True)
+
+    verbatim = ('# 원문\r\n\r\n'
+                'A. 실행 코드를 if __name__ == "__main__": 아래에 둡니다.\r\n')
+    original = tmp_path / "archive" / "원문.md"
+    original.parent.mkdir(parents=True)
+    original.write_bytes(verbatim.encode("utf-8"))
+    digest = hashlib.sha256(original.read_bytes()).hexdigest()
+
+    noisy = "# 제목\n\n" + "\n\n".join(f"{n} 번째 **강조**." for n in range(9)) + "\n"
+    (tmp_path / "mine.md").write_text(noisy, encoding="utf-8")
+    index = tmp_path / "archive" / "README.md"
+    index.write_text(f"# 보관\n\n| 파일 | 동일한 SHA-256 |\n| --- | --- |\n"
+                     f"| 원문.md | `{digest}` |\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True,
+                   capture_output=True)
+
+    seen = {where.split("`")[1] for _kind, where in lint.loud_emphasis(tmp_path)}
+    assert "archive/원문.md" not in seen, "못 박은 원문에 고칠 수 없는 발견을 냈다"
+    assert "mine.md" in seen, "우리가 쓴 문서까지 빠졌다"
+
+    index.write_text("# 보관\n\n해시 기록을 지웠다.\n", encoding="utf-8")
+    again = {where.split("`")[1] for _kind, where in lint.loud_emphasis(tmp_path)}
+    assert "archive/원문.md" in again, "이름으로 걸렀다 — 해시가 기준이 아니다"
+
+
 def test_a_new_file_is_seen_before_it_is_staged(tmp_path: Path) -> None:
     """`Write` 로 만든 직후의 문서가 안 보이면 그 파일은 검사 밖에 산다.
 
