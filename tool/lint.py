@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import tokenize
+from collections import Counter
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -177,12 +178,20 @@ def check(
         ))
 
     # --- 9. Comments and docstrings still written in Korean
-    for where, line in korean_prose(wiki):
-        findings.append((
-            "주석이 한국어다",
-            f"`{where}`: {line} — `operator/english-progress` 는 에이전트가 "
-            "쓰는 것을 영어로 둔다. 인용하는 한국어는 한 줄 안에서 백틱으로 감싸라",
-        ))
+    if markdown_emphasis.parser() is None:
+        # A gate that cannot run one of its checks says so in its report and
+        # finishes the rest. Letting the exception out took the header, the
+        # findings already gathered and the reason with it, and left a
+        # traceback in their place — red, but saying nothing about what was
+        # examined. `loud_emphasis` settled this shape already.
+        findings.append(("주석이 한국어다", NO_PARSER))
+    else:
+        for where, line in korean_prose(wiki):
+            findings.append((
+                "주석이 한국어다",
+                f"`{where}`: {line} — `operator/english-progress` 는 에이전트가 "
+                "쓰는 것을 영어로 둔다. 인용하는 한국어는 한 줄 안에서 백틱으로 감싸라",
+            ))
 
     return loaded, declared, findings
 
@@ -234,6 +243,13 @@ HANGUL = re.compile(r"[가-힣]")
 # the Korean beside it visible rather than hidden.
 CODE = "code_inline"
 
+# Its own sentence, not `markdown_emphasis.MISSING`. That one names the
+# emphasis check, and a reader told the emphasis check did not run while this
+# one was the one that stopped goes looking in the wrong place. The recovery
+# command is shared, because there is only one thing to install.
+NO_PARSER = ("markdown-it-py 가 없어 주석 검사를 돌리지 못했다 — "
+             + markdown_emphasis.recovery(sys.executable))
+
 
 def docstring(node) -> ast.Constant | None:
     """The string literal a docstring is, or `None` where there is none.
@@ -252,30 +268,43 @@ def docstring(node) -> ast.Constant | None:
     return value if ok else None
 
 
-def spoken(line: str) -> str:
-    """One line with its code spans taken out — the author's own words.
+def cited(line: str, md) -> str:
+    """The code spans of one line, concatenated — the part that is quoted.
 
-    The leading `#` and the indentation go first. Four spaces in front of a
-    docstring line is an indented code block to CommonMark, and that would
-    read the whole line as quoted and hide everything on it.
+    Only this is read off the parse. An earlier version did the reverse and
+    gathered the text of everything that was *not* a code span, which meant
+    deciding what every other token type contributes — and `html_block` was
+    decided wrong: `<div>` around a Korean line hid it from the gate
+    completely. Reading out what a parse means, token kind by token kind, is
+    the hand-written lexer coming back through the parser's own door.
+
+    So the line stays whole and only the spans are subtracted from it. A
+    token kind this function has never heard of cannot hide anything, because
+    nothing but a code span is ever taken away.
+
+    Indentation goes first, and it goes twice — once before the `#` and once
+    after it. Four spaces in front of a line is an indented code block to
+    CommonMark, which parses no inline markup at all, so the line would carry
+    no code span and every Korean character on it would read as prose. This
+    check caught its own explaining comment that way, where an example is
+    written indented under a `#`: stripping only in front of the marker left
+    five spaces behind it.
+
+    Indentation is meant to carry nothing here. The backtick is the only
+    marker, in a comment as in a docstring, at whatever depth it is written.
     """
 
-    md = markdown_emphasis.parser()
-    if md is None:
-        # Never a quiet skip. "No Korean prose" must not be able to mean
-        # "nothing was read" — `craft/hooks-fail-open` applies to hooks that
-        # must not block a person's edit; a check that gates the repository
-        # fails loudly instead.
-        raise RuntimeError(markdown_emphasis.MISSING)
+    spans: list[str] = []
 
-    def said(token) -> str:
+    def gather(token) -> None:
         if token.type == CODE:
-            return ""
-        if token.children:
-            return " ".join(said(kid) for kid in token.children)
-        return token.content if token.type == "text" else ""
+            spans.append(token.content)
+        for kid in token.children or []:
+            gather(kid)
 
-    return " ".join(said(token) for token in md.parse(line.lstrip().lstrip("#")))
+    for token in md.parse(line.lstrip().lstrip("#").lstrip()):
+        gather(token)
+    return "".join(spans)
 
 
 def korean_prose(wiki: Path = WIKI) -> list[tuple[str, str]]:
@@ -289,8 +318,13 @@ def korean_prose(wiki: Path = WIKI) -> list[tuple[str, str]]:
     the citations landed at 0.40 to 0.47, in among real violations. A second
     read ordinary quotation marks as citation and spent three review rounds
     adding members to that set before an unmatched `"` hid a violation
-    outright. See `spoken` for why the backtick is the whole rule and why a
+    outright. See `cited` for why the backtick is the whole rule and why a
     parser, not a regex, decides where one begins.
+
+    What is left is counted character by character, not as a share. The line
+    keeps every Hangul character it was written with and the ones the parse
+    says are inside a code span are taken away; anything still standing is
+    prose. Subtracting is what makes an unfamiliar token kind harmless.
 
     Read through `ast` and `tokenize` rather than by matching `#` against raw
     lines. A regex on `#` sees no docstring at all, and that is exactly how
@@ -308,6 +342,14 @@ def korean_prose(wiki: Path = WIKI) -> list[tuple[str, str]]:
     directory = wiki / "tool"
     if not directory.is_dir():
         return []
+
+    md = markdown_emphasis.parser()
+    if md is None:
+        # Loud, never quiet. `check` catches this case ahead of the call and
+        # turns it into a finding so the report still prints; reaching here
+        # means somebody called this directly, and an empty list would tell
+        # them the tools are clean when nothing was read at all.
+        raise RuntimeError(NO_PARSER)
 
     found: list[tuple[str, str]] = []
     for path in sorted(directory.glob("*.py")):
@@ -340,7 +382,9 @@ def korean_prose(wiki: Path = WIKI) -> list[tuple[str, str]]:
 
         for at, piece in pieces:
             for n, line in enumerate(piece.splitlines()):
-                if HANGUL.search(spoken(line)):
+                rest = Counter(HANGUL.findall(line))
+                rest -= Counter(HANGUL.findall(cited(line, md)))
+                if rest:
                     found.append((f"tool/{path.name}:{at + n}", line.strip()[:60]))
     return found
 

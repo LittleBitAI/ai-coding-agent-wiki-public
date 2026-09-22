@@ -10,6 +10,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import markdown_emphasis  # noqa: E402
 from lint import check, korean_prose  # noqa: E402
 
 PAGE = """---
@@ -75,9 +76,13 @@ def _clean_tool(root: Path, name: str, source: str) -> None:
     _tool(root, name, FIXED + source)
 
 
-def kinds(root: Path) -> set[str]:
+def kinds_and_messages(root: Path) -> list[tuple[str, str]]:
     _loaded, _declared, findings = check(wiki=root, adapters=root / "none")
-    return {kind for kind, _msg in findings}
+    return findings
+
+
+def kinds(root: Path) -> set[str]:
+    return {kind for kind, _msg in kinds_and_messages(root)}
 
 
 def run(label: str, mutate, expect: str) -> bool:
@@ -255,10 +260,29 @@ def main() -> int:
     # the fourth found the guess going wrong the expensive way: an unclosed
     # `"` pairs with a later one and the Korean between the two disappears
     # from the gate. Every one of these has to be caught.
+    #
+    # The HTML lines are here because a version that gathered the text of
+    # everything the parser did *not* call a code span had to decide what
+    # every other token kind contributes, and decided `html_block` wrong: a
+    # `<div>` around a Korean line hid it from the gate outright. Reading a
+    # parse out token kind by token kind is the hand-written lexer returning
+    # through the parser's own door. The line is kept whole now and only the
+    # spans are taken away, so a token kind nobody thought about cannot hide
+    # anything.
     unmarked = {
         "double quotes": '# The marker "왜." is parsed.',
         "single quotes": "# The marker '왜.' is parsed.",
         "an apostrophe": "# It doesn't parse 왜. and won't either.",
+        "an HTML block": "# <div>한국어 산문이다.</div>",
+        "an HTML tag inline": "# <span>한국어 산문이다.</span>",
+        "an image's alt text": "# ![한국어 산문이다.](x)",
+        "a fence marker": f"# {tick * 3}한국어 산문이다.",
+        "a table row": "# | 한국어 산문이다. |",
+        "indented under the marker": (
+            'def f():\n    """English first.\n\n        한국어 산문이다.\n    """\n'
+        ),
+        "indented behind a `#`": "#     한국어 산문이다.",
+        "one of two, the other cited": f"# {tick}왜{tick} 왜.",
         "an unclosed quote": (
             'def f():\n'
             '    """The output starts with " but never closes it.\n'
@@ -314,6 +338,24 @@ def main() -> int:
           f"{[label for label, hit in lines if not hit] or f'{len(lines)}/{len(lines)}'}")
     if not ok:
         failed.append("발견 줄 번호 어긋남")
+
+    # Without the parser the check cannot run, and a gate that cannot run a
+    # check says so in its report and finishes the rest. Raising took the
+    # header, the findings already gathered and the reason with it and left a
+    # traceback — red, but silent about what was examined.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        build(root, CLEAN)
+        real, markdown_emphasis.parser = markdown_emphasis.parser, lambda: None
+        try:
+            reported = [msg for kind, msg in kinds_and_messages(root)
+                        if kind == "주석이 한국어다"]
+        finally:
+            markdown_emphasis.parser = real
+    ok = len(reported) == 1 and "markdown-it-py" in reported[0]
+    print(f"  {'통과 ' if ok else '실패 '} 파서가 없으면 보고하고 계속한다 → {reported or '없음'}")
+    if not ok:
+        failed.append("파서 부재가 보고 안 됨")
 
     print()
     if failed:
