@@ -1,4 +1,8 @@
-"""apply — 위키를 대상 저장소에 붙인다."""
+"""apply — attach the wiki to a target repository.
+
+Everything it prints is read by whoever is installing, so those strings are
+Korean.
+"""
 
 from __future__ import annotations
 
@@ -17,15 +21,17 @@ from inject import WIKI, adapter_path, slots_for  # noqa: E402
 from markdown_emphasis import recovery  # noqa: E402
 from wikilib import front_matter  # noqa: E402
 
-# `requirements-hooks.txt` 의 배포 이름과 임포트 이름. pip 이름으로는 설치
-# 여부를 못 물어보므로 짝이 필요하다. 이 표가 그 파일과 어긋나면 시험이 잡는다 —
-# 그게 이 표를 손으로 두 번 적는 것을 감당할 수 있게 만드는 유일한 이유다.
+# The distribution name and the import name from `requirements-hooks.txt`.
+# You cannot ask whether a pip name is installed, so the pair is needed. A
+# test catches this table drifting from that file, which is the only thing
+# that makes writing it out twice by hand bearable.
 NEEDED = {"PyYAML": "yaml", "markdown-it-py": "markdown_it"}
 
-# 훅이 돌 인터프리터가 갖춰야 하는 나머지. pip 으로 받는 것이 아니라 버전으로
-# 따라오는 것들이다. `tomllib` 을 빼먹은 판이 한 번 있었다 — 패키지 목록으로
-# 검사를 바꾸면서 stdlib 조건이 같이 사라졌고, 3.10 인터프리터가 배선 대상으로
-# 통과했다. "훅이 쓰는 것을 전부" 는 stdlib 과 버전 하한까지다.
+# The rest of what the hooks' interpreter has to have — things that come with
+# the version rather than from pip. One version left `tomllib` out: moving the
+# check to a package list took the stdlib condition with it, and a 3.10
+# interpreter passed as a wiring target. "Everything the hooks use" reaches
+# the stdlib and the version floor.
 FLOOR = (3, 11)
 BUILTIN = {"tomllib": "tomllib"}
 
@@ -127,10 +133,10 @@ def stale(settings: dict) -> list[str]:
 
 
 def declared() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
-    """페이지가 선언한 deny 규칙과 PreToolUse 스크립트.
+    """The deny rules and PreToolUse scripts the pages declare.
 
-    어느 페이지에서 왔는지 같이 든다. 강제가 어느 규칙에서 나왔는지 못 대면
-    나중에 그 규칙을 지울 때 강제가 남는다.
+    Each comes with the page it came from. Enforcement that cannot name the
+    rule behind it is enforcement that survives the rule being deleted.
     """
 
     denies: dict[str, list[str]] = {}
@@ -154,7 +160,7 @@ def declared() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
 
 
 def unfilled(adapter: str | None, project: Path | None = None) -> dict[str, list[str]]:
-    """채워지지 않은 슬롯. 주입될 페이지의 것만 본다."""
+    """Slots left unfilled, counting only the pages that will be injected."""
 
     values = slots_for(adapter, project)
     missing: dict[str, list[str]] = {}
@@ -185,9 +191,10 @@ def hook_entry(python: str, adapter: str | None, project: str = "") -> dict:
                     f'"{python}" "{(HERE / "inject.py").as_posix()}"'
                     f"{selection}{where}"
                 ),
-                # 10 이었다. `inject.py` 가 발화의 영어본을 붙이면서 Gemini
-                # 왕복(실측 1.2초)이 들어왔다. `translate.py` 자체 상한이 6초라
-                # 번역이 최악으로 늦어도 훅은 예산 안에서 끝난다.
+                # Was 10. `inject.py` attaches an English rendering of the
+                # utterance, which brought a Gemini round trip in — measured
+                # at 1.2 seconds. `translate.py` caps itself at 6, so even at
+                # its worst the hook finishes inside the budget.
                 "timeout": 15,
                 "statusMessage": "위키 확인",
             }
@@ -204,8 +211,9 @@ def session_entry(python: str, project: str) -> dict:
                     f'"{python}" "{(HERE / "session_state.py").as_posix()}"'
                     f' --project "{project}"'
                 ),
-                # 15 였다. `report()` 가 결정·계획·문서 제목을 한 번에 묶어
-                # 번역한다. 묶어도 첫 세션은 캐시가 비어 있어 가장 느리다.
+                # Was 15. `report()` translates decisions, plans and document
+                # titles in one batch. Even batched, the first session is the
+                # slowest, because the cache is empty.
                 "timeout": 25,
                 "statusMessage": "위키: 현재 상태",
             }
@@ -214,7 +222,7 @@ def session_entry(python: str, project: str) -> dict:
 
 
 def sync_entry(python: str, project: str) -> dict:
-    """위키를 저장소 상태에 맞추는 훅. 일이 끝날 때 돈다."""
+    """The hook that brings the wiki level with the repository, on Stop."""
 
     return {
         "hooks": [
@@ -232,10 +240,11 @@ def sync_entry(python: str, project: str) -> dict:
 
 
 def continuation_entry(python: str) -> dict:
-    """이어서 하겠다고 적고 도구를 안 부른 턴을 되돌리는 훅.
+    """The hook that reverts a turn which promised to continue and called nothing.
 
-    `--project` 를 안 받는다. 판정에 필요한 것은 전사 경로뿐이고 그것은 훅이
-    stdin 으로 받으므로, 경로를 인자로 주면 두 곳이 같은 것을 말하게 된다.
+    It takes no `--project`. All the judgement needs is the transcript path
+    and the hook receives that on stdin, so passing a path as an argument
+    would leave two places stating the same thing.
     """
 
     return {
@@ -266,10 +275,10 @@ def script_entry(python: str, script: str, status: str) -> dict:
 
 
 def put_hook(settings: dict, event: str, script: str, entry: dict) -> list[str]:
-    """한 이벤트에 훅 하나를 건다. 같은 스크립트가 이미 있으면 명령만 갱신한다.
+    """Attach one hook to one event, updating the command if it is already there.
 
-    이름이 아니라 `runs` 가 자기 것을 가린다. 이름으로 찾으면 사용자가 붙인
-    훅과 구별이 안 되고, 그러면 남의 훅을 덮는다.
+    `runs` decides what is ours, not the name. Matching by name cannot tell
+    our hook from one the person attached, and then it overwrites theirs.
     """
 
     groups = settings.setdefault("hooks", {}).setdefault(event, [])
@@ -333,7 +342,7 @@ def merge(
     sync: dict | None = None,
     continuation: dict | None = None,
 ) -> list[str]:
-    """설정에 합치고 무엇을 더했는지 돌려준다. 기존 값은 안 건드린다."""
+    """Merge into the settings and return what was added. Existing values stand."""
 
     changes: list[str] = []
 
@@ -361,7 +370,7 @@ def merge(
 
 
 def configure(settings: dict, project: Path, adapter: str | None, python: str, agent: str) -> list[str]:
-    """설치와 드리프트 검사가 같은 배선 정의를 쓴다."""
+    """One wiring definition, shared by the install and the drift check."""
     where = project.as_posix()
     denies, scripts = declared()
     if agent == "codex":
@@ -376,13 +385,15 @@ def configure(settings: dict, project: Path, adapter: str | None, python: str, a
         changes = []
         for event, mark, entry in entries:
             if sys.platform == "win32":
-                # Codex는 PowerShell로 실행한다. 따옴표 경로는 & 없이는 문자열이다.
+                # Codex runs this through PowerShell, where a quoted path
+                # without `&` in front of it is just a string.
                 entry["hooks"][0]["command"] = "& " + entry["hooks"][0]["command"]
             if mark == CONTINUATION_MARK:
                 entry["hooks"][0]["command"] += " --codex"
             if event in ("SessionStart", "UserPromptSubmit"):
-                # 실측 주입은 최대 약 2만 자다. 기본 2,500 토큰이면 규칙이
-                # 파일 미리보기로 바뀌므로 여유를 두되 무제한으로 풀지는 않는다.
+                # A measured injection reaches about 20,000 characters. At the
+                # default of 2,500 tokens a rule turns into a file preview, so
+                # this is given room without being let off the leash.
                 entry["hooks"][0]["additionalContextLimit"] = 12000
             changes += put_hook(settings, event, mark, entry)
     else:
@@ -400,7 +411,7 @@ def configure(settings: dict, project: Path, adapter: str | None, python: str, a
 
 
 def installed_agents(project: Path) -> list[str] | None:
-    """이 PC의 선택. 설정 전체가 지워져도 설치 기대값은 남는다."""
+    """This machine's choice. What was installed survives the settings being wiped."""
     path = project / ".wiki/installed-agents.json"
     if not path.exists():
         return None
@@ -411,7 +422,8 @@ def installed_agents(project: Path) -> list[str] | None:
 
 
 def wiring_drift(project: Path, agents: tuple[str, ...] | None = None) -> list[tuple[str, str]]:
-    """읽기 전용. 어댑터의 기대 에이전트, 미등록 프로젝트는 설치된 에이전트를 본다."""
+    """Read-only. The adapter's expected agents, or for an unregistered project,
+    whichever agents are installed."""
     project = project.resolve()
     paths = {"claude": project / ".claude/settings.json", "codex": project / ".codex/hooks.json"}
     if agents is None:
@@ -428,12 +440,14 @@ def wiring_drift(project: Path, agents: tuple[str, ...] | None = None) -> list[t
     for agent in agents:
         try:
             settings = json.loads(paths[agent].read_text(encoding="utf-8")) if paths[agent].exists() else {}
-            # 자기 훅만 고른다. 남의 명령이 `commands[0]` 이 되면 그 안의 첫
-            # 따옴표 토큰이 "설치된 인터프리터" 로 읽혀, 배선이 멀쩡한데도
-            # 드리프트가 뜨고 게이트가 그것 때문에 떨어진다.
+            # Only our own hooks. If somebody else's command becomes
+            # `commands[0]`, the first quoted token in it is read as "the
+            # installed interpreter", and perfectly sound wiring reports
+            # drift — which is what then fails the gate.
             commands = [h.get("command", "") for g in settings.get("hooks", {}).get("UserPromptSubmit", [])
                         for h in g.get("hooks", []) if runs(h.get("command", ""), HOOK_MARK)]
-            # 실행 파일은 기계별 값이다. 설치된 인터프리터를 보존해 경로 차이 소음을 피한다.
+            # The executable is a per-machine value. Keeping the installed
+            # interpreter avoids reporting a path difference as drift.
             quoted = re.match(r'(?:&\s*)?"([^"]+)"', commands[0]) if commands else None
             python = quoted[1] if quoted else sys.executable
             adapter_match = re.search(r'--adapter\s+(?:"([^"]+)"|(\S+))', commands[0]) if commands else None
@@ -453,10 +467,11 @@ def wiring_drift(project: Path, agents: tuple[str, ...] | None = None) -> list[t
 
 
 def unusable(python: str) -> list[str]:
-    """훅이 돌 인터프리터에 없는 것. 비어 있으면 그 인터프리터로 붙여도 된다.
+    """What the hooks' interpreter is missing. Empty means it can be wired.
 
-    자기 프로세스가 아니라 `--python` 이 가리키는 것을 본다. 설치를 돌리는
-    인터프리터와 훅이 돌 인터프리터는 다를 수 있고, 조용히 죽는 것은 후자다.
+    Looks at whatever `--python` points at rather than at this process. The
+    interpreter running the install and the one the hooks will run under can
+    differ, and it is the second one that dies quietly.
     """
 
     names = {f"Python {FLOOR[0]}.{FLOOR[1]} 이상": None, **BUILTIN, **NEEDED}
@@ -475,17 +490,19 @@ def unusable(python: str) -> list[str]:
         done = subprocess.run([python, "-c", script], capture_output=True,
                               encoding="utf-8", errors="replace")
     except OSError as error:
-        # 경로가 아예 없거나 실행할 수 없는 것도 이 함수가 답할 일이다.
-        # 여기서 터지면 사용자는 설명 대신 트레이스백을 받는다.
+        # A path that is missing entirely, or cannot be executed, is still
+        # this function's question to answer. Raising here hands the person a
+        # traceback where an explanation belongs.
         return [f"실행할 수 없다 ({type(error).__name__})"]
     if done.returncode:
-        # 인터프리터가 이 검사조차 못 돌리면 그것이 답이다.
+        # An interpreter that cannot even run this check has answered.
         return [f"{python} 을 못 돌린다"]
     return [line for line in done.stdout.splitlines() if line.strip()]
 
 
 def main() -> int:
-    # 출력이 파이프로 가면 기본이 cp949 다. 인코딩을 환경에 안 맡긴다.
+    # Down a pipe the default here is cp949. The encoding is not left to the
+    # environment.
     sys.stdout.reconfigure(encoding="utf-8")
 
     parser = argparse.ArgumentParser(description="위키를 대상 저장소에 붙인다")
@@ -507,13 +524,15 @@ def main() -> int:
 
     print(f"# apply — {project.name}\n")
 
-    # 훅을 돌릴 인터프리터가 훅이 쓰는 것을 전부 읽을 수 있어야 한다. 못 읽으면
-    # 훅은 조용히 아무것도 안 하고, 그게 강제 계층의 가장 나쁜 실패 모양이다.
+    # The interpreter that will run the hooks has to be able to import
+    # everything they use. When it cannot, the hooks quietly do nothing, which
+    # is the worst shape a layer of enforcement can fail in.
     #
-    # 이 검사는 여기 하나만 있다. 설치 출구가 둘이라 — README 가 안내하는
-    # `apply --write` 와 `setup_agents` — 한쪽에만 걸었더니 다른 쪽으로 들어온
-    # 기계에서 강조 훅이 붙은 채로 매번 통과했다. 배선을 쓰는 것은 결국 이
-    # 함수 하나뿐이므로 검사도 여기 하나다.
+    # This check exists in exactly one place. There are two ways in — the
+    # `apply --write` the README documents, and `setup_agents` — and putting
+    # it on one of them let every machine that came through the other pass,
+    # every time, with the emphasis hook attached. Writing the wiring happens
+    # in this one function, so the check lives in this one function too.
     missing = unusable(args.python)
     if missing:
         needs = WIKI / "requirements-hooks.txt"

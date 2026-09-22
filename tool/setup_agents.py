@@ -1,4 +1,9 @@
-"""checkout의 규칙을 apply.py로 설치한다. 다운로드·호스트 신뢰 변경은 하지 않는다."""
+"""Install a checkout's rules through `apply.py`.
+
+Downloads nothing and changes no host's trust setting — both are the person's
+decision, made in the CLI's own interface. Everything printed is read by
+whoever is running the install, so those strings are Korean.
+"""
 
 import argparse
 import json
@@ -31,7 +36,8 @@ def hook_shell(agent):
         if shell:
             return [shell, "-NoProfile", "-NonInteractive", "-Command"]
         raise ValueError("Codex hook 실행에 필요한 PowerShell을 찾지 못했습니다.")
-    # 이 위키 버전의 Claude 명령은 Git Bash 형식이다. WSL의 bash.exe와 구분한다.
+    # This wiki version's Claude commands are in Git Bash form, which is not
+    # WSL's `bash.exe` — the two are told apart rather than assumed.
     git = shutil.which("git")
     bash = os.environ.get("CLAUDE_CODE_GIT_BASH_PATH")
     if not bash and git:
@@ -58,9 +64,10 @@ def install(project, choice, check, allow_dirty=False):
         raise ValueError("Python 3.11 이상이 필요합니다. 새 Python으로 이 명령을 다시 실행하세요.")
     import tomllib
 
-    # 훅이 쓰는 패키지 확인은 여기 없다. `apply.py` 가 배선을 쓰기 직전에
-    # 훅이 실제로 돌 인터프리터를 찔러 본다. 여기서 한 번 더 보면 이 프로세스의
-    # 인터프리터를 보게 되는데, 그것은 훅이 돌 인터프리터가 아닐 수 있다.
+    # The hooks' package check is deliberately not here. `apply.py` probes the
+    # interpreter the hooks will actually run under, right before it writes
+    # the wiring. Checking again here would examine this process's
+    # interpreter, which may not be that one at all.
     if not (wiki / "tool/apply.py").is_file():
         raise ValueError(f"위키 경로에 tool/apply.py가 없습니다: {wiki}. 완전한 위키 checkout을 사용하세요.")
     for path in (project, wiki, Path(sys.executable)):
@@ -69,9 +76,11 @@ def install(project, choice, check, allow_dirty=False):
                              "따옴표·달러·백틱·줄바꿈 없는 경로로 옮기세요. 공백·한글은 지원합니다.")
     actual = run(["git", "rev-parse", "HEAD"], wiki).strip()
     if project == wiki:
-        # 위키가 자기 자신을 대상으로 삼는 경우다. 버전 핀도 dirty 검사도 자기참조가 된다.
-        # 커밋할 때마다 핀이 낡고, 도구를 고치는 중에는 늘 dirty다. 설치되는 훅은 어차피
-        # 이 작업 트리를 가리키므로 "다른 버전을 쓰고 있는가"라는 물음 자체가 성립하지 않는다.
+        # The wiki targeting itself. Both the version pin and the dirty check
+        # become self-referential: the pin goes stale on every commit, and
+        # working on the tools means always being dirty. The hooks being
+        # installed point at this working tree anyway, so the question "are
+        # you on a different version" has nothing to compare.
         revision = actual
         print("자기 설치: 이 checkout의 현재 상태를 그대로 겁니다. 위키 버전 고정 검사는 하지 않습니다.")
     else:
@@ -87,7 +96,8 @@ def install(project, choice, check, allow_dirty=False):
         if allow_dirty:
             print("개발 검증: --allow-dirty-wiki 사용. 고정 버전의 배포 검증으로 세지 않습니다.")
 
-    # 부모 세션의 테스트용 WIKI_ROOT가 다른 허브를 가리켜도 설치 대상은 이 도구다.
+    # A parent session's test `WIKI_ROOT` may point at another hub. What gets
+    # installed is still this tool, from this checkout.
     os.environ["WIKI_ROOT"] = str(wiki)
     from apply import installed_agents, unfilled
     source = project / ".wiki/adapter.toml"
@@ -129,7 +139,8 @@ def install(project, choice, check, allow_dirty=False):
             print("Codex 프로젝트 신뢰와 /hooks 검토가 필요합니다. 질문 UI는 현재 호스트 도구 명세를 따르며, "
                   "미지원 시 Plan mode 또는 텍스트 선택지를 사용하세요.")
 
-    # 선택하지 않은 기존 설치도 보존한다. 다른 도구를 선택해 재실행해도 제거하지 않는다.
+    # An existing install for a host not chosen this time is preserved.
+    # Re-running with a different choice does not remove it.
     previous = installed_agents(project) or []
     expected = [agent for agent in SETTINGS if agent in agents or agent in previous or any(
         "tool/inject.py" in hook.get("command", "")
@@ -143,7 +154,8 @@ def install(project, choice, check, allow_dirty=False):
     files = [manifest, *(project / SETTINGS[agent] for agent in agents)]
     before = {path: path.read_bytes() if path.exists() else None for path in files}
     try:
-        # 공용 도구가 설정 구조를 모두 읽은 다음에만 실제 쓰기를 시작한다.
+        # Writing starts only after the shared tool has read every settings
+        # file. A half-written install across two hosts is worse than none.
         commands = [[sys.executable, "-X", "utf8", str(wiki / "tool/apply.py"),
                      "--project", str(project), "--agent", agent]
                     for agent in agents]
