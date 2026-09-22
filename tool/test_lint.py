@@ -251,15 +251,40 @@ def main() -> int:
     if quiet:
         failed.append("인용 오탐")
 
-    # And an apostrophe is not a quote. Two of them in one line read as a
-    # pair and would swallow the Korean between, which is a miss.
+    # And a quote mark inside a word is not a quote. Read as a pair these
+    # swallow the Korean between them, which is a miss — the failure the
+    # check was built to end. A digit and an underscore are inside a word
+    # too: a first version tested `[A-Za-z]` and let `6'` and `foo_'` open a
+    # span.
+    masked = {
+        "an apostrophe": "# It doesn't parse 왜. and won't either.",
+        "a prime after a digit": "# The 6' case parses 왜. unlike the 5' case.",
+        "an underscore before it": "# foo_' masks 왜. until bar_' here.",
+    }
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        _clean_tool(root, "apostrophes.py", "# It doesn't parse 왜. and won't either.\n")
+        for n, (label, source) in enumerate(masked.items()):
+            _clean_tool(root, f"masked{n}.py", source + "\n")
         caught = korean_prose(root)
-    print(f"  {'통과 ' if caught else '실패 '} 아포스트로피는 인용이 아니다 → {caught or '없음'}")
-    if not caught:
-        failed.append("아포스트로피 미탐")
+    ok = len(caught) == len(masked)
+    print(f"  {'통과 ' if ok else '실패 '} 낱말 안의 따옴표는 인용이 아니다 → {len(caught)}/{len(masked)}")
+    if not ok:
+        failed.append("낱말 안 따옴표 미탐")
+
+    # A citation that spans a line break. The unit is one docstring, not one
+    # line — splitting first meant such a quote could never close, and a
+    # docstring quoting across two lines was blocked as Korean prose.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _clean_tool(
+            root,
+            "spanning.py",
+            'def f():\n    """The parser cites “첫째\n    둘째” as one example."""\n',
+        )
+        spanning = korean_prose(root)
+    print(f"  {'통과 ' if not spanning else '실패 '} 줄 넘는 인용도 인용이다     → {spanning or '없음'}")
+    if spanning:
+        failed.append("줄 넘는 인용 오탐")
 
     print()
     if failed:

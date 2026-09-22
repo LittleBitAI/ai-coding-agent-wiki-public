@@ -204,11 +204,26 @@ HANGUL = re.compile(r"[가-힣]")
 # them, and read as a pair they swallow the Korean between — a miss, which is
 # the failure that produced this check in the first place. A quote mark with a
 # letter on both sides is inside a word.
+# `\w` rather than `[A-Za-z]`: a digit or an underscore sits inside a word
+# too. Two primes written after digits, and two written after underscores,
+# both read as a pair and hid the Korean between them — a digit and an
+# underscore fell outside a list of letters. The same mistake as listing
+# delimiters, one level down.
 CITED = re.compile(
-    r"`[^`\n]*`"
-    r"|[\"“][^\"”\n]*[\"”]"
-    r"|(?<![A-Za-z])['‘][^'’\n]*['’](?![A-Za-z])"
+    r"`[^`]*`"
+    r"|[\"“][^\"”]*[\"”]"
+    r"|(?<!\w)['‘][^'’]*['’](?!\w)"
 )
+
+
+def blank(match: re.Match[str]) -> str:
+    """Replace a citation with spaces, keeping the line structure intact.
+
+    The position of what is left has to survive, or the finding cannot say
+    which line it is on.
+    """
+
+    return "".join("\n" if c == "\n" else " " for c in match.group(0))
 
 
 def korean_prose(wiki: Path = WIKI) -> list[tuple[str, str]]:
@@ -225,6 +240,12 @@ def korean_prose(wiki: Path = WIKI) -> list[tuple[str, str]]:
     lines. A regex on `#` sees no docstring at all, and that is exactly how
     this was reported complete while 104 lines were still Korean: the
     measurement answered a narrower question than the claim made.
+
+    The unit is one comment or one whole docstring, never a line. Splitting
+    first was an artifact of wanting a line number to report, and it meant a
+    citation spanning a line break could never close — a docstring quoting
+    `“첫째` / `둘째”` across two lines was blocked as Korean prose. A comment
+    happens to be one line; a docstring is one text.
     """
 
     directory = wiki / "tool"
@@ -247,8 +268,7 @@ def korean_prose(wiki: Path = WIKI) -> list[tuple[str, str]]:
                                  ast.AsyncFunctionDef)):
                 doc = ast.get_docstring(node, clean=False)
                 if doc:
-                    at = getattr(node, "lineno", 1)
-                    pieces += [(at, line) for line in doc.splitlines()]
+                    pieces.append((getattr(node, "lineno", 1), doc))
         try:
             for token in tokenize.generate_tokens(io.StringIO(source).readline):
                 if token.type == tokenize.COMMENT:
@@ -256,9 +276,12 @@ def korean_prose(wiki: Path = WIKI) -> list[tuple[str, str]]:
         except tokenize.TokenError:
             continue
 
-        for at, line in pieces:
-            if HANGUL.search(CITED.sub(" ", line)):
-                found.append((f"tool/{path.name}:{at}", line.strip()[:60]))
+        for at, piece in pieces:
+            bare = CITED.sub(blank, piece)
+            for n, line in enumerate(bare.splitlines()):
+                if HANGUL.search(line):
+                    shown = piece.splitlines()[n].strip()
+                    found.append((f"tool/{path.name}:{at}", shown[:60]))
     return found
 
 
