@@ -330,13 +330,17 @@ def test_it_runs_as_a_process_and_korean_survives_the_pipe(tmp_path: Path) -> No
         text=True,
         encoding="utf-8",
         errors="replace",
-        # No key, and a cache of its own. Dropping the key alone is not enough:
-        # the cache answers before the key is read, so a real cache entry from
-        # an earlier run would translate this and the assert below would flip.
+        # No key, a cache of its own, and no `.env` either. Dropping the key
+        # from the environment is not enough twice over: the cache answers
+        # before the key is read, and `.env` is read from disk, where an
+        # emptied environment cannot reach it. On a machine with a real key
+        # beside the repository this translated for real and the assert below
+        # flipped — the check passed only where nobody had set the tool up.
         env={
             "PATH": "",
             "SYSTEMROOT": "C:\\Windows",
             "TRANSLATE_CACHE": str(tmp_path / "cache.sqlite3"),
+            "TRANSLATE_ENV": str(tmp_path / "absent.env"),
         },
         check=False,
     )
