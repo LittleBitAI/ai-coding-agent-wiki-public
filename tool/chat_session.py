@@ -1,4 +1,9 @@
-"""Claude의 살아 있는 프로세스와 Codex의 명시적 resume을 대화 하나로 감싼다."""
+"""Wrap Claude's live process and Codex's explicit resume as one conversation.
+
+The two hosts keep a conversation in different ways and the screen must not
+have to know which. What reaches the screen is read by a person, so those
+strings stay Korean.
+"""
 
 from __future__ import annotations
 
@@ -14,22 +19,23 @@ from pathlib import Path
 
 from chat_local import cli_command
 
-# 브라우저에서 열리는 것이 파일을 고치면 그건 채팅이 아니라 원격 셸이다.
-# 그래서 Edit·Write 는 목록에 없다.
+# Something opened in a browser that edits files is not a chat, it is a remote
+# shell. So `Edit` and `Write` are not on the list.
 #
-# ponytail: Bash 는 있다. `git log` 와 `tool/*.py` 를 부르려면 필요하고, 그것
-# 없이는 채널 넷이 다 반쪽이 된다. 셸이므로 이론상 쓰기가 가능하지만 대상
-# 저장소의 `permissions.deny`(git reset --hard · sed -i · secrets)가 그대로
-# 걸린다. 더 조이려면 Bash 대신 도구별 엔드포인트를 파라.
+# ponytail: `Bash` is. Calling `git log` and `tool/*.py` needs it, and without
+# it four of the channels are half of themselves. Being a shell it can write
+# in principle, but the target repository's `permissions.deny` still applies —
+# `git reset --hard`, `sed -i`, secrets. To close it further, dig per-tool
+# endpoints instead of Bash.
 READ_TOOLS = "Bash,Read,Glob,Grep"
 
-BOOT_TIMEOUT = 120.0   # 첫 턴은 훅과 적재가 있어 느리다
+BOOT_TIMEOUT = 120.0   # the first turn is slow: hooks, and loading
 TURN_TIMEOUT = 600.0
 
 
 @dataclass
 class Event:
-    """화면이 알아야 하는 것만. 나머지 이벤트 종류는 여기서 버린다."""
+    """Only what the screen needs to know. Every other event kind is dropped here."""
 
     kind: str          # "delta" | "tool" | "done" | "error"
     text: str = ""
@@ -42,7 +48,7 @@ def _blocks(message: dict) -> list[dict]:
 
 
 class ChatSession:
-    """한 채널의 살아 있는 대화. 한 번에 한 턴만 돈다."""
+    """One channel's live conversation. One turn runs at a time."""
 
     def __init__(self, repo: Path, tools: str = READ_TOOLS,
                  system: str = "", model: str | None = None,
@@ -50,12 +56,14 @@ class ChatSession:
                  isolated: bool = False) -> None:
         self.repo = Path(repo)
         self.tools = tools
-        # 채널의 성격은 시스템 프롬프트로 붙인다. 처음엔 이것을 첫 턴으로
-        # 태웠는데 그 한 턴이 2분을 먹었다 — 모델이 소개를 읽고 파일을 뒤진다.
-        # 시스템 프롬프트는 턴을 안 쓰고 첫 발화부터 걸린다.
+        # A channel's character goes in as a system prompt. The first version
+        # sent it as the opening turn and that one turn took two minutes — the
+        # model reads the introduction and starts going through files. A
+        # system prompt costs no turn and applies from the first utterance.
         self.system = system.strip()
-        # 모델과 effort 는 띄울 때 정해진다. 바꾸려면 `reconfigure` 가 프로세스를
-        # 다시 띄우는데, 그때 `--resume` 으로 이어 붙여 대화를 안 잃는다.
+        # The model and the effort are fixed when the process starts. Changing
+        # either means `reconfigure` starting it again, and it reconnects with
+        # `--resume` so the conversation is not lost.
         self.model = model or None
         self.effort = effort or None
         self.isolated = isolated
@@ -72,7 +80,7 @@ class ChatSession:
     def is_codex(self) -> bool:
         return bool(self.model and self.model.startswith("codex:"))
 
-    # -- 수명 --------------------------------------------------------------
+    # -- Lifetime -----------------------------------------------------------
 
     def _spawn(self) -> None:
         cmd = [
@@ -85,7 +93,8 @@ class ChatSession:
             "--allowedTools", self.tools,
         ]
         if self.isolated:
-            # --bare는 구독 로그인도 생략한다. 인증은 유지하고 설정·훅·도구만 격리한다.
+            # `--bare` would skip the subscription login too. The sign-in is
+            # kept; only the settings, hooks and tools are isolated.
             cmd += ["--setting-sources", "", "--settings", '{"disableAllHooks":true}',
                     "--strict-mcp-config", "--no-session-persistence"]
         if self.system:
@@ -124,7 +133,8 @@ class ChatSession:
         threading.Thread(target=self._pump_stderr, args=(self._proc, self._stderr), daemon=True).start()
 
     def _pump(self, proc, events) -> None:
-        # 이전 프로세스의 종료 알림을 다음 프로세스의 큐에 섞지 않는다.
+        # The previous process's exit notice must not land in the next
+        # process's queue.
         assert proc.stdout
         for line in proc.stdout:
             line = line.strip()
@@ -134,7 +144,8 @@ class ChatSession:
                 events.put(json.loads(line))
             except json.JSONDecodeError:
                 continue
-        # 프로세스가 죽으면 기다리는 쪽이 영영 안 깨어난다. 문을 닫아 준다.
+        # With the process gone, whoever is waiting never wakes up. Close the
+        # door for them.
         events.put({"type": "__closed__"})
 
     @staticmethod
@@ -150,19 +161,20 @@ class ChatSession:
     def ensure(self) -> None:
         with self._start:
             if not self.alive:
-                # 이어 붙일 세션이 있으면 그 id 를 들고 다시 뜬다. 없으면
-                # 새 대화다.
+                # With a session to reconnect to, start again carrying its id.
+                # Without one, this is a new conversation.
                 self._resume = self.session_id
                 self._events = queue.Queue()
                 self._spawn()
 
     def reconfigure(self, model: str | None, effort: str | None) -> None:
-        """모델·effort 를 바꾼다. 대화는 안 잃는다.
+        """Change the model or the effort without losing the conversation.
 
-        둘 다 띄울 때 정해지는 값이라 프로세스를 다시 띄워야 한다. 그런데
-        그냥 다시 띄우면 앞의 대화가 사라지므로, 지금 세션 id 를 들고
-        `--resume` 으로 붙는다. 다음 발화 때 실제로 뜬다 — 안 물어볼 채널을
-        미리 띄워 둘 이유가 없다.
+        Both are fixed at start-up, so the process has to start again — and
+        simply restarting it loses everything said so far. It reconnects with
+        `--resume`, carrying the current session id. The restart happens on
+        the next utterance: there is no reason to spin up a channel nobody is
+        going to ask anything.
         """
 
         if (model or None) == self.model and (effort or None) == self.effort:
@@ -183,10 +195,10 @@ class ChatSession:
             proc.kill()
             proc.wait(timeout=5)
 
-    # -- 한 턴 -------------------------------------------------------------
+    # -- One turn -----------------------------------------------------------
 
     def say(self, text: str):
-        """발화 하나를 보내고 이벤트를 흘린다. 한 번에 한 턴만 돈다."""
+        """Send one utterance and stream the events. One turn runs at a time."""
 
         if not self._turn.acquire(blocking=False):
             yield Event("error", "앞 턴이 아직 안 끝났다.")
@@ -195,7 +207,8 @@ class ChatSession:
         try:
             self.ensure()
             assert self._proc and self._proc.stdin
-            # 버려진 턴은 finally에서 닫는다. 시작 이벤트가 있는 큐는 비우지 않는다.
+            # An abandoned turn is closed in `finally`. A queue that already
+            # holds a start event is not drained.
             payload = {"type": "user", "message": {
                 "role": "user", "content": [{"type": "text", "text": text}]}}
             try:
@@ -264,7 +277,8 @@ class ChatSession:
 
             if kind == "system" and ev.get("subtype") == "init":
                 self.session_id = ev.get("session_id") or self.session_id
-                # "기본" 을 골랐을 때 실제로 무엇이 붙었는지는 여기서만 안다.
+                # When "default" was chosen, this is the only place that knows
+                # what actually got attached.
                 self.model_name = str(ev.get("model") or "")
 
             elif kind == "stream_event":
@@ -288,8 +302,9 @@ class ChatSession:
                      "error": bool(ev.get("is_error")),
                      "session_id": ev.get("session_id"),
                      "model": self.model_name,
-                     # 이 위키는 주입 글자수를 노드 크기로 그릴 만큼 비용에
-                     # 민감하다. effort 가 무엇을 치르는지는 여기서 보여야 한다.
+                     # This wiki is cost-sensitive enough to draw injected
+                     # character counts as node sizes. What an effort level
+                     # costs has to be visible here too.
                      "cost_usd": ev.get("total_cost_usd"),
                      "tokens": {
                          "in": usage.get("input_tokens"),
@@ -302,7 +317,7 @@ class ChatSession:
 
 
 def _tool_brief(block: dict) -> str:
-    """도구 한 줄. 무엇을 하고 있는지만 보이면 된다."""
+    """One line per tool. All it has to show is what is being done."""
 
     name = str(block.get("name") or "?")
     args = block.get("input") or {}
@@ -314,7 +329,11 @@ def _tool_brief(block: dict) -> str:
 
 
 def explain(answer: str, model: str = "", effort: str = ""):
-    """원문만 새 세션에 전달한다. 검색 프롬프트·채널·대화 이력은 전달하지 않는다."""
+    """Hand only the answer to a fresh session.
+
+    Not the search prompt, not the channel, not the conversation so far — the
+    plain explanation is written from the answer alone.
+    """
     prompt = (Path(__file__).parent / "prompts/chat-explain.md").read_text(encoding="utf-8")
     with tempfile.TemporaryDirectory(prefix="wiki-explain-") as folder:
         chat = ChatSession(Path(folder), tools="", system=prompt, model=model,
@@ -326,7 +345,7 @@ def explain(answer: str, model: str = "", effort: str = ""):
 
 
 def demo() -> None:
-    """두 턴이 한 프로세스에서 이어지는가. 이것이 이 파일의 전제다."""
+    """Do two turns continue in one process? That is this file's premise."""
 
     import sys
     import time
@@ -335,8 +354,9 @@ def demo() -> None:
     here = Path(__file__).resolve().parent.parent
     chat = ChatSession(here)
 
-    # 답의 문구를 재면 표현 하나에 빨개진다. 재야 하는 것은 둘째 턴이 첫째
-    # 턴을 기억하느냐이므로, 기억할 표를 하나 주고 그것만 대조한다.
+    # Measuring the wording of an answer goes red on one turn of phrase. What
+    # has to be measured is whether the second turn remembers the first, so it
+    # is handed one token to remember and only that is compared.
     token = "MARMOT-77"
 
     said = []
@@ -354,7 +374,7 @@ def demo() -> None:
 
     chat.close()
     assert len(said) == 2, said
-    assert token in said[1], said[1]  # 한 프로세스가 앞 턴을 들고 있다
+    assert token in said[1], said[1]  # one process is holding the first turn
     print(f"ok  두 턴이 이어진다 — {first:.1f}s → {second:.1f}s")
     print(f"    1: {said[0][:60]}")
     print(f"    2: {said[1][:60]}")

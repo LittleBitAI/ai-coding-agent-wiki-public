@@ -1,8 +1,17 @@
-"""SessionStart 훅 — 세션을 "지금 어디인가" 를 아는 채로 시작하게 한다."""
+"""SessionStart hook — begin a session already knowing where things stand.
+
+Three languages meet here and each has a reason. The Korean this file *reads*
+is the plan documents and decision records, which are written in Korean; the
+Korean it *prints* goes to Slack and the web handover, where a person reads
+it; and the context handed to the agent is English. Only the last of those is
+translated, and only at the one point where it crosses over.
+"""
 
 from __future__ import annotations
 
-import hook_diagnostics  # noqa: F401 -- 진입점의 제한 시간 전 스택 보존
+# First import of the entry point: it keeps the stack from before whatever
+# time limit kills this.
+import hook_diagnostics  # noqa: F401
 import argparse
 import json
 import re
@@ -17,12 +26,13 @@ sys.path.insert(0, str(HERE))
 import translate  # noqa: E402
 from wikilib import front_matter  # noqa: E402
 
-MAX_PLANS = 2       # 계획 문서를 몇 개까지 볼 것인가
-MAX_ROWS = 8        # 한 계획에서 미완 행 몇 개까지
-MAX_DECISIONS = 4   # 최근 결정 몇 건
+MAX_PLANS = 2       # How many plan documents to look at
+MAX_ROWS = 8        # How many unfinished rows from one plan
+MAX_DECISIONS = 4   # How many recent decisions
 
-# 번역 전체에 주는 시간. 훅 예산 25초 아래에 둔다 — 넘기면 번역이 아니라
-# 주입 전체를 잃는다. 못 끝낸 문자열은 한국어 원문으로 나간다.
+# The budget for the whole translation, kept under the hook's own 25 seconds.
+# Going over does not cost the translation, it costs the entire injection.
+# Whatever is not done by then goes out as the Korean original.
 BUDGET = 18.0
 
 
@@ -38,14 +48,16 @@ def run(repo: Path, *args: str) -> str:
 
 
 def branch_line(repo: Path, english: bool = False) -> str:
-    """기본은 한국어다. 영어는 부르는 쪽이 명시적으로 고른다.
+    """Korean by default. English is something the caller asks for.
 
-    `slack_brief.standup` 과 `chat.handoff` 가 이 함수를 같이 쓰고, 둘 다
-    사람이 읽는 화면에 그대로 싣는다. 여기서 언어를 바꾸면 에이전트 컨텍스트
-    하나를 고치려다 Slack 과 웹 인계까지 영어가 된다.
+    `slack_brief.standup` and `chat.handoff` share this function and put what
+    it returns straight onto a screen a person reads. Flipping the language
+    here to fix one agent context would turn Slack and the web handover
+    English along with it.
 
-    번역기에 안 태운다. 우리가 만드는 고정 문자열이라 영어 표기를 그냥 적으면
-    되고, 세션 시작마다 왕복 하나를 아낀다.
+    No translator. These are fixed strings this file writes itself, so the
+    English is simply written out, and a round trip is saved on every session
+    start.
     """
 
     branch = run(repo, "rev-parse", "--abbrev-ref", "HEAD") or "?"
@@ -63,11 +75,12 @@ def branch_line(repo: Path, english: bool = False) -> str:
 
 
 def open_steps(path: Path) -> list[str]:
-    """계획 문서의 `## 단계` 표에서 아직 안 끝난 행.
+    """The rows of a plan's `## 단계` table that are not finished.
 
-    이 저장소의 계획 문서는 단계마다 상태 칸을 갖는다. 완료도 취소도 아닌 행이
-    지금 남은 일이다. 표가 없으면 빈 목록이고, 그때는 아무 말도 안 한다 —
-    형식을 못 읽었는데 읽은 척하면 틀린 것을 자신 있게 말하게 된다.
+    A plan document here gives every step a status cell, and a row that is
+    neither done nor cancelled is what is left. No table means an empty list
+    and nothing said — a format that could not be read, reported as if it had
+    been, is how a wrong thing gets said confidently.
     """
 
     text = path.read_text(encoding="utf-8")
@@ -103,14 +116,15 @@ def plans(repo: Path) -> list[tuple[Path, list[str]]]:
 
 
 def active_page(repo: Path) -> tuple[str, list[str]]:
-    """`.wiki/plan-active.md` 와 그것이 낡았는지.
+    """`.wiki/plan-active.md`, and whether it has gone stale.
 
-    자유 형식 계획 문서를 기계가 파싱하면 없는 것을 있다고 말한다. 실제로 한
-    저장소의 계획은 `## 단계` 표가 다 끝났는데 남은 일은 상태 칸이 없는 다른
-    표에 있었다. 그래서 무엇이 열려 있는지는 사람이 손대는 페이지가 든다.
+    A machine parsing a free-form plan reports things that are not there. In
+    one repository the `## 단계` table was finished while the actual remaining
+    work sat in another table with no status column at all. So what is open is
+    held by a page a person maintains.
 
-    대신 낡음은 기계가 안다 — 가리키는 계획 문서가 이 페이지보다 나중에
-    고쳐졌으면 그렇게 말한다.
+    Staleness is the part a machine can answer: if a plan this page points at
+    was edited after the page itself, say so.
     """
 
     path = repo / ".wiki" / "plan-active.md"
@@ -141,19 +155,21 @@ def decisions(repo: Path) -> list[tuple[str, str]]:
             (x[3:].strip() for x in body.splitlines() if x.startswith("왜.")),
             "",
         )
-        # 첫 문장만. 전문은 파일에 있고, 세션 시작에 네 건의 전문을 실으면
-        # 정작 하던 일이 밀린다.
+        # The first sentence only. The full text is in the file, and four full
+        # texts at session start push out the work the session came to do.
         head = re.split(r"(?<=다\.)\s", why, maxsplit=1)[0]
         found.append((title, head[:160] + (" …" if len(head) > 160 else "")))
     return found
 
 
 def doc_catalog(repo: Path) -> str:
-    """저장소 문서 목록. 없으면 빈 문자열.
+    """The repository's document listing, or an empty string.
 
-    목록 전체가 9천 자라 세션 시작에 한 번 실으면 발화마다 드는 비용이 0 이다.
-    무엇을 열지 고르는 것은 이 목록을 받은 쪽이 한다 — 대화 맥락을 다 가진
-    쪽이 코사인보다 낫고, 한국어 질의와 영어 문서 사이도 그냥 잇는다.
+    The whole listing is about nine thousand characters, so carrying it once
+    at session start costs nothing per utterance afterwards. Choosing what to
+    open is left to whoever receives it: the side holding the conversation
+    beats a cosine score, and it bridges a Korean question and an English
+    document without anything in between.
     """
 
     try:
@@ -166,11 +182,12 @@ def doc_catalog(repo: Path) -> str:
 
 
 def titled(listing: str) -> tuple[list[str], list[int]]:
-    """`(제목들, 그 제목이 있던 줄 번호)`. 경로는 제목이 아니다.
+    """`(titles, the line each came from)`. A path is not a title.
 
-    목록 전체를 번역기에 넣으면 파일 이름과 디렉터리까지 번역 대상이 된다.
-    코드 펜스로 감싸서 막으려 하면 이번엔 통째로 보호돼 제목도 안 바뀐다.
-    그래서 제목만 뽑아 보내고 경로는 손대지 않는다.
+    Handing the whole listing to the translator makes filenames and directory
+    names translation targets. Wrapping it in a code fence to stop that
+    protects the whole thing instead, titles included. So the titles are
+    lifted out and sent, and the paths are never touched.
     """
 
     rows, at = [], []
@@ -189,15 +206,17 @@ def retitled(listing: str, rows: list[str], at: list[int]) -> str:
 
 
 def report(repo: Path) -> str:
-    """세션 시작 컨텍스트. **에이전트 입력이므로 영어다.**
+    """The session-start context. English, because it is agent input.
 
-    한국어는 이 저장소의 정본으로 남는다 — 커밋 메시지도 `.wiki/decisions/`
-    도 사람이 GitHub 에서 읽으니까. 번역은 그것이 에이전트에게 건너가는
-    **이 한 자리**에서만 일어난다. 읽어 오는 함수들은 한국어 그대로 둔다.
+    Korean stays the authoritative copy in this repository — commit messages
+    and `.wiki/decisions/` are read by people on GitHub. The translation
+    happens at this one place, where that text crosses over to the agent, and
+    the functions that read it leave Korean alone.
 
-    번역은 한 번에 묶어 보낸다. 문자열마다 따로 기다리면 결정 네 건만으로도
-    24초이고 훅 예산이 25초다 — 그러면 번역이 아니라 주입 전체를 잃는다.
-    마감까지 못 끝낸 것은 한국어 원문으로 조립해 **반드시** 내보낸다.
+    One batched request. Waiting on each string separately takes 24 seconds
+    for four decisions against a 25-second hook budget, and going over loses
+    the whole injection rather than the translation. Whatever misses the
+    deadline is assembled from the Korean original and sent regardless.
     """
 
     deadline = time.monotonic() + BUDGET
@@ -268,7 +287,8 @@ def report(repo: Path) -> str:
 
 
 def main() -> int:
-    # 훅 stdout 은 파이프고 기본이 cp949 다. 인코딩을 환경에 안 맡긴다.
+    # A hook's stdout is a pipe and its default here is cp949. The encoding is
+    # not left to the environment.
     sys.stdin.reconfigure(encoding="utf-8")
     sys.stdout.reconfigure(encoding="utf-8")
 
@@ -277,7 +297,7 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        sys.stdin.read()  # 훅 입력은 안 쓰지만 파이프는 비워 준다
+        sys.stdin.read()  # the input is unused, but the pipe gets drained
     except Exception:
         pass
 
@@ -286,7 +306,7 @@ def main() -> int:
         return 0
     text = report(repo)
     if text.count("\n") < 4:
-        return 0  # 브랜치 한 줄뿐이면 넣을 값어치가 없다
+        return 0  # one branch line on its own is not worth injecting
 
     json.dump(
         {
@@ -303,7 +323,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    # 훅은 무슨 일이 있어도 세션을 멈추면 안 된다. 이름만 남기고 통과시킨다.
+    # Whatever happens, a hook does not stop the session. Leave the name of
+    # what went wrong and pass.
     try:
         _code = main()
     except Exception as _error:  # noqa: BLE001

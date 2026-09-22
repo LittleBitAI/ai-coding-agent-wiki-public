@@ -1,4 +1,7 @@
-"""lint — 위키가 썩는 다섯 자리를 찾는다."""
+"""lint — find the places a wiki rots.
+
+Every finding is printed for a person, so those strings are Korean.
+"""
 
 from __future__ import annotations
 
@@ -10,11 +13,13 @@ import re
 import subprocess
 import sys
 import tokenize
+from collections import Counter
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import markdown_emphasis  # noqa: E402
 from wikilib import (  # noqa: E402
     SCOPES, WIKI, git_ok, links_of, metadata_errors, pages, resolve,
 )
@@ -25,10 +30,11 @@ def check(
     adapters: Path | None = None,
     repos: list[Path] | None = None,
 ) -> tuple[dict[str, tuple[dict, str, Path]], set[frozenset[str]], list[tuple[str, str]]]:
-    """페이지를 읽어 발견을 낸다. 인쇄는 `main` 이 한다.
+    """Read the pages and produce findings. `main` does the printing.
 
-    `wiki` 를 인자로 받는 이유는 이 함수를 임시 위키에 돌려 각 검사가 실제로
-    빨개지는지 보기 위해서다. 발견 0건짜리 초록은 검사가 도는 증거가 아니다.
+    `wiki` is a parameter so this can be run against a throwaway wiki and each
+    check watched actually going red. A green with zero findings is not
+    evidence that a check ran.
     """
 
     adapters = adapters if adapters is not None else wiki / "adapters"
@@ -44,14 +50,14 @@ def check(
         findings += wiring_drift(wiki)
     findings += fragile_io(wiki)
     findings += loud_emphasis(wiki)
-    # `--repo` 로 준 저장소도 본다. `repo_lint` 가 같은 검사를 들지만 그것은
-    # 대상 저장소에서 따로 도는 것이라, 허브에서 한 번에 훑을 때 안 보면
-    # "여기서는 전부 봤다" 가 거짓이 된다.
+    # Repositories given with `--repo` are looked at too. `repo_lint` holds
+    # the same checks, but it runs inside the target repository; skipping them
+    # on a hub-wide sweep would make "everything here was looked at" false.
     for repo in repos:
         findings += loud_emphasis(repo)
     findings += missing_hook_guards(wiki, loaded)
 
-    # --- 1. 끊어진 링크
+    # --- 1. Broken links
     inbound: dict[str, set[str]] = {name: set() for name in names}
     for name, (meta, body, _path) in loaded.items():
         for target in links_of(meta, body):
@@ -61,7 +67,7 @@ def check(
             else:
                 inbound[hit].add(name)
 
-    # --- 2. 고아 페이지
+    # --- 2. Orphan pages
     for name in sorted(names):
         if not inbound[name]:
             findings.append((
@@ -69,7 +75,7 @@ def check(
                 f"`{name}` 를 아무도 링크하지 않는다",
             ))
 
-    # --- 3. 낡은 서술 (기계가 확실히 아는 것만)
+    # --- 3. Stale statements, and only the ones a machine is sure of
     for name, (meta, body, _path) in loaded.items():
         severity = str(meta.get("severity") or "")
         # Public exports retain severity while withholding the private source records.
@@ -98,7 +104,7 @@ def check(
                         f"`{name}` 가 `{ref}` 를 가리키는데 `{repo.name}` 에 없다",
                     ))
 
-    # --- 4. 모순 — 선언되지 않은 것만
+    # --- 4. Contradictions, and only the ones nobody declared
     declared: set[frozenset[str]] = set()
     for name, (meta, _body, _path) in loaded.items():
         for entry in meta.get("conflicts_with") or []:
@@ -125,14 +131,16 @@ def check(
                 "슬롯은 원래 그러라고 있다",
             ))
 
-    # --- 5. 빠진 연결
+    # --- 5. Missing links
     #
-    # 같은 발화에 함께 주입되는가로 잰다. 한 턴에 나란히 실리는 두 규칙이
-    # 서로를 모르면 읽는 쪽이 둘의 관계를 못 읽는다. 그것이 빠진 연결이다.
+    # Measured by whether two pages are injected into the same utterance. Two
+    # rules that arrive side by side in one turn and do not know about each
+    # other leave the reader unable to see the relation. That is the link
+    # that is missing.
     #
-    # 근거 공유로는 재지 않는다. 근거가 census 코퍼스 파일이면 모든 페이지가
-    # 그것을 공유하므로 전부가 서로 이어진 것처럼 보인다. 코퍼스는 특정 주장이
-    # 아니라 자료 전체다.
+    # Not measured by shared grounds. When the grounds are a census corpus
+    # file every page shares it, and everything looks connected to everything.
+    # A corpus is the whole body of material, not a particular claim.
     triggers_of = {
         name: [str(t) for t in (meta.get("triggers") or [])]
         for name, (meta, _b, _p) in loaded.items()
@@ -153,7 +161,7 @@ def check(
                     f"(공유 트리거 {shared[:2]}) 서로 링크하지 않는다",
                 ))
 
-    # --- 7. 인코딩을 환경에 맡긴 도구
+    # --- 7. Tools that leave their encoding to the environment
     for name in fragile_tools(wiki):
         findings.append((
             "인코딩 미고정",
@@ -161,7 +169,7 @@ def check(
             'cp949 에서 한 글자에 죽는다. `sys.stdout.reconfigure(encoding="utf-8")`',
         ))
 
-    # --- 8. 폭에 맞추려고 한 호흡을 갈라 놓은 줄바꿈
+    # --- 8. Line breaks that split one breath to fit a width
     for where, before, after in broken_wraps(wiki):
         findings.append((
             "끊긴 줄바꿈",
@@ -169,22 +177,232 @@ def check(
             "폭이 아니라 문장·절 경계에서 끊어라",
         ))
 
+    # --- 9. Comments and docstrings still written in Korean
+    if markdown_emphasis.parser() is None:
+        # A gate that cannot run one of its checks says so in its report and
+        # finishes the rest. Letting the exception out took the header, the
+        # findings already gathered and the reason with it, and left a
+        # traceback in their place — red, but saying nothing about what was
+        # examined. `loud_emphasis` settled this shape already.
+        findings.append(("주석이 한국어다", NO_PARSER))
+    else:
+        for where, line in korean_prose(wiki):
+            findings.append((
+                "주석이 한국어다",
+                f"`{where}`: {line} — `operator/english-progress` 는 에이전트가 "
+                "쓰는 것을 영어로 둔다. 인용하는 한국어는 한 줄 안에서 백틱으로 감싸라",
+            ))
+
     return loaded, declared, findings
 
 
 
 
+HANGUL = re.compile(r"[가-힣]")
+
+# A Korean example being quoted, as opposed to a comment written in Korean.
+# One notation marks it, and the notation is the backtick.
+#
+# Three rounds tried to read ordinary quotation marks as citation and each one
+# found another member missing from the set: single quotes, then curly ones,
+# then a prime after a digit and after an underscore. The fourth round ended
+# the argument. A quote mark is not a marker — it is ordinary English
+# punctuation, so pairing two of them is a guess about which two belong
+# together, and the guess is wrong exactly where it hurts:
+#
+#     The output starts with " but has no closing delimiter.
+#     `한국어 산문이다.`
+#     Later the comment names "done" as a separate token.
+#
+# The first `"` paired with the one in front of `done`, the Korean between the
+# two vanished, and the gate went green over a violation. That is the failure
+# this check was built to end. No amount of adjacency rules fixes it, because
+# the information needed — did the author mean to quote — is not in the
+# characters.
+#
+# A backtick carries no other meaning in a comment. Writing one says "this is
+# a string, not my sentence", which is the distinction being asked about.
+#
+# What a code span *is* comes off a CommonMark parse, not off a regex here.
+# The one-backtick regex that replaced the quote rule refused a Korean
+# citation written in a doubled span: it erased the two opening backticks as
+# an empty span, erased the two closing ones the same way, and left the
+# Korean between them looking like prose. `test_lint` has the input, where it
+# can be written without being read as one itself. A doubled span is how
+# CommonMark writes a citation containing a backtick, so the delimiter run
+# that stage 2 deferred as a suggestion turned into a gate refusing correct
+# work the moment backticks became the only marker left.
+# `markdown_emphasis` learned this over six rounds of a hand-written
+# scanner and wrote down the conclusion; there is no reason to spend them
+# again one module over.
+#
+# The parse runs per line. A span that wraps is already a finding of its own
+# (`끊긴 줄바꿈`), so nothing legitimate crosses a line break, and one line at
+# a time is what makes the position exact — a span left open cannot reach past
+# its own line, and an unclosed backtick simply forms no span, which leaves
+# the Korean beside it visible rather than hidden.
+CODE = "code_inline"
+
+# Its own sentence, not `markdown_emphasis.MISSING`. That one names the
+# emphasis check, and a reader told the emphasis check did not run while this
+# one was the one that stopped goes looking in the wrong place. The recovery
+# command is shared, because there is only one thing to install.
+NO_PARSER = ("markdown-it-py 가 없어 주석 검사를 돌리지 못했다 — "
+             + markdown_emphasis.recovery(sys.executable))
+
+
+def docstring(node) -> ast.Constant | None:
+    """The string literal a docstring is, or `None` where there is none.
+
+    `ast.get_docstring` is not used, because what comes back from it is the
+    evaluated value and this check needs the source. Implicitly joined
+    literals arrive here as one `Constant` spanning every line they were
+    written on, which is what makes the line count come out right.
+    """
+
+    body = getattr(node, "body", None)
+    if not body or not isinstance(body[0], ast.Expr):
+        return None
+    value = body[0].value
+    ok = isinstance(value, ast.Constant) and isinstance(value.value, str)
+    return value if ok else None
+
+
+def cited(line: str, md) -> str:
+    """The code spans of one line, concatenated — the part that is quoted.
+
+    Only this is read off the parse. An earlier version did the reverse and
+    gathered the text of everything that was *not* a code span, which meant
+    deciding what every other token type contributes — and `html_block` was
+    decided wrong: `<div>` around a Korean line hid it from the gate
+    completely. Reading out what a parse means, token kind by token kind, is
+    the hand-written lexer coming back through the parser's own door.
+
+    So the line stays whole and only the spans are subtracted from it. A
+    token kind this function has never heard of cannot hide anything, because
+    nothing but a code span is ever taken away.
+
+    Indentation goes first, and it goes twice — once before the `#` and once
+    after it. Four spaces in front of a line is an indented code block to
+    CommonMark, which parses no inline markup at all, so the line would carry
+    no code span and every Korean character on it would read as prose. This
+    check caught its own explaining comment that way, where an example is
+    written indented under a `#`: stripping only in front of the marker left
+    five spaces behind it.
+
+    Indentation is meant to carry nothing here. The backtick is the only
+    marker, in a comment as in a docstring, at whatever depth it is written.
+    """
+
+    spans: list[str] = []
+
+    def gather(token) -> None:
+        if token.type == CODE:
+            spans.append(token.content)
+        for kid in token.children or []:
+            gather(kid)
+
+    for token in md.parse(line.lstrip().lstrip("#").lstrip()):
+        gather(token)
+    return "".join(spans)
+
+
+def korean_prose(wiki: Path = WIKI) -> list[tuple[str, str]]:
+    """`tool/*.py` comments and docstrings still written in Korean.
+
+    One notation separates the two cases, not a ratio and not a set of
+    punctuation marks. A comment that cites `올리겠습니다` is describing the
+    data a regex matches and has to keep it; a comment written in Korean is
+    the thing `english-progress` asks to move. A first attempt scored the
+    share of Hangul per line and could not tell them apart at any threshold —
+    the citations landed at 0.40 to 0.47, in among real violations. A second
+    read ordinary quotation marks as citation and spent three review rounds
+    adding members to that set before an unmatched `"` hid a violation
+    outright. See `cited` for why the backtick is the whole rule and why a
+    parser, not a regex, decides where one begins.
+
+    What is left is counted character by character, not as a share. The line
+    keeps every Hangul character it was written with and the ones the parse
+    says are inside a code span are taken away; anything still standing is
+    prose. Subtracting is what makes an unfamiliar token kind harmless.
+
+    Read through `ast` and `tokenize` rather than by matching `#` against raw
+    lines. A regex on `#` sees no docstring at all, and that is exactly how
+    this was reported complete while 104 lines were still Korean: the
+    measurement answered a narrower question than the claim made.
+
+    A docstring is read as **source**, through `get_source_segment`, not as
+    the value `get_docstring` evaluates. The value is not the text on the
+    page: `\\n` written as an escape is one source line and two evaluated
+    ones, two implicitly joined literals are two source lines and one
+    evaluated one, and either way the reported line pointed somewhere the
+    reader has to go looking. Source text counts lines the way the file does.
+    """
+
+    directory = wiki / "tool"
+    if not directory.is_dir():
+        return []
+
+    md = markdown_emphasis.parser()
+    if md is None:
+        # Loud, never quiet. `check` catches this case ahead of the call and
+        # turns it into a finding so the report still prints; reaching here
+        # means somebody called this directly, and an empty list would tell
+        # them the tools are clean when nothing was read at all.
+        raise RuntimeError(NO_PARSER)
+
+    found: list[tuple[str, str]] = []
+    for path in sorted(directory.glob("*.py")):
+        try:
+            source = path.read_text(encoding="utf-8")
+            tree = ast.parse(source)
+        except (OSError, SyntaxError, UnicodeDecodeError):
+            # Unreadable or unparsable is a finding of its own, raised by the
+            # checks that own it. Silence here would make this one green.
+            continue
+
+        pieces: list[tuple[int, str]] = []
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                                 ast.AsyncFunctionDef)):
+                literal = docstring(node)
+                if literal is None:
+                    continue
+                # The literal's own line, not the `def` above it and not the
+                # `Expr` that may open on an earlier line with a parenthesis.
+                segment = ast.get_source_segment(source, literal)
+                if segment:
+                    pieces.append((literal.lineno, segment))
+        try:
+            for token in tokenize.generate_tokens(io.StringIO(source).readline):
+                if token.type == tokenize.COMMENT:
+                    pieces.append((token.start[0], token.string))
+        except tokenize.TokenError:
+            continue
+
+        for at, piece in pieces:
+            for n, line in enumerate(piece.splitlines()):
+                rest = Counter(HANGUL.findall(line))
+                rest -= Counter(HANGUL.findall(cited(line, md)))
+                if rest:
+                    found.append((f"tool/{path.name}:{at + n}", line.strip()[:60]))
+    return found
+
+
 def fragile_tools(wiki: Path = WIKI) -> list[str]:
-    """stdout 에 쓰면서 인코딩을 고정하지 않는 `tool/*.py`.
+    """`tool/*.py` that writes to stdout without pinning its encoding.
 
-    **한글이 있는지는 안 본다.** 오늘 ASCII 만 내보내는 도구도 내일 한 줄이
-    늘면 죽고, 고정은 한 줄이다 — 조건을 좁히면 그 좁힌 자리가 다음 사고다.
-    실제로 이 검사를 쓰게 만든 것이 `lint.py` 자신이었고, 그것은 파일을
-    `encoding="utf-8"` 로 읽고 있었다. 읽기를 고쳐도 쓰기는 안 고쳐진다.
+    Whether the file contains Korean is deliberately not part of the test. A
+    tool that emits only ASCII today dies tomorrow when one line is added, and
+    pinning it costs one line — narrow the condition and the narrowed place is
+    the next incident. What made this check necessary was `lint.py` itself,
+    which was already reading files with `encoding="utf-8"`. Fixing the read
+    does not fix the write.
 
-    `craft/hooks-fail-open` 은 이 실패를 훅에 대해 적었지만, 실패하는 조건은
-    훅이라는 것이 아니라 **stdout 이 파이프인 파이썬** 이다. 훅 넷이 고쳐지고
-    같은 조건의 CLI 여덟이 안 고쳐진 채 남은 것이 그 좁힘의 값이다.
+    `craft/hooks-fail-open` wrote this failure down as being about hooks, but
+    the condition that fails is not being a hook — it is being Python whose
+    stdout is a pipe. Four hooks got fixed and eight CLIs under the same
+    condition did not, and that gap is what the narrowing cost.
     """
     directory = wiki / "tool"
     if not directory.is_dir():
@@ -204,7 +422,7 @@ def fragile_tools(wiki: Path = WIKI) -> list[str]:
 
 
 def missing_hook_guards(wiki: Path, loaded: dict) -> list[tuple[str, str]]:
-    """공유 이벤트 훅과 페이지가 선언한 훅의 진입점 가드를 검사한다."""
+    """Check the entry-point guard on shared event hooks and page-declared ones."""
     names = {"inject.py", "session_state.py", "sync.py", "declared_continuation.py", "codex_pretool.py"}
     for meta, _body, _path in loaded.values():
         enforce = meta.get("enforce") or {}
@@ -236,23 +454,28 @@ def missing_hook_guards(wiki: Path, loaded: dict) -> list[tuple[str, str]]:
 
 
 def tracked_markdown(root: Path) -> list[str]:
-    """이 저장소가 자기 것이라고 보는 `.md`. 손으로 쓴 제외 목록을 안 쓴다.
+    """The `.md` this repository considers its own. No hand-written exclusions.
 
-    처음엔 `web/`·`artifacts/`·`raw/`·`node_modules` 를 이름으로 걸렀다. 허브의
-    사정이고 대상 저장소의 사정이 아니라, 남의 저장소에서는 진짜 문서가 통째로
-    빠졌다. `node_modules-guide.md` 처럼 이름이 앞자리만 같은 파일도 같이 빠졌다.
+    The first version filtered `web/`, `artifacts/`, `raw/` and `node_modules`
+    by name. Those are the hub's circumstances and not a target repository's,
+    so in someone else's repository real documents disappeared wholesale — and
+    so did files that merely started the same way, like
+    `node_modules-guide.md`.
 
-    "이 파일이 우리 것인가" 는 git 이 이미 답을 안다. 추적되는 것과 아직
-    `git add` 안 했지만 무시 대상도 아닌 것을 본다 — 생성물과 vendor 는
-    `.gitignore` 에 있으므로 빠지고, 아무도 리뷰하지 않는다.
+    "Is this file ours" is a question git already answers. What is tracked,
+    plus what is not yet `git add`ed and not ignored either: build output and
+    vendored code are in `.gitignore`, so they drop out, and nobody reviews
+    them anyway.
     """
 
-    # `-c` 는 인덱스, `-o` 는 아직 `git add` 안 한 것, `--exclude-standard` 가
-    # 무시 대상을 뺀다. `-c` 만 보면 방금 `Write` 로 만든 새 문서가 통째로 안
-    # 보이고, 그 파일에 조각 편집이 쌓이면 어느 검사도 그것을 안 보게 된다.
+    # `-c` is the index, `-o` is what has not been `git add`ed, and
+    # `--exclude-standard` removes what is ignored. With `-c` alone a document
+    # just created by `Write` is invisible, and once fragment edits pile onto
+    # that file no check ever looks at it.
     #
-    # 확장자를 pathspec 으로 안 거른다. `*.md` 는 대소문자를 가려 `UPPER.MD` 를
-    # 빼는데 훅은 소문자로 바꿔 판정하므로, 두 검사가 서로 다른 집합을 보게 된다.
+    # The extension is not filtered with a pathspec. `*.md` is case-sensitive
+    # and would drop `UPPER.MD`, while the hook lowercases before deciding —
+    # and then the two checks are looking at different sets of files.
     done = subprocess.run(
         ["git", "-C", str(root), "ls-files", "-z", "-co", "--exclude-standard"],
         capture_output=True, check=False,
@@ -260,10 +483,12 @@ def tracked_markdown(root: Path) -> list[str]:
     if done.returncode == 0:
         names = done.stdout.decode("utf-8", "replace").split("\0")
     else:
-        # git 저장소가 아니면 전부 본다. 이 경로는 임시 디렉터리를 쓰는 시험이다.
+        # Not a git repository: look at everything. This path is the tests,
+        # which run against a temporary directory.
         names = [p.relative_to(root).as_posix() for p in root.rglob("*")]
-    # 인덱스에 남고 작업 트리에서 지워진 것은 뺀다. 지우는 중인 파일을 못 읽었다고
-    # 보고하면 정상적인 삭제가 게이트를 빨갛게 만든다.
+    # Drop what is still in the index but gone from the working tree.
+    # Reporting a file being deleted as unreadable turns an ordinary deletion
+    # into a red gate.
     return sorted(
         name for name in names
         if name.lower().endswith(".md") and (root / name).is_file()
@@ -274,17 +499,21 @@ SHA256 = re.compile(r"\b[0-9a-f]{64}\b")
 
 
 def pinned_originals(root: Path, names: list[str]) -> set[str]:
-    """저장소가 바이트를 못 박아 둔 `.md`. 고칠 수 없으므로 문체를 안 따진다.
+    """`.md` whose bytes the repository has pinned. No style findings, because
+    there is no way to act on one.
 
-    대회 자료나 남의 원문을 보관하는 저장소는 그 파일의 SHA-256 을 자기 문서에
-    적어 "이동 전후 동일" 을 주장한다. 그 파일은 백틱 하나를 넣어도 기록이
-    거짓이 되므로, 문체 발견을 내도 고칠 방법이 없다 — 검진에 영원히 1건이
-    떠 있게 되고, 다음 사람이 매번 같은 판단을 다시 한다.
+    A repository holding competition material or someone else's original
+    writes that file's SHA-256 into its own documents to claim "identical
+    before and after the move". One backtick added to such a file makes that
+    record false, so a style finding against it cannot be fixed — it sits in
+    the health check forever and the next person makes the same judgement
+    again.
 
-    이름으로 걸지 않는다. `tracked_markdown` 이 적어 둔 대로 `archive/` 같은
-    이름 목록은 남의 저장소에서 진짜 문서를 통째로 지웠다. 여기서 보는 것은
-    이름이 아니라 그 저장소가 실제로 적어 둔 해시다 — 못 박기를 풀면 검사가
-    다시 돈다. 스스로의 해시를 적을 수는 없으므로 순환도 없다.
+    Not matched by name. As `tracked_markdown` records, a list of names like
+    `archive/` wiped out real documents in other repositories. What decides it
+    here is the hash that repository actually wrote down — remove the pin and
+    the check runs again. A file cannot record its own hash, so there is no
+    circularity either.
     """
 
     digests: dict[str, str] = {}
@@ -300,20 +529,23 @@ def pinned_originals(root: Path, names: list[str]) -> set[str]:
 
 
 def loud_emphasis(wiki: Path = WIKI) -> list[tuple[str, str]]:
-    """강조가 소음이 된 `.md`. 훅이 못 보는 자리를 여기서 본다.
+    """`.md` where emphasis has become noise. What the hook cannot see is seen here.
 
-    `markdown_emphasis` 훅은 쓰기 **전에** 불리므로 `Edit` 이나 패치가 만들
-    문서를 못 본다. 그것을 예측하려 한 판이 리뷰 세 라운드 동안 입력 모양마다
-    구멍을 냈다 — 여러 hunk, `replace_all`, 백틱 네 개. 예측을 지우고 여기서
-    실제 파일을 읽는다. 읽을 것이 이미 디스크에 있으므로 틀릴 자리가 없다.
+    The `markdown_emphasis` hook is called before the write, so it never sees
+    the document an `Edit` or a patch is about to produce. A version that
+    tried to predict it leaked through a different input shape in each of
+    three review rounds — multiple hunks, `replace_all`, four backticks. The
+    prediction is gone and this reads the real file instead. What it reads is
+    already on disk, so there is nothing left to get wrong.
     """
 
     import markdown_emphasis
 
     found = []
     if markdown_emphasis.parser() is None:
-        # 검사를 못 돌린 것과 돌려서 깨끗한 것은 다른 일이다. 여기서 조용히
-        # 빈 목록을 돌려주면 게이트가 초록인 채로 이 규칙만 꺼져 있게 된다.
+        # Not having been able to run the check and having run it clean are
+        # different things. Returning an empty list quietly here leaves the
+        # gate green with this one rule switched off inside it.
         return [("강조 과다", markdown_emphasis.MISSING)]
     names = tracked_markdown(wiki)
     pinned = pinned_originals(wiki, names)
@@ -324,16 +556,18 @@ def loud_emphasis(wiki: Path = WIKI) -> list[tuple[str, str]]:
         try:
             text = path.read_text(encoding="utf-8")
         except Exception as error:
-            # 못 읽은 파일을 건너뛰면 "전부 봤다" 가 거짓이 된다. 이 저장소는
-            # UTF-8 로 적는 것이 규칙이므로, 못 읽은 것 자체가 발견이다.
+            # Skipping a file that could not be read makes "all of them were
+            # looked at" false. Writing UTF-8 is the rule here, so failing to
+            # read one is itself the finding.
             found.append(("강조 과다", f"`{name}`: 읽지 못했다 ({type(error).__name__})"))
             continue
         try:
             lines = markdown_emphasis.findings(text)
         except Exception as error:  # noqa: BLE001
-            # 훅은 여기서 통과시키고 화면에 말한다. 게이트는 반대로 멈춰야
-            # 하지만, 크래시는 "이 파일 하나가 검사를 못 받았다" 가 아니라
-            # "나머지 파일도 아무도 안 봤다" 가 된다. 발견으로 바꿔 계속 본다.
+            # A hook passes here and says so on screen. A gate has to stop
+            # instead — but crashing does not mean "this one file went
+            # unchecked", it means "nobody looked at the rest either". So it
+            # becomes a finding and the sweep continues.
             found.append(("강조 과다", f"`{name}`: 검사가 실패했다 ({type(error).__name__})"))
             continue
         for line in lines:
@@ -342,7 +576,11 @@ def loud_emphasis(wiki: Path = WIKI) -> list[tuple[str, str]]:
 
 
 def fragile_io(wiki: Path = WIKI) -> list[tuple[str, str]]:
-    """stdin과 운영 도구의 텍스트 자식 출력. 테스트의 엄격한 디코딩은 유지한다."""
+    """stdin, and the text output of child processes in the running tools.
+
+    A test's strict decoding is left alone — there, a decode error is the
+    result being looked for.
+    """
     found = []
     for path in sorted((wiki / "tool").glob("*.py")):
         calls = [n for n in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
@@ -419,10 +657,11 @@ def splits_a_phrase(before: str, after: str) -> bool:
 
 
 def prose_lines(path: Path) -> list[tuple[int, str]]:
-    """산문 줄만 (줄번호, 본문) 으로. 코드·표·목록·front matter 는 안 본다.
+    """Prose lines only, as `(line number, text)`. Not code, tables, lists or
+    front matter.
 
-    `.py` 는 주석과 삼중따옴표 문자열을 본다. 둘은 같은 규칙을 받는다 — 폭에
-    맞추다 호흡을 가르는 것에 주석과 docstring 의 구별이 없다.
+    In a `.py` that means comments and triple-quoted strings, under the same
+    rule. Splitting a breath to fit a width does not care which one it is in.
     """
 
     text = path.read_text(encoding="utf-8")
@@ -499,7 +738,8 @@ def broken_wraps(wiki: Path = WIKI) -> list[tuple[str, str, str]]:
 
 
 def main() -> int:
-    # 출력이 파이프로 가면 기본이 cp949 다. 인코딩을 환경에 안 맡긴다.
+    # Down a pipe the default here is cp949. The encoding is not left to the
+    # environment.
     sys.stdout.reconfigure(encoding="utf-8")
 
     parser = argparse.ArgumentParser(description="위키의 썩은 자리를 찾는다")

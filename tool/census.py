@@ -1,4 +1,4 @@
-"""census — 새 프로젝트를 붙일 때 맨 처음 도는 진단."""
+"""census — the first diagnostic to run when attaching a new project."""
 
 from __future__ import annotations
 
@@ -14,8 +14,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 DEFAULT_MARKERS = HERE / "markers" / "ko.toml"
 
-# 대화 로그에 사람 발화와 같은 자리로 들어오지만 사람이 친 것이 아닌 것들.
-# 하네스가 주입하는 것이므로 언어와 무관하다.
+# Things that arrive in the conversation log in the same place as a person's
+# utterance without a person having typed them. The harness injects these, so
+# the list has nothing to do with language.
 INJECTED = (
     "<local-command-",
     "<command-name>",
@@ -31,16 +32,18 @@ INJECTED = (
     "is still active, and evaluation has been deferred",
     "This session is being continued from a previous",
     "A session-scoped Stop hook is now active",
-    # 스킬 본문. 사람 발화와 같은 레코드 타입으로 들어오고 길어서, 안 거르면
-    # "가장 많이 재입력된 지시문" 자리를 통째로 차지한다. 실제로 그랬다.
+    # Skill bodies. They arrive as the same record type as a person's
+    # utterance and they are long, so left in they take the whole of "the most
+    # re-entered instruction". Which is what happened.
     "Approach this as the design lead",
     "Use this skill whenever you are about to create",
     "PONYTAIL MODE ACTIVE",
 )
 
-# 위 목록은 언제나 뒤처진다 — 스킬이 늘면 새 본문이 또 샌다. 그래서 길이로도
-# 한 번 거른다. 사람이 한 번에 이만큼 치는 일은 드물고, 그 드문 경우는 대개
-# 붙여넣은 로그이지 지시가 아니다.
+# The list above is always behind — one more skill and one more body leaks
+# through. So there is a length filter as well. A person rarely types this
+# much at once, and the rare time they do it is usually a pasted log rather
+# than an instruction.
 MAX_HUMAN_CHARS = 20_000
 
 
@@ -75,18 +78,20 @@ class Markers:
 
 
 def transcript_dir(project: Path, root: Path) -> Path:
-    """Claude Code 는 체크아웃 경로를 납작하게 눌러 디렉터리 이름으로 쓴다.
+    """Claude Code flattens the checkout path into a directory name.
 
-    `C:\\projects\\demo`가 `C--projects-demo`가 된다. 구분자를 전부 `-`로 바꾸는데
-    드라이브의 `:` 도 한 자리를 차지하므로 앞에 하이픈이 둘이다. 규칙을 추측하지
-    말고, 맞는 것이 없으면 실제 디렉터리를 훑어 꼬리로 찾는다.
+    `C:\\projects\\demo` becomes `C--projects-demo`: every separator turns into
+    `-`, and the drive's `:` takes a place of its own, which is why there are
+    two hyphens at the front. Rather than guessing at the rule, when nothing
+    matches the real directories are scanned and found by their tail.
     """
 
     flat = re.sub(r"[:\\/]", "-", str(project.resolve()))
     exact = root / flat
     if exact.is_dir():
         return exact
-    # 규칙이 안 맞는 환경을 위한 대비책. 이름 꼬리로 찾는다.
+    # Fallback for an environment where that rule does not hold: find it by
+    # the tail of the name.
     tail = f"-{project.resolve().name}"
     for candidate in sorted(root.glob("*")):
         if candidate.is_dir() and candidate.name.endswith(tail):
@@ -95,7 +100,8 @@ def transcript_dir(project: Path, root: Path) -> Path:
 
 
 def human_turns(directory: Path) -> list[Turn]:
-    """`type=user` 중 사람이 친 것만. 도구 결과와 주입 텍스트를 뺀다."""
+    """Of the `type=user` records, only what a person typed. Tool results and
+    injected text are removed."""
 
     turns: list[Turn] = []
     for path in sorted(directory.glob("*.jsonl")):
@@ -118,7 +124,7 @@ def human_turns(directory: Path) -> list[Turn]:
             if isinstance(content, str):
                 body = content
             elif isinstance(content, list):
-                # 블록이 하나라도 text 가 아니면 도구 결과다.
+                # One block that is not text means this is a tool result.
                 if not content or any(
                     not isinstance(b, dict) or b.get("type") != "text" for b in content
                 ):
@@ -135,7 +141,7 @@ def human_turns(directory: Path) -> list[Turn]:
 
 
 def skeleton(text: str) -> str:
-    """숫자·경로·해시를 지워 뼈대만 남긴다. 재붙여넣기를 찾기 위한 것."""
+    """Strip numbers, paths and hashes down to the skeleton, to find re-pastes."""
 
     t = " ".join(text.split())
     t = re.sub(r"#\d+", "#N", t)
@@ -146,10 +152,11 @@ def skeleton(text: str) -> str:
 
 
 def cluster(turns: list[Turn], threshold: float = 0.88) -> dict[str, list[Turn]]:
-    """뼈대가 비슷한 발화를 한 군집으로 묶는다.
+    """Group utterances whose skeletons are close.
 
-    똑같을 때만 묶으면 조사·오타 한 글자로 갈린다. `difflib` 비율로 묶어 그것을
-    막는다 - 어느 언어에서든 통하고, 이 규모(수백 건)에서는 O(n^2) 도 싸다.
+    Grouping only on an exact match splits on one character — a particle, a
+    typo. A `difflib` ratio prevents that, works in any language, and at this
+    scale (hundreds) even O(n^2) is cheap.
     """
 
     from difflib import SequenceMatcher
@@ -159,7 +166,8 @@ def cluster(turns: list[Turn], threshold: float = 0.88) -> dict[str, list[Turn]]
     for turn in turns:
         skel = skeleton(turn.text)
         for rep in reps:
-            # 길이가 크게 다르면 볼 것도 없다. 비교를 건너뛰어 싸게 만든다.
+            # Lengths far apart cannot match. Skipping the comparison is what
+            # keeps this cheap.
             if min(len(skel), len(rep)) / max(len(skel), len(rep), 1) < threshold:
                 continue
             if SequenceMatcher(None, skel, rep).ratio() >= threshold:
@@ -181,7 +189,8 @@ def governing_text(project: Path, names: list[str]) -> str:
 
 
 def main() -> int:
-    # 출력이 파이프로 가면 기본이 cp949 다. 인코딩을 환경에 안 맡긴다.
+    # Down a pipe the default here is cp949. The encoding is not left to the
+    # environment.
     sys.stdout.reconfigure(encoding="utf-8")
 
     parser = argparse.ArgumentParser(description="세션 로그로 무엇이 고장 나는지 센다")
@@ -216,7 +225,8 @@ def main() -> int:
 
     window = ""
     if args.since:
-        # `at` 은 ISO 문자열이라 사전순 비교가 곧 시간순이다. 파싱하지 않는다.
+        # `at` is an ISO string, so comparing it lexically is comparing it by
+        # time. Nothing is parsed.
         cut = (
             datetime.now(timezone.utc).strftime("%Y-%m-%d")
             if args.since == "today"
@@ -233,10 +243,12 @@ def main() -> int:
     print(f"세션 {len({t.session for t in turns})}개에서 사람 발화 "
           f"{len(turns)}건 / {sum(t.chars for t in turns):,}자{window}\n")
 
-    # --- 1. 반복 지시
-    # 뼈대가 똑같을 때만 묶으면 조사 한 글자 차이로 갈린다("PR #N를" vs
-    # "PR #N을"). 실제로 같은 지시문 10회가 5+5 로 쪼개져 나왔다. 그래서 뼈대끼리
-    # 유사도로 묶는다 — 언어에 안 매이는 방법이다.
+    # --- 1. Repeated instructions
+    #
+    # Grouping only on identical skeletons splits on one character of a
+    # particle — `PR #N를` against `PR #N을`. Ten instances of the same
+    # instruction really did come back as 5 and 5. So the skeletons are
+    # grouped by similarity instead, which is not tied to a language.
     groups = cluster(turns)
     repeats = sorted(
         ((k, v) for k, v in groups.items() if len(v) > 1), key=lambda i: -len(i[1])
@@ -250,11 +262,12 @@ def main() -> int:
         print(f"| {len(group)} | {chars:,} | {skel[:82]} |")
     print()
 
-    # --- 2. 그 규칙이 이미 적혀 있는가 (이 census 의 핵심 지표)
+    # --- 2. Is that rule already written down? This census's central number
     governing = governing_text(args.project, args.governing)
     if governing and repeats:
-        # 횟수가 아니라 재입력된 글자수로 고른다. "이어서 해라" 는 23회지만
-        # 7자라 규칙을 안 담는다. 규칙이 실린 것은 길고 여러 번 붙여넣어진 쪽이다.
+        # Ranked by characters re-entered, not by how many times. The
+        # 7-character `이어서 해라` appears 23 times and carries no rule in it.
+        # What carries a rule is long and pasted repeatedly.
         heaviest = max(repeats, key=lambda item: sum(t.chars for t in item[1]))[1]
         print("## 이미 적혀 있는데도 다시 쳤는가\n")
         print("이 census 의 핵심 지표다. 가장 많은 글자가 재입력된 지시문의 문장을 "
@@ -273,13 +286,14 @@ def main() -> int:
         print("| 낱말이 걸림 | 재입력된 규칙 문장 |")
         print("| :---: | --- |")
         for sentence in sentences[:16]:
-            # 흔한 낱말을 빼고 특징적인 것만 남겨 힌트를 준다. 판정이 아니라 힌트다.
+            # Drop the common words and keep the distinctive ones as a hint.
+            # A hint, not a verdict.
             words = [w for w in re.findall(r"[A-Za-z_./]{4,}|[가-힣]{2,}", sentence)]
             hint = "○" if any(w in governing for w in words) else " "
             print(f"| {hint} | {sentence[:78]} |")
         print()
 
-    # --- 3. 부류별 집계
+    # --- 3. Counts by category
     def hits(patterns: list[str], limit: int | None = None) -> list[Turn]:
         found = [t for t in turns if any(re.search(p, t.text) for p in patterns)]
         return [t for t in found if limit is None or t.chars < limit]
@@ -302,7 +316,7 @@ def main() -> int:
             print(f"| {len(hits(patterns))} | {name} |")
         print()
 
-    # --- 4. 표지가 놓친 것 (편향 점검)
+    # --- 4. What the markers missed, as a check on their bias
     missed = [t for t in turns if not any(re.search(p, t.text) for p in markers.correction)]
     print("## 표지에 안 걸린 표본\n")
     print("이 표본을 눈으로 읽어라. 교정인데 표지가 못 잡은 것이 보이면 "

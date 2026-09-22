@@ -1,4 +1,4 @@
-"""repo_graph — 붙은 저장소의 지식이 서로 무엇을 가리키는가."""
+"""repo_graph — what an attached repository's knowledge points at."""
 
 from __future__ import annotations
 
@@ -17,9 +17,10 @@ from wikilib import front_matter, project_pages  # noqa: E402
 
 NS = "repo"
 
-# 두 가지 모양으로 문서를 가리킨다. 마크다운 링크와, 이 저장소들이 실제로 더
-# 많이 쓰는 백틱 경로다 — 지시문에도 문서에도 `docs/development/TDD.md` 처럼
-# 적힌다. 뒤엣것을 안 세면 고아 수가 실제보다 크게 나온다.
+# Documents get pointed at in two shapes: a markdown link, and the backticked
+# path these repositories actually use more — `docs/development/TDD.md`, in
+# instructions and in documents alike. Not counting the second one inflates
+# the orphan count.
 MD_LINK = re.compile(r"\[[^\]]*\]\(([^)\s#]+\.md)[^)]*\)")
 BARE_PATH = re.compile(r"`([A-Za-z0-9_][A-Za-z0-9_./-]*\.md)`")
 
@@ -29,13 +30,15 @@ def targets(text: str) -> set[str]:
 
 
 def resolve(raw: str, source: str, known: set[str]) -> str | None:
-    """가리킨 경로를 저장소 기준 경로로. 못 찾으면 None.
+    """A pointed-at path, resolved against the repository. `None` when not found.
 
-    상대 경로가 먼저다. `../architecture/x.md` 는 가리킨 문서의 자리에서만
-    뜻이 통하고, 저장소 뿌리에서 풀면 엉뚱한 파일에 붙거나 아무 데도 안 붙는다.
+    Relative first. `../architecture/x.md` only means anything from where the
+    pointing document sits; resolved from the repository root it lands on the
+    wrong file or on nothing at all.
 
-    파일시스템은 안 건드린다. 실재 여부는 `known` 이 이미 답하고, `Path.resolve`
-    는 현재 디렉터리를 기준으로 삼아 어디서 돌리느냐에 답이 매달리게 만든다.
+    The filesystem is never touched. Whether the file exists is already
+    answered by `known`, and `Path.resolve` measures against the current
+    directory, which would make the answer depend on where this was run.
     """
 
     here = posixpath.dirname(source)
@@ -59,7 +62,7 @@ def decisions_of(repo: Path) -> list[dict]:
 
 
 def build(repo: Path) -> dict | None:
-    """이 저장소의 지식 엣지. `corpus.json` 이 없으면 아무것도 안 만든다."""
+    """This repository's knowledge edges. Without `corpus.json`, nothing is built."""
 
     index = corpus.load(repo)
     if not index:
@@ -75,8 +78,9 @@ def build(repo: Path) -> dict | None:
             text = (repo / path).read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        # 정렬한다. 집합은 실행마다 순서가 달라서, 내용이 그대로인데도 커밋되는
-        # 파일이 매번 흔들린다. 흔들리는 산출물은 diff 를 못 읽게 만든다.
+        # Sorted. A set comes out in a different order each run, so a
+        # committed file churns on every regeneration with identical content,
+        # and output that churns is output nobody can diff.
         for raw in sorted(targets(text)):
             hit = resolve(raw, path, known)
             if hit and hit != path and (path, hit) not in seen:
@@ -125,7 +129,8 @@ def write(repo: Path) -> dict | None:
 
 
 def main() -> int:
-    # 출력이 파이프로 가면 기본이 cp949 다. 인코딩을 환경에 안 맡긴다.
+    # Down a pipe the default here is cp949. The encoding is not left to the
+    # environment.
     sys.stdout.reconfigure(encoding="utf-8")
 
     parser = argparse.ArgumentParser(description="붙은 저장소의 지식 그래프를 만든다")

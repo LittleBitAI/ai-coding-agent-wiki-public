@@ -1,4 +1,7 @@
-"""slack_brief — Slack 에 낼 진척도·회고의 **사실 부분**만 낸다."""
+"""slack_brief — produce only the factual half of a standup or retro for Slack.
+
+What goes to Slack is read by the team, so those strings stay Korean.
+"""
 
 from __future__ import annotations
 
@@ -18,7 +21,7 @@ SESSIONS = Path.home() / ".claude" / "projects"
 
 
 def repo_url(repo: Path) -> str:
-    """`git@…` 도 `https://…` 도 웹 주소 하나로. 리모트가 없으면 빈 문자열."""
+    """`git@…` and `https://…` both to one web address. Empty with no remote."""
 
     remote = run(repo, "remote", "get-url", "origin")
     if not remote:
@@ -28,19 +31,21 @@ def repo_url(repo: Path) -> str:
 
 
 def since_default() -> str:
-    """월요일이면 사흘, 아니면 하루. 금→월 사이에 머지된 것을 안 잃는다."""
+    """Three days on a Monday, one otherwise, so nothing merged over a weekend
+    is lost."""
 
     return "3 days ago" if dt.date.today().weekday() == 0 else "1 day ago"
 
 
 def default_ref(repo: Path) -> str:
-    """머지된 것을 어디서 세나. 통합 브랜치이지 지금 체크아웃한 것이 아니다.
+    """Where merges get counted: the integration branch, not what is checked out.
 
-    기능 브랜치에 서 있으면 HEAD 에는 오늘 머지된 것이 없어서 "오늘 0건" 이
-    나온다. 실제로 그렇게 나왔고, 그날 여섯 건이 머지돼 있었다.
+    Standing on a feature branch, HEAD has nothing merged today and the brief
+    says "0 today". It really did say that, on a day with six merges.
 
-    ponytail: 기능 브랜치의 미머지 커밋은 안 센다. 그것은 `branch_line` 의
-    "변경 N개" 가 든다. 합집합이 필요해지면 그때 ref 를 둘 받아라.
+    ponytail: unmerged commits on a feature branch are not counted. Those are
+    held by `branch_line`'s "N changed". If the union is ever needed, take two
+    refs then.
     """
 
     head = run(repo, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
@@ -52,9 +57,10 @@ def default_ref(repo: Path) -> str:
     return "HEAD"
 
 
-# `%h` 는 16진수라 `|` 를 담지 않는다. `partition` 이 첫 것만 가르므로 제목에
-# `|` 가 있어도 안전하다. `\x1e` 를 쓰면 안 된다 — `splitlines()` 가 그것을
-# 줄바꿈으로 쳐서 한 커밋이 두 줄이 되고, 그러면 조용히 0건이 된다.
+# `%h` is hexadecimal and cannot contain `|`, and `partition` splits on the
+# first one only, so a `|` in the title is safe. `\x1e` must not be used here:
+# `splitlines()` treats it as a line break, one commit becomes two lines, and
+# the count quietly goes to zero.
 SEP = "|"
 
 
@@ -65,7 +71,7 @@ def format_rows(raw: str, url: str) -> list[str]:
         if not subject:
             continue
         link = f"[`{short}`]({url}/commit/{short})" if url else f"`{short}`"
-        # PR 번호가 제목에 있으면 그것도 원본이다.
+        # A PR number in the title is a source as well.
         pr = re.search(r"\(#(\d+)\)$", subject)
         if pr and url:
             subject = subject[: pr.start()].rstrip()
@@ -81,10 +87,11 @@ def merged(repo: Path, since: str, url: str) -> list[str]:
 
 
 def today_sessions(repo: Path) -> list[Path]:
-    """회고의 근거가 어느 파일에 있는지. 오늘 고쳐진 세션 로그.
+    """Which files hold the grounds for a retro: the session logs touched today.
 
-    내용은 안 읽는다 — 그건 `retrospect` 스킬이 한다. 여기서는 어디를 열면
-    되는지만 짚는다. 6MB 짜리가 섞여 있어 통째로 싣는 것은 답이 아니다.
+    The contents are not read — that is the `retrospect` skill's job. This
+    only points at what to open. Some of these run to 6MB, so carrying them
+    whole is not an answer.
     """
 
     flat = str(repo).replace(":", "-").replace("\\", "-").replace("/", "-")

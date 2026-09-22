@@ -1,27 +1,37 @@
-"""Stop 훅 — 이어서 하겠다고 말해 놓고 끝낸 턴을 되돌린다."""
+"""Stop hook — revert a turn that said it would continue and then ended.
+
+Two languages on purpose. The patterns that match Korean are Korean because
+that is what they read, and the block reason is Korean because the person
+reads it — the same boundary `english_progress` draws. Everything written for
+whoever maintains this is English.
+"""
 
 from __future__ import annotations
 
-import hook_diagnostics  # noqa: F401 -- 진입점의 제한 시간 전 스택 보존
+# First import of the entry point: it keeps the stack from before whatever
+# time limit kills this.
+import hook_diagnostics  # noqa: F401
 import argparse
 import json
 import re
 import sys
 from pathlib import Path
 
-# 이번 응답에서 곧바로 하겠다는 약속.
+# A promise to do it right now, in this response.
 #
-# **동사를 열거하지 않는다.** 첫 판은 여섯 개(`하겠습니다`·`진행하겠습니다` …)만
-# 알았고, 2026-09-07 세션이 `올리겠습니다`·`돌리겠습니다`·`여쭙겠습니다` 로 그
-# 옆을 통과했다. 목록은 반드시 짧고, 짧은 목록의 바깥이 다음 사고다. 그래서
-# 어미 `-겠습니다`/`-겠다`/`-겠음` 자체를 조건으로 둔다.
+# Not a list of verbs. The first version knew six of them (`하겠습니다`,
+# `진행하겠습니다`, …) and a session on 2026-09-07 walked past it with
+# `올리겠습니다`, `돌리겠습니다` and `여쭙겠습니다`. A list has to be short, and
+# what sits outside a short list is the next incident. So the condition is the
+# ending itself — `-겠습니다` / `-겠다` / `-겠음`.
 _WILL = r"겠(습니다|다|음)"
 
-# 즉시성 부사가 있으면 그것만으로 약속이다.
+# An immediacy adverb is enough on its own.
 _IMMEDIATE = re.compile(rf"(이어서|계속|바로|지금|곧)[^.\n]{{0,40}}\w*{_WILL}")
 
-# 부사가 없어도, 문장이 이 어미로 **끝나면** 이번 턴의 약속으로 본다. 서술문은
-# 이 어미를 안 쓴다 — `돌립니다` 는 걸리지 않고 `돌리겠습니다` 만 걸린다.
+# Without the adverb, a sentence that ends on this ending is still a promise
+# for this turn. A plain statement does not use it: `돌립니다` does not match
+# and `돌리겠습니다` does.
 _BARE = re.compile(rf"\w*{_WILL}[.!]?$")
 
 
@@ -44,7 +54,7 @@ _IMMEDIATE_EN = re.compile(
 _BARE_EN = re.compile(rf"^\s*(?:and\s+|so\s+|okay,?\s+|now\s+)?{_WILL_EN}\b", re.I)
 
 
-class PROMISE:  # noqa: N801 - 기존 호출부가 `PROMISE.search` 를 그대로 쓴다
+class PROMISE:  # noqa: N801 - callers already say `PROMISE.search`
     @staticmethod
     def search(sentence: str):
         clean = sentence.rstrip()
@@ -56,9 +66,10 @@ class PROMISE:  # noqa: N801 - 기존 호출부가 `PROMISE.search` 를 그대�
         )
 
 
-# **묻겠다고 적고 안 묻는 것**이 가장 나쁜 모양이다. 일도 안 하고 질문도 안
-# 남겨서, 사용자는 무엇을 기다리는지조차 알 수 없다. 이 말로 끝났으면 실제로
-# 물었어야 하므로, 도구를 하나도 안 불렀다면 되돌린다.
+# Writing that it will ask and then not asking is the worst shape of this. No
+# work was done and no question was left, so the person cannot even tell what
+# is being waited on. A turn ending that way should have asked, so a turn that
+# called no tool is reverted.
 ASK_PROMISE = re.compile(rf"(여쭙|여쭈|묻|물어보|확인받|승인)\w*{_WILL}")
 
 ASK_PROMISE_EN = re.compile(
@@ -67,7 +78,8 @@ ASK_PROMISE_EN = re.compile(
     re.I,
 )
 
-# 뒤로 미루는 말. 이것이 같은 문장에 있으면 이번 턴의 약속이 아니다.
+# Words that put it off. In the same sentence, it is not a promise for this
+# turn, and reverting would be reverting a turn that is correctly waiting.
 DEFERRED = re.compile(
     r"(끝나면|나오면|도착하면|뒤에|다음에|이후에|기다렸다가|알림이|결과가)"
 )
@@ -78,6 +90,8 @@ DEFERRED_EN = re.compile(
     re.I,
 )
 
+# Both reasons are read by the person watching the turn get reverted, so they
+# stay Korean. `english_progress` holds that boundary.
 REASON = (
     "이어서 하겠다고 적어 놓고 도구를 하나도 안 부르고 턴을 끝냈다.\n"
     "적은 말: {sentence}\n"
@@ -99,14 +113,18 @@ ASK_REASON = (
 
 
 def _last_assistant_turn(lines: list[str]) -> tuple[str, bool]:
-    """마지막 어시스턴트 메시지의 글자와, 그 뒤에 도구 호출이 있었는지."""
+    """The last assistant message's text, and whether a tool ran after it.
+
+    Both are reset by a `tool_use` block, because what matters is the prose
+    that closed the turn rather than prose from earlier in it.
+    """
 
     text = ""
     used_tool = False
     for line in lines:
         try:
             entry = json.loads(line)
-        except Exception:  # noqa: BLE001 - 부분 기록 줄은 건너뛴다
+        except Exception:  # noqa: BLE001 - a half-written line is skipped
             continue
         if entry.get("type") == "user":
             text, used_tool = "", False
@@ -128,13 +146,14 @@ def _last_assistant_turn(lines: list[str]) -> tuple[str, bool]:
 
 
 def verdict(payload: dict, *, codex: bool = False) -> dict | None:
-    """되돌려야 하면 훅 출력, 아니면 None."""
+    """The hook output when this has to be reverted, otherwise `None`."""
 
     if bool(payload.get("stop_hook_active")):
         return None
     if codex:
-        # Codex의 전사 파일 형식은 공개 계약이 아니다. Stop이 제공하는
-        # 마지막 응답만 읽어 다른 클라이언트의 기록 형식을 추측하지 않는다.
+        # Codex's transcript format is not a published contract. Only the
+        # last response Stop hands over is read, rather than guessing at
+        # another client's way of recording a session.
         text = payload.get("last_assistant_message")
         if not isinstance(text, str):
             return None
@@ -151,7 +170,8 @@ def verdict(payload: dict, *, codex: bool = False) -> dict | None:
         )
     if used_tool or not text.strip():
         return None
-    # 질문으로 끝나면 사용자 답을 기다리는 턴이다.
+    # Ending on a question is a turn waiting for the person, not one that
+    # stopped short.
     tail = text.rstrip()
     if tail.endswith("?") or tail.endswith("？"):
         return None
@@ -161,7 +181,8 @@ def verdict(payload: dict, *, codex: bool = False) -> dict | None:
             continue
         if DEFERRED.search(stripped) or DEFERRED_EN.search(stripped):
             return None
-        # 묻겠다고 한 것과 하겠다고 한 것은 되돌릴 때 시킬 일이 다르다.
+        # Promising to ask and promising to do need different instructions
+        # back, so which one it was decides the reason.
         asked = ASK_PROMISE.search(stripped) or ASK_PROMISE_EN.search(stripped)
         reason = ASK_REASON if asked else REASON
         return {
@@ -172,7 +193,8 @@ def verdict(payload: dict, *, codex: bool = False) -> dict | None:
 
 
 def main() -> int:
-    # 판정 대상도 차단 사유도 한글이다. 인코딩을 환경에 안 맡긴다.
+    # What is judged and the reason given are both Korean. The encoding is not
+    # left to the environment, where the default on this pipe is cp949.
     sys.stdin.reconfigure(encoding="utf-8")
     sys.stdout.reconfigure(encoding="utf-8")
 
@@ -183,14 +205,15 @@ def main() -> int:
         payload = json.load(sys.stdin)
         answer = verdict(payload if isinstance(payload, dict) else {}, codex=args.codex)
     except Exception:
-        return 0  # 통과. 훅이 깨져서 작업이 멈추면 안 된다.
+        return 0  # pass: a broken hook must not stop the work
     if answer:
         json.dump(answer, sys.stdout, ensure_ascii=False)
     return 0
 
 
 if __name__ == "__main__":
-    # 첫머리의 규칙을 `main` 밖까지 덮는다. 무엇이든 잘못되면 통과시킨다.
+    # The rule at the top of this file, extended past `main`. Whatever goes
+    # wrong, pass.
     try:
         _code = main()
     except Exception as _error:  # noqa: BLE001

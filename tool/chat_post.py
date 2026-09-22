@@ -1,4 +1,4 @@
-"""chat_post — 바깥에서 만든 글을 채널에 넣는다."""
+"""chat_post — put text written elsewhere into a channel."""
 
 from __future__ import annotations
 

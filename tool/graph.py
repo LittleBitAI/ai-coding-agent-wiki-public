@@ -1,4 +1,4 @@
-"""graph — 정책 그래프를 낸다. 그리는 것은 여기서 안 한다."""
+"""graph — produce the policy graph. Drawing it happens elsewhere."""
 
 from __future__ import annotations
 
@@ -19,9 +19,11 @@ from wikilib import front_matter  # noqa: E402
 
 SCOPES = ("operator", "craft")
 HOOK_MARK = "inject.py"
-NS = "rule"          # 이 파일이 담는 축. 지식 축은 대상 저장소의 `.wiki/graph.json`
+NS = "rule"          # the axis this file holds; the knowledge axis lives in a
+                     # target repository's own `.wiki/graph.json`
 
-# 강제 사다리. 색은 "굳은 것 → 흩어지는 것" 순서다 — 1층은 막히고 5층은 문장이다.
+# The enforcement ladder. The colours run from solid to diffuse: layer 1
+# blocks, layer 5 is a sentence.
 LADDER = [
     (1, "차단", "permissions.deny", "#2b3a67"),
     (2, "주입", "UserPromptSubmit 훅", "#3f6b8f"),
@@ -30,18 +32,21 @@ LADDER = [
     (5, "문장", "산문", "#b9b3a4"),
 ]
 
-# 사다리의 번호는 비용 순이지 세기 순이 아니다. 싼 것부터 1이고, 그래서
-# "첫 칸에서 멈춘다" 가 성립한다. 하지만 노드 색이 답해야 하는 물음은 "얼마나
-# 세게 강제되나" 이고, 그건 다른 순서다 — 막는 둘(1·4)이 가장 세고, 절차가
-# 그다음, 읽히기만 하는 주입이 그다음, 문장이 맨 끝이다.
+# The ladder is numbered by cost, not by strength. Cheapest is 1, which is
+# what makes "stop at the first rung that holds" work. But the question a
+# node's colour has to answer is how hard the rule is enforced, and that is a
+# different order: the two that block (1 and 4) are strongest, then the
+# procedure, then an injection that is only read, and a sentence last.
 STRENGTH = [1, 4, 3, 2, 5]
 
 
 def page_files(project_paths: list[Path]) -> list[tuple[str, str, Path]]:
-    """(범위, 이름, 경로). 공유 위키의 규칙 + 각 저장소의 지식 페이지.
+    """`(scope, name, path)`: the shared wiki's rules plus each repository's
+    knowledge pages.
 
-    결정 기록은 뺀다. 한 저장소에 88건이라 그리면 그래프가 아니라 모래알이
-    되고, 그것들은 서로 링크하지도 않는다. 개수만 프로젝트 표에 싣는다.
+    Decision records are excluded. One repository has 88 of them, so drawing
+    them turns a graph into sand, and they do not link to one another anyway.
+    Only the count goes into the project table.
     """
 
     found = []
@@ -99,7 +104,7 @@ def load_pages(project_paths: list[Path] | None = None) -> dict[str, dict]:
 
 
 def skills_touching(pages: dict[str, dict]) -> dict[str, list[str]]:
-    """어느 스킬이 어느 페이지를 든다고 말하는가."""
+    """Which skill says it holds which page."""
 
     touched: dict[str, list[str]] = {name: [] for name in pages}
     directory = WIKI / "skills"
@@ -114,7 +119,7 @@ def skills_touching(pages: dict[str, dict]) -> dict[str, list[str]]:
 
 
 def layers_of(page: dict, skills: list[str]) -> list[int]:
-    """이 규칙이 실제로 서 있는 층들. 산문(5)은 언제나 포함한다."""
+    """The layers this rule actually stands on. Prose (5) is always one of them."""
 
     found = []
     if page["deny"]:
@@ -144,10 +149,11 @@ def corpus_of(name: str) -> list[str]:
 
 
 def read_project(path: Path, pages: dict[str, dict]) -> dict:
-    """대상 저장소에 무엇이 실제로 붙어 있는가.
+    """What is actually attached in a target repository.
 
-    위키가 무엇을 선언했는지가 아니라 그쪽 `settings.json` 이 무엇을 갖고
-    있는지를 읽는다. 둘이 어긋나는 것이 이 화면이 답해야 할 물음이다.
+    Reads what that side's `settings.json` holds rather than what the wiki
+    declared. The two disagreeing is the question this screen exists to
+    answer.
     """
 
     settings_path = path / ".claude" / "settings.json"
@@ -164,14 +170,15 @@ def read_project(path: Path, pages: dict[str, dict]) -> dict:
         for group in event
         for entry in group.get("hooks", [])
     ]
-    # 같은 질문은 한 곳에서 답한다. 담음으로 물으면 남의 `custom-tool/inject.py`
-    # 하나에 지도가 "주입이 붙어 있다" 고 말하고 규칙 수까지 같이 틀린다.
+    # One question, answered in one place. Asked as containment, a single
+    # foreign `custom-tool/inject.py` makes the map say the injector is
+    # attached, and the rule count goes wrong with it.
     inject = any(runs(c, HOOK_MARK) for c in commands)
     values = slots_for(path.name, path)
 
     status: dict[str, str] = {}
     for name, page in pages.items():
-        # 남의 저장소의 지식 페이지는 이 저장소와 아무 상관이 없다.
+        # Another repository's knowledge pages have nothing to do with this one.
         if page["local"] and not name.startswith(f"{path.name}/"):
             status[name] = "foreign"
             continue
@@ -208,9 +215,10 @@ def read_project(path: Path, pages: dict[str, dict]) -> dict:
                     else f"adapters/{path.name}.toml") if values else "",
         "inject": inject,
         "deny": len([d for d in deny]),
-        # 주입기를 빼고 센 나머지 훅. 무엇이 주입기인지는 `inject` 와 같은
-        # 질문이므로 같은 답을 쓴다 — 담음으로 세면 남의 `inject.py` 훅이
-        # 개수에서 빠져 지도가 실제보다 적게 말한다.
+        # The hooks other than the injector. What counts as the injector is
+        # the same question `inject` asks, so it takes the same answer —
+        # counted by containment, a foreign `inject.py` hook drops out and the
+        # map reports fewer hooks than there are.
         "hooks": len([c for c in commands if not runs(c, HOOK_MARK)]),
         "corpus": len(corpus),
         "missing": missing,
@@ -225,11 +233,12 @@ def read_project(path: Path, pages: dict[str, dict]) -> dict:
 
 
 def co_injection(pages: dict[str, dict], corpus: list[str]) -> dict[tuple[str, str], int]:
-    """두 페이지가 같은 발화에 함께 실린 횟수.
+    """How often two pages were carried into the same utterance.
 
-    이것이 옵시디언에 없는 축이다. 위키링크는 사람이 이은 것이지만 이건 실제
-    트래픽에서 잰 것이고, 한 턴에 나란히 실리는 두 규칙이 서로를 모르면 읽는
-    쪽이 둘의 관계를 못 읽는다.
+    This is the axis Obsidian does not have. A wikilink is what a person
+    connected; this is measured from real traffic, and two rules arriving side
+    by side in one turn without knowing about each other leave the reader
+    unable to see the relation.
     """
 
     compiled = {
@@ -247,11 +256,11 @@ def co_injection(pages: dict[str, dict], corpus: list[str]) -> dict[tuple[str, s
 
 
 def per_turn_load(pages: dict[str, dict], corpus: list[str]) -> dict[str, int]:
-    """한 턴에 실제로 실리는 양.
+    """How much is actually carried in one turn.
 
-    페이지 본문의 합계가 아니다. 여섯 장이 있어도 한 턴에 다 걸리는 일은
-    없으므로 합계는 아무 뜻이 없고, 그걸 "예산" 이라고 부르면 아무도 정한 적
-    없는 상한처럼 읽힌다.
+    Not the sum of the page bodies. Six pages never all match in one turn, so
+    the sum means nothing — and calling it a "budget" makes it read like a
+    ceiling nobody ever set.
     """
 
     compiled = {
@@ -350,16 +359,18 @@ def build(pages: dict[str, dict], project_paths: list[Path]) -> dict:
 
 
 def connected() -> list[Path]:
-    """`--project` 를 안 주면 붙은 저장소를 스스로 찾는다.
+    """With no `--project`, find the attached repositories without being told.
 
-    목록을 손으로 드는 순간 저장소가 늘 때마다 여기를 고쳐야 하고, 그것은 곧 안
-    고치는 것이다. 붙었다는 판정은 주입기와 같은 것을 쓴다 — 그 저장소에
-    `.wiki/adapter.toml` 이 있는가. 저장소 이름은 어디에도 안 적는다.
+    Holding the list by hand means editing this every time a repository is
+    added, which means not editing it. Attached is decided the same way the
+    injector decides it — does that repository have a `.wiki/adapter.toml`.
+    No repository name is written down anywhere.
 
-    어디를 뒤질지는 채팅이 쓰는 `.chat-local.json` 의 워크스페이스가 있으면 그것을,
-    없으면 위키의 상위 폴더를 본다. `WIKI_ROOT` 로 이 checkout 이 아닌 허브를
-    가리켰다면 아무것도 안 찾는다 — 그 허브의 상위 폴더는 프로젝트를 모아 둔
-    자리가 아니고, 실제로 임시 폴더를 뒤져 남의 저장소를 그래프에 실은 적이 있다.
+    Where to look: the workspace in the chat's `.chat-local.json` when there
+    is one, otherwise the wiki's parent folder. When `WIKI_ROOT` points at a
+    hub that is not this checkout, nothing is searched — that hub's parent is
+    not where projects are kept, and this really did once walk a temporary
+    folder and put somebody else's repository in the graph.
     """
 
     if WIKI != HERE.parent:
@@ -381,7 +392,8 @@ def connected() -> list[Path]:
 
 
 def main() -> int:
-    # 출력이 파이프로 가면 기본이 cp949 다. 인코딩을 환경에 안 맡긴다.
+    # Down a pipe the default here is cp949. The encoding is not left to the
+    # environment.
     sys.stdout.reconfigure(encoding="utf-8")
 
     parser = argparse.ArgumentParser(description="정책 그래프를 아티팩트로 낸다")

@@ -42,8 +42,9 @@ export default function App() {
   const [legacy, setLegacy] = useState<api.Turn[]>([])
   const [configuring, setConfiguring] = useState(false)
   const selectedRepo = channels[0]?.repo ?? ''
-  // 답하는 중인 채널. 전역 불리언이면 한 채널이 답하는 동안 다른 채널도
-  // 막힌다 — 채널이 독립이라는 약속이 깨진다. 실제로 #위키 입력창이 막혔다.
+  // Which channels are answering. A single global boolean blocks every other
+  // channel while one of them answers, which breaks the promise that channels
+  // are independent — the `#위키` composer really did lock up that way.
   const [busyOn, setBusyOn] = useState<string[]>([])
   const activeRef = useRef('')
   const inFlight = useRef(new Map<string, Msg>())
@@ -52,6 +53,13 @@ export default function App() {
   const [note, setNote] = useState('')
   const [handoff, setHandoff] = useState('')
   const [peek, setPeek] = useState<{ data: PeekData | null; error?: string } | null>(null)
+  // The Korean overlay, on by default. The agent's surfaces are English now,
+  // and this is the half the person reads. Remembered per browser so the
+  // choice is not made again every time the page opens.
+  const [korean, setKorean] = useState(() => localStorage.getItem('korean') !== 'off')
+  useEffect(() => {
+    localStorage.setItem('korean', korean ? 'on' : 'off')
+  }, [korean])
 
   useEffect(() => {
     Promise.all([api.getChannels(), api.getOptions()])
@@ -67,12 +75,13 @@ export default function App() {
       .catch(() => setFault('서버가 안 뜬 것 같다 — tool\\chat.cmd'))
   }, [])
 
-  // 채널을 바꾸면 그 채널의 기록을 되살린다. 프로세스는 서버가 들고 있으므로
-  // 화면이 기억할 것은 없다.
+  // Switching channels restores that channel's record. The server holds the
+  // process, so there is nothing for the screen to remember.
   //
-  // 두 겹으로 막는다. 채널을 또 바꿨으면 버리고(`stale`), 기록이 오는 사이에
-  // 사용자가 이미 뭔가 쳤으면 덮지 않는다. 채널을 바꾸자마자 보내면 방금 친
-  // 말이 빈 기록에 지워졌다 — 실제로 한 번 사라졌다.
+  // Two guards. A further channel switch discards this one (`stale`), and a
+  // record arriving after the person has typed something does not overwrite
+  // it. Sending right after a switch used to erase what had just been typed
+  // under an empty record — it really did disappear once.
   useEffect(() => {
     if (!active || active === MAP || active === MIRROR) return
     let stale = false
@@ -118,8 +127,9 @@ export default function App() {
         placeholder,
       ])
 
-      // 스트림 중에 채널을 바꾸면 화면의 목록은 다른 채널 것이다. 그 위에 토막을
-      // 붙이면 남의 대화가 망가진다. 서버가 기록하니 돌아오면 되살아난다.
+      // Switching channels mid-stream leaves the list on screen belonging to
+      // another channel, and appending a chunk onto it corrupts that
+      // conversation. The server records it, so coming back restores it.
       const patch = (fn: (m: Msg) => Msg) => {
         const previous = inFlight.current.get(cid)!
         const nextMessage = fn(previous)
@@ -141,7 +151,8 @@ export default function App() {
           } else if (ev.kind === 'tool') {
             patch((m) => ({ ...m, tools: [...m.tools, ev.text] }))
           } else if (ev.kind === 'done') {
-            // 마지막 본문은 서버가 든 것을 쓴다. 토막을 놓쳤어도 여기서 맞는다.
+            // The final body is the server's copy. A missed chunk is corrected
+            // right here.
             patch((m) => ({
               ...m,
               text: ev.text || m.text,
@@ -177,7 +188,7 @@ export default function App() {
     [active],
   )
 
-  // 프로젝트를 바꾸면 해당 프로젝트의 기록과 문맥을 다시 선택한다.
+  // Changing project re-selects that project's records and conversation.
   const apply = useCallback(
     async (cfg: { repo: string; model: string; effort: string }) => {
       setFault('')
@@ -209,7 +220,8 @@ export default function App() {
     api.getChannels().then(setChannels).catch(() => {})
   }, [active])
 
-  // 어긋났다 — 그 답의 바로 앞 발화와 함께 census 형식으로 쌓는다.
+  // "That was wrong" — recorded in the census's format, together with the
+  // utterance immediately before that answer.
   const markTurn = useCallback(
     async (index: number, kind: Kind) => {
       const answer = messages[index]
@@ -271,8 +283,9 @@ export default function App() {
       />
       <main className="flex min-w-0 flex-1 flex-col">
         {active === MAP ? (
-          /* 오래 `/wiki.html` 을 iframe 으로 띄웠다. 이제 같은 그래프를 여기서
-             직접 그린다 — 파이썬이 HTML 을 만들고 그것을 다시 감싸던 겹이 빠진다. */
+          /* For a long time this was `/wiki.html` in an iframe. The same graph
+             is drawn here directly now, which removes the layer where Python
+             built the HTML and this app wrapped it again. */
           <div className="h-full overflow-auto"><WikiMap /></div>
         ) : active === MIRROR ? (
           /* The mirror lives here too. It once ran as a single HTML page on a
@@ -299,7 +312,8 @@ export default function App() {
               <div className="flex flex-wrap items-center gap-3">
                 {here && (
                   <Toolbar channel={here} options={options} busy={busy}
-                    projectBusy={busyOn.length > 0 || configuring} onChange={apply} />
+                    projectBusy={busyOn.length > 0 || configuring}
+                    korean={korean} onKorean={setKorean} onChange={apply} />
                 )}
                 <button
                   type="button"
@@ -323,7 +337,9 @@ export default function App() {
                 {note}
               </div>
             )}
-            {handoff && <Handoff text={handoff} onClose={() => setHandoff('')} />}
+            {handoff && (
+              <Handoff text={handoff} korean={korean} onClose={() => setHandoff('')} />
+            )}
             {legacy.length > 0 && (
               <details key={active} className="max-h-64 overflow-auto border-b border-border px-6 py-2 text-xs">
                 <summary className="cursor-pointer">프로젝트 미분류 이전 기록 ({legacy.length}개)</summary>
@@ -336,6 +352,7 @@ export default function App() {
               <div className="flex min-w-0 flex-1 flex-col">
                 <Stream
                   messages={messages}
+                  korean={korean}
                   remote={here?.remote ?? ''}
                   onPeek={showPeek}
                   onDecide={active === 'retro' ? decideOne : undefined}

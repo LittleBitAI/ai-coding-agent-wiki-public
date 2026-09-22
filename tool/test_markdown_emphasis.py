@@ -344,11 +344,12 @@ def test_what_a_fragment_could_push_over_the_limit_is_left_to_lint(
 
 
 def test_the_check_reaches_a_target_repository(tmp_path: Path) -> None:
-    """허브에만 걸어 두면 설치된 저장소에서는 아무도 안 본다.
+    """Left only on the hub, nobody looks in an installed repository.
 
-    훅이 조각을 통과시키는 것은 그 뒤에 파일을 읽는 검사가 있기 때문인데,
-    그 검사가 허브에서만 돌면 대상 저장소에서는 강제가 통째로 비어 있다.
-    `repo_lint` 가 `sync` 의 Stop 에서 도는 자리라 거기 있어야 한다.
+    The hook lets a fragment through because a check reading the file follows
+    it — and if that check runs only on the hub, the enforcement is entirely
+    absent in a target repository. `repo_lint` is where `sync`'s Stop hook
+    runs, which is why it belongs there.
     """
 
     import lint
@@ -367,11 +368,13 @@ def test_the_check_reaches_a_target_repository(tmp_path: Path) -> None:
 def test_the_scan_follows_git_rather_than_a_hand_written_exclusion_list(
     tmp_path: Path,
 ) -> None:
-    """손으로 쓴 제외 목록은 허브의 사정이지 남의 저장소의 사정이 아니다.
+    """A hand-written exclusion list is the hub's circumstances, not another
+    repository's.
 
-    `web/`·`artifacts/`·`raw/` 를 이름으로 거르니 대상 저장소에서는 진짜 문서가
-    통째로 빠졌고, 앞자리만 같은 `node_modules-guide.md` 도 같이 빠졌다.
-    "이 파일이 우리 것인가" 는 git 이 이미 답을 안다.
+    Filtering `web/`, `artifacts/` and `raw/` by name dropped real documents
+    wholesale in a target repository, and took `node_modules-guide.md` with
+    them for sharing a prefix. "Is this file ours" is a question git already
+    answers.
     """
 
     import lint
@@ -397,16 +400,17 @@ def test_the_scan_follows_git_rather_than_a_hand_written_exclusion_list(
 
 
 def test_a_byte_pinned_original_is_not_judged_on_style(tmp_path: Path) -> None:
-    """저장소가 해시로 못 박은 원문은 고칠 수 없으므로 문체를 안 따진다.
+    """An original pinned by hash cannot be fixed, so it is not judged on style.
 
-    대회가 준 원문에 `if __name__ == "__main__":` 이 백틱 없이 적혀 있으면
-    CommonMark 가 `__name__` 과 `__main__` 을 둘 다 강조로 읽는다. 백틱을
-    넣으면 그 저장소가 적어 둔 "이동 전후 동일한 SHA-256" 이 거짓이 된다.
-    그래서 이 발견은 고칠 방법이 없고, 검진에 영원히 한 건으로 남는다.
+    Where competition material writes `if __name__ == "__main__":` without
+    backticks, CommonMark reads both `__name__` and `__main__` as emphasis.
+    Adding backticks makes that repository's own record — "the same SHA-256
+    before and after the move" — false. So the finding has no fix and would
+    sit in the health check forever.
 
-    기준은 이름이 아니라 그 저장소가 실제로 적어 둔 해시다. 못 박기를 지우면
-    같은 파일이 다시 발견으로 돌아오는지까지 본다 — 이름으로 거른 것이었다면
-    그 대목에서 초록이 남는다.
+    What decides it is the hash that repository actually wrote down, not a
+    name. Removing the pin and checking the same file comes back as a finding
+    is part of this: had it been filtered by name, that step would stay green.
     """
 
     import hashlib
@@ -443,11 +447,12 @@ def test_a_byte_pinned_original_is_not_judged_on_style(tmp_path: Path) -> None:
 
 
 def test_a_new_file_is_seen_before_it_is_staged(tmp_path: Path) -> None:
-    """`Write` 로 만든 직후의 문서가 안 보이면 그 파일은 검사 밖에 산다.
+    """A document invisible right after `Write` lives outside every check.
 
-    인덱스만 보면 새 문서는 `git add` 전까지 아무 검사도 안 거치고, 그 사이에
-    조각 편집이 쌓이면 훅도 lint 도 그것을 못 본다. 대문자 확장자도 같다 —
-    훅은 소문자로 바꿔 판정하는데 pathspec 은 대소문자를 가렸다.
+    Reading the index alone, a new document goes unchecked until `git add`,
+    and fragment edits piling onto it in the meantime are seen by neither the
+    hook nor lint. An upper-case extension is the same problem: the hook
+    lowercases before deciding while the pathspec was case-sensitive.
     """
 
     import lint
@@ -464,7 +469,8 @@ def test_a_new_file_is_seen_before_it_is_staged(tmp_path: Path) -> None:
 
 
 def test_a_file_deleted_from_the_worktree_is_not_a_finding(tmp_path: Path) -> None:
-    """지우는 중인 파일을 못 읽었다고 보고하면 정상적인 삭제가 게이트를 막는다."""
+    """Reporting a file being deleted as unreadable turns an ordinary deletion
+    into a blocked gate."""
 
     import lint
 
@@ -482,28 +488,32 @@ def test_a_file_deleted_from_the_worktree_is_not_a_finding(tmp_path: Path) -> No
 
 
 def test_the_counter_is_about_asterisks_and_says_so() -> None:
-    """`__` 를 세려면 CommonMark 의 구분자 규칙을 구현해야 한다.
+    """Counting `__` would mean implementing CommonMark's delimiter rules.
 
-    한 라운드가 `foo__bar__baz` 오탐을 찾았고, 그 규칙의 다음 절이 다음 라운드다.
-    이 검사가 막으려는 습관은 `**` 로 쓰인다. `__` 는 모호하지 않은 자리 —
-    블록 첫머리의 라벨 — 에서만 본다.
+    One review round found the `foo__bar__baz` false positive, and the next
+    clause of that rule is the next round. The habit this check exists to stop
+    is written with `**`. `__` is only looked at where it is unambiguous — a
+    label at the start of a block.
     """
 
     snake = "# t\n\n" + "\n\n".join(f"{n} 번째 foo__bar__baz." for n in range(9)) + "\n"
-    assert findings(snake) == [], "식별자를 강조로 셌다"
+    assert findings(snake) == [], "an identifier was counted as emphasis"
 
-    assert findings("__Rule.__ text"), "블록 첫머리의 `__` 라벨은 잡아야 한다"
-    assert findings("**Rule.** text"), "`**` 라벨도 그대로 잡아야 한다"
+    assert findings("__Rule.__ text"), "a `__` label at the start of a block must be caught"
+    assert findings("**Rule.** text"), "a `**` label must still be caught"
 
 
 def test_inline_code_is_not_counted() -> None:
-    """코드 안의 별표는 문자다. 세면 마크다운을 설명하는 산문이 거부된다.
+    """An asterisk inside code is a character. Counting it rejects prose about
+    markdown.
 
-    여는 백틱 런과 닫는 런의 길이가 같아야 한다는 것이 규칙 전부다. 그보다 느슨한
-    `` `+[^`\\n]*`+ `` 는 같아 보였지만 아니었다 — 공백을 둔 두 백틱 스팬에서
-    여는 런과 공백과 다음 한 백틱을 먹고 가운데를 드러냈다. 리뷰가 그것을
-    찾았는데 내가 공백 없는 문자열로 재현해 보고 없는 결함이라고 답했다.
-    그 공백이 바로 느슨한 패턴이 틀리는 자리였다.
+    The whole rule is that the opening backtick run and the closing run have
+    to be the same length. The looser `` `+[^`\\n]*`+ `` looked equivalent and
+    was not: across two backtick spans with a space between them it ate the
+    opening run, the space and one following backtick, exposing the middle. A
+    review found it, and I reproduced it with a string that had no space,
+    reported no defect, and was wrong — the space was precisely where the
+    loose pattern failed.
     """
 
     tick = chr(96)
@@ -519,12 +529,13 @@ def test_inline_code_is_not_counted() -> None:
     }.items():
         assert findings(text, whole=False) == [], name
 
-    assert findings("**a** and **b**", whole=False), "코드 밖은 그대로 센다"
+    assert findings("**a** and **b**", whole=False), "outside code it still counts"
     assert findings(f"{tick}**a**{tick} and **b** and **c**", whole=False)
 
 
 def test_a_markdown_file_that_cannot_be_read_is_a_finding(tmp_path: Path) -> None:
-    """건너뛰면 "전부 봤다" 가 거짓인 채로 게이트가 초록이 된다."""
+    """Skipping it leaves the gate green while "all of them were looked at"
+    is false."""
 
     import lint
 

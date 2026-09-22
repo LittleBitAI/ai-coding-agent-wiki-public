@@ -1,4 +1,9 @@
-"""팀원 PC의 채팅 설치·로그인·상태 확인. 로그인 정보는 각 CLI가 관리한다."""
+"""Install the chat on a team member's PC, sign in, and report state.
+
+Credentials stay with each CLI; nothing here captures or copies a token.
+Everything printed is read by the person doing the install, so those strings
+are Korean.
+"""
 
 import argparse
 import json
@@ -29,7 +34,8 @@ def login(agent, force=False):
         print(f"{agent}: 이 PC 사용자의 기존 로그인을 사용합니다.")
         return
     print(f"{agent}: 브라우저에서 본인 계정으로 로그인하세요.", flush=True)
-    # 상위 터미널과 현재 사용자의 환경을 그대로 쓴다. 토큰을 캡처·복사하지 않는다.
+    # The parent terminal and this user's own environment, unchanged. No token
+    # is captured or copied — the CLI owns the sign-in and keeps it.
     subprocess.run([*cli_command(agent), *AUTH[agent][1]], cwd=ROOT, check=True)
     if not logged_in(agent):
         raise ValueError(f"{agent}: 로그인이 확인되지 않았습니다. login 명령을 다시 실행하세요.")
@@ -77,11 +83,12 @@ def install(agents, workspace):
         from chat_channels import codex_models
         models = codex_models()
         model = next((m for m in models if m.get("is_default")), models[0])["id"]
-    # 설치가 끝난 뒤에만 경로와 기본 모델을 저장한다. 계정·토큰은 저장하지 않는다.
+    # The path and the default model are written only once the install has
+    # finished. No account and no token is written at any point.
     data = settings()
     try:
         local_workspace = os.path.relpath(workspace, ROOT)
-    except ValueError:  # Windows의 서로 다른 드라이브는 상대 경로로 표현할 수 없다.
+    except ValueError:  # two Windows drives have no relative path between them
         local_workspace = str(workspace)
     data.update(workspace=local_workspace, model=model)
     SETTINGS.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")

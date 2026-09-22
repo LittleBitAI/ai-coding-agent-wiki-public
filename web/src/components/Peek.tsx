@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils'
 
 type Props = { data: PeekData | null; error?: string; onClose: () => void }
 
-/** 인용된 자리를 옆 서랍에서 본다. 대화는 그대로 두고.
+/** Read the cited place in a side drawer, leaving the conversation where it is.
  *
  *  While the pages move to English this is where a person reads them in
  *  Korean. The original is never replaced: the source line stays, and the

@@ -1,4 +1,4 @@
-"""apply 의 병합이 기존 설정을 지우지 않는지 증명한다."""
+"""Prove `apply`'s merge never erases settings that were already there."""
 
 from __future__ import annotations
 
@@ -49,7 +49,8 @@ def check(label: str, ok: bool, detail: str = "") -> bool:
 
 
 def main() -> int:
-    # 출력이 파이프로 가면 기본이 cp949 다. 인코딩을 환경에 안 맡긴다.
+    # Down a pipe the default here is cp949. The encoding is not left to the
+    # environment.
     sys.stdout.reconfigure(encoding="utf-8")
 
     denies = ["Bash(sed -i*)", "Bash(git reset --hard*)"]
@@ -111,9 +112,10 @@ def main() -> int:
     ))
 
     print("\nStop 이 둘일 때\n")
-    # 한 이벤트에 이 위키의 훅이 둘 걸리는 유일한 자리다. `put_hook` 이 이름이
-    # 아니라 명령 안의 스크립트 경로로 자기 것을 알아보므로 둘이 서로를 덮으면
-    # 안 되고, 남의 Stop 훅도 그대로 남아야 한다.
+    # The one place where two of this wiki's hooks sit on a single event.
+    # `put_hook` recognises its own by the script path in the command rather
+    # than by name, so these two must not overwrite each other — and somebody
+    # else's Stop hook has to survive alongside them.
     both: dict = {"hooks": {"Stop": [OTHER_STOP]}}
     merge(both, [], hook, SCRIPTS, None, sync_entry(PY, "proj"), continuation_entry(PY))
     stop = [e["command"] for g in both["hooks"]["Stop"] for e in g["hooks"]]
@@ -202,18 +204,19 @@ def main() -> int:
         str(kept),
     ))
 
-    # 소유 판정은 명령 문자열에 이름이 들어 있느냐가 아니다. 두 라운드가 그
-    # 답으로 갔다 — 먼저 맨 파일명이, 그다음 `tool/` 접두가 뚫렸다.
-    # `custom-tool/` 은 `tool/` 로 끝난다.
+    # Ownership is not whether the name appears in the command string. Two
+    # review rounds went to that answer: the bare filename was defeated
+    # first, then the `tool/` prefix — `custom-tool/` ends in `tool/`.
     from apply import runs
 
     import tempfile
     from apply import HERE
 
     here = HERE.as_posix()
-    # 남이 진짜로 `tool/` 안에 같은 이름의 스크립트를 갖고 있는 경우. 부모
-    # 디렉터리 이름만 보던 판정이 이것을 자기 것이라고 했다 — 세 라운드째
-    # 같은 자리다. 실제로 파일을 만들어야 재현된다.
+    # Somebody genuinely having a script of the same name inside their own
+    # `tool/`. Comparing only the parent directory's name called this ours —
+    # the third round in the same place. It needs a real file on disk to
+    # reproduce.
     with tempfile.TemporaryDirectory() as tmp:
         theirs = Path(tmp) / "tool"
         theirs.mkdir()
@@ -235,8 +238,9 @@ def main() -> int:
              False, "대상 프로젝트의 상대경로 훅"),
             ('"python" "tool/korean_progress.py"', "korean_progress.py",
              False, "상대경로 — 지운 이름이어도 남의 것"),
-            # 우리 경로를 *데이터로* 넘기는 남의 훅. 따옴표 인자를 전부 훑으면
-            # 이것이 우리 것이 되고, `put_hook` 이 남의 audit.py 훅을 덮는다.
+            # Somebody else's hook passing our path as *data*. Scanning every
+            # quoted argument makes this ours, and `put_hook` overwrites their
+            # `audit.py` hook.
             (f'"C:/Python/python.exe" "C:/project/audit.py" --watch "{here}/inject.py"',
              "inject.py", False, "우리 경로를 인자로 받는 남의 훅"),
             (f'"py" "{here}/inject.py" --adapter x', "sync.py",
@@ -244,9 +248,9 @@ def main() -> int:
         ]:
             results.append(check(f"소유 판정: {why}", runs(command, script) == want, command))
 
-        # 판정이 `apply.py` 를 어디서 돌렸는지에 따라 달라지면 안 된다.
-        # 허브 루트에서 돌리면 `tool/inject.py` 가 `HERE/inject.py` 로
-        # 풀려서 남의 훅이 우리 것이 됐다.
+        # The answer must not depend on where `apply.py` was run from. From
+        # the hub root, `tool/inject.py` resolved to `HERE/inject.py` and
+        # somebody else's hook became ours.
         import os
 
         was = Path.cwd()
@@ -263,10 +267,11 @@ def main() -> int:
             f"허브에서 {here_says}, 다른 곳에서 {there_says}",
         ))
 
-    # 없는 경로를 가진 훅은 지우지 않고 말한다. 위키를 옮긴 흔적일 수도,
-    # 잠깐 끊긴 공유 드라이브 위의 남의 훅일 수도 있고 명령만 보고는
-    # 구별이 안 된다. 지우는 쪽을 고르면 남의 설정을 네트워크 한 번
-    # 끊겼다고 부순다.
+    # A hook at a path that is not there is reported, never removed. It may
+    # be where the wiki used to live, or somebody else's hook on a share that
+    # is offline for a minute, and the command alone cannot tell those apart.
+    # Choosing to delete destroys a colleague's settings over one network
+    # blip.
     from apply import stale
 
     ghost = {"hooks": {"PreToolUse": [{"hooks": [
@@ -284,8 +289,9 @@ def main() -> int:
         stale({"hooks": {"UserPromptSubmit": [hook]}}) == [],
         str(stale({"hooks": {"UserPromptSubmit": [hook]}})),
     ))
-    # 실행되는 것은 `audit.py` 다. 없는 경로는 그 훅이 지켜보는 대상일 뿐이라
-    # "훅이 없는 파일을 가리킨다" 는 말이 사실이 아니다.
+    # What runs is `audit.py`. The missing path is only what that hook
+    # watches, so "this hook points at a file that is not there" would not be
+    # true.
     watcher = {"hooks": {"PreToolUse": [{"hooks": [{
         "type": "command",
         "command": '"py" "C:/project/audit.py" --watch "Z:/archive/tool/inject.py"',
