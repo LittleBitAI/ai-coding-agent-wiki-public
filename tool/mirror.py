@@ -466,20 +466,43 @@ def render(records: list[dict], host: str, translator=T.translate) -> list[str]:
 # of re-reading, and it happens once per pass.
 SEAM = 64
 
+# How far to look for the end of the first record. Both hosts put a session id
+# in it, so this is read to identify the file, not to parse it.
+FIRST = 8192
+
 
 def seam(path: Path, offset: int) -> bytes:
     """The bytes just before `offset`, as the file holds them now.
 
-    The first bytes of the file cannot do this job: every record in a session
-    log opens with the same keys, so a rewritten file matches on its opening
-    for far longer than any prefix worth reading. The bytes at the seam are
-    the ones that were actually just consumed, and a rewrite changes them.
+    The bytes at the seam are the ones that were just consumed. A rewrite
+    changes them — unless it happens to end the same way, which is why this is
+    only half the check.
     """
 
     start = max(0, offset - SEAM)
     with path.open("rb") as fh:
         fh.seek(start)
         return fh.read(offset - start)
+
+
+def born(path: Path) -> bytes:
+    """The first record, which is where both hosts put the session id.
+
+    Claude opens the file with `sessionId`, Codex with `session_meta` holding
+    `session_id`. Neither is ever rewritten while the session appends to it,
+    so this answers "is this the same session" rather than sampling bytes and
+    hoping they differ — which is what the previous two attempts did, and both
+    were shown to coincide.
+
+    ponytail: a rewrite that keeps both the first record and the trailing
+    64 bytes is not detected, and neither is one that lands between this
+    check and the read below. Answering either needs the whole file hashed
+    every poll, which costs more than a mirror is worth: a missed line costs
+    reading comfort, and the file this reads is append-only on both hosts.
+    """
+
+    with path.open("rb") as fh:
+        return fh.read(FIRST).split(b"\n", 1)[0]
 
 
 def follow(pick, session: Path | None = None, poll: float = POLL, announce=None):
@@ -500,12 +523,12 @@ def follow(pick, session: Path | None = None, poll: float = POLL, announce=None)
 
     if announce is None:
         announce = lambda path: print(f"── {path.name}", flush=True)  # noqa: E731
-    path, offset, tail, read = session, 0, b"", b""
+    path, offset, tail, read, first = session, 0, b"", b"", b""
     while True:
         if path is None or not path.exists():
             found = pick()
             if found != path:
-                path, offset, tail, read = found, 0, b"", b""
+                path, offset, tail, read, first = found, 0, b"", b"", b""
                 if path is not None:
                     announce(path)
         if path is None:
@@ -515,14 +538,16 @@ def follow(pick, session: Path | None = None, poll: float = POLL, announce=None)
 
         try:
             size = path.stat().st_size
-            # Two ways the file underneath stops being the file already read.
-            # It shrinks, which the size catches. Or it is rewritten between
-            # polls with *more* content than was read — and then the size says
-            # "grown", the read resumes in the middle of content nobody has
-            # seen, and everything before that point is gone with nothing to
-            # say so. The size cannot tell those apart; the bytes that were
-            # just read still sitting where they were read from can.
-            moved = read and seam(path, offset) != read
+            # Three ways the file underneath stops being the file already
+            # read. It shrinks, which the size catches. It becomes a different
+            # session at the same path, which the first record catches. Or it
+            # is rewritten with *more* content than was read — the size then
+            # says "grown", the read resumes in the middle of content nobody
+            # has seen, and everything before that is gone with nothing to say
+            # so. The seam catches that: the bytes just consumed are still
+            # where they were consumed from, or this is not the same file.
+            head = born(path)
+            moved = (first and head != first) or (read and seam(path, offset) != read)
         except OSError:
             path = None
             yield []
@@ -530,11 +555,12 @@ def follow(pick, session: Path | None = None, poll: float = POLL, announce=None)
 
         if size < offset or moved:
             offset, tail, read = 0, b"", b""
+        first = head
         if size == offset:
             if session is None:
                 found = pick()
                 if found is not None and found != path:
-                    path, offset, tail, read = found, 0, b"", b""
+                    path, offset, tail, read, first = found, 0, b"", b"", b""
                     announce(path)
                     continue
             yield []

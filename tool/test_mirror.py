@@ -301,6 +301,37 @@ def test_a_file_rewritten_larger_between_polls_is_read_from_the_top(tmp_path):
     ]
 
 
+def test_a_rewrite_that_ends_the_same_way_is_still_caught(tmp_path):
+    """Padded so the last 64 bytes match. Two samples of bytes both coincided.
+
+    The opening bytes coincide because every record starts with the same
+    keys. The trailing bytes coincide when the records are padded, as they are
+    here. What does not coincide is the session: both hosts put an id in the
+    first record and neither rewrites it while appending. The samples answered
+    "do these bytes differ"; this answers "is this the same session".
+    """
+
+    log = tmp_path / "session.jsonl"
+    pad = "x" * 100
+    said = lambda text: json.dumps(  # noqa: E731
+        {"type": "queue-operation", "operation": "enqueue",
+         "content": text, "padding": pad}
+    ) + "\n"
+
+    was, now = said("old").encode(), said("new").encode()
+    # The precondition: the seam alone cannot see this rewrite.
+    assert len(was) == len(now) and was[-M.SEAM:] == now[-M.SEAM:]
+
+    log.write_bytes(was)
+    steps = M.follow(lambda: log, log, poll=0, announce=lambda _p: None)
+    next(steps)
+
+    log.write_bytes(now + said("later").encode())
+    second = next(steps)
+
+    assert [r["content"] for r in second] == ["new", "later"]
+
+
 def test_codex_prints_the_same_things():
     records = [
         codex({"type": "UserMessage", "content": [{"type": "text", "text": "진행해라"}]}),
