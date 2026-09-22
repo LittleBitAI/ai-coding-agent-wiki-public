@@ -225,6 +225,26 @@ def test_english_prose_holding_a_protected_korean_term_still_gets_translated():
     assert said == ["[ko]Check 나라장터 rules before editing.", "훅이 조용히 죽는다"]
 
 
+def test_a_feed_can_be_told_apart_from_another_feed():
+    """The index is a position. Only the id says a position in *what*.
+
+    `gen` and the part index both count from the bottom again in a new
+    process, so a tab holding `gen 1, index 200` across a server restart meets
+    a feed calling itself the same thing and throws away its first two hundred
+    lines as already seen. Two feeds never share an id, whichever process made
+    them, which is what lets the tab notice.
+    """
+
+    assert M.Feed().id != M.Feed().id
+
+    station = M.Station("claude", poll=0.01)
+    first = station.feed.id
+    station.point("claude", Path("/one"))
+    station.point("claude", Path("/two"))
+
+    assert len({first, station.feed.id}) == 2
+
+
 def test_codex_prints_the_same_things():
     records = [
         codex({"type": "UserMessage", "content": [{"type": "text", "text": "진행해라"}]}),

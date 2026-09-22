@@ -39,6 +39,7 @@ import os
 import sys
 import threading
 import time
+import uuid
 from collections import deque
 from pathlib import Path
 
@@ -552,14 +553,21 @@ BEAT = 0.4
 class Feed:
     """What the mirror has said, with an index so a tab can catch up once.
 
-    The index is absolute and travels with each part. `EventSource` reconnects
-    on its own and the server starts replaying from the top when it does, so
-    without it a dropped connection duplicates the whole visible session.
+    The index is absolute and travels with each part. A dropped connection is
+    reconnected and the server starts replaying from the top when it is, so
+    without the index that reconnect duplicates the whole visible session.
+
+    `id` is what makes the index mean anything to a tab. Both the index and
+    the generation number start again from the bottom when this process does,
+    so a tab holding `gen 1, index 200` across a server restart meets a new
+    feed calling itself the same thing and silently discards its first two
+    hundred lines. The number says where in a feed; only this says which feed.
     """
 
     def __init__(self, keep: int = KEEP) -> None:
         self.items: deque = deque(maxlen=keep)
         self.count = 0
+        self.id = uuid.uuid4().hex
         self.lock = threading.Lock()
 
     def add(self, part: tuple[str, str, str, str]) -> None:

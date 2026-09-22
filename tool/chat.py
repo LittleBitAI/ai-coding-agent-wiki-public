@@ -725,7 +725,10 @@ def mirror_stream() -> StreamingResponse:
                 # and the screen clears itself on seeing the new `gen`.
                 cursor, seen = 0, gen
             cursor, parts = feed.since(cursor)
-            yield sse({"gen": gen, "host": host, "project": project, "parts": parts})
+            # `feed` rather than `gen` is what the tab resets on. Both numbers
+            # restart with this process; the id does not.
+            yield sse({"gen": gen, "feed": feed.id, "host": host,
+                       "project": project, "parts": parts})
             time.sleep(mirror.BEAT)
 
     return StreamingResponse(stream(), media_type="text/event-stream",

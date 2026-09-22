@@ -29,15 +29,18 @@ export function Mirror() {
   const [parts, setParts] = useState<Part[]>([])
   const [live, setLive] = useState(false)
   const [fault, setFault] = useState('')
-  // The generation this screen is showing. A different number from the server
-  // means the repository changed, and everything held here belongs to the old
-  // one.
-  const gen = useRef(-1)
+  // The feed this screen is showing. A different id means everything held
+  // here belongs to another one — the repository changed, or the server was
+  // restarted under us. The generation number cannot answer that: it counts
+  // from zero again in a new process, so a restart hands back the same number
+  // for a different feed.
+  const feed = useRef('')
   // The last index taken. A dropped connection is reconnected below, and the
   // server starts every connection replaying from the top of the feed, so
   // without this the whole visible session arrives a second time — and again
   // on every reconnect after that. The index is the server's own absolute
-  // one, which is why `Feed` carries it.
+  // one, which is why `Feed` carries it, and it only means anything next to
+  // the id above.
   const mark = useRef(-1)
 
   useEffect(() => {
@@ -68,8 +71,8 @@ export function Mirror() {
     }
 
     const take = (frame: Frame) => {
-      if (frame.gen !== gen.current) {
-        gen.current = frame.gen
+      if (frame.feed !== feed.current) {
+        feed.current = frame.feed
         mark.current = -1
         setParts([])
       }

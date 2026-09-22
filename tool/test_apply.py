@@ -202,6 +202,25 @@ def main() -> int:
         str(kept),
     ))
 
+    # 소유 판정은 명령 문자열에 이름이 들어 있느냐가 아니다. 두 라운드가 그
+    # 답으로 갔다 — 먼저 맨 파일명이, 그다음 `tool/` 접두가 뚫렸다.
+    # `custom-tool/` 은 `tool/` 로 끝난다.
+    from apply import runs
+
+    for command, script, want, why in [
+        ("python audit.py --watch korean_progress.py", "korean_progress.py",
+         False, "이름만 대는 남의 훅"),
+        ('"py" "C:/repo/custom-tool/korean_progress.py"', "korean_progress.py",
+         False, "디렉터리 이름이 tool 로 끝나는 남의 훅"),
+        ('"py" "C:/w/tool/korean_progress.py"', "korean_progress.py",
+         True, "우리 것"),
+        ('& "py" "C:/w/tool/declared_continuation.py" --codex',
+         "declared_continuation.py", True, "Codex 가 붙이는 & 와 인자"),
+        ('"py" "C:/w/tool/inject.py" --adapter x', "sync.py",
+         False, "다른 스크립트"),
+    ]:
+        results.append(check(f"소유 판정: {why}", runs(command, script) == want, command))
+
     print()
     if all(results):
         print(f"{len(results)}건 전부 통과. 병합이 기존 설정을 안 지운다.")

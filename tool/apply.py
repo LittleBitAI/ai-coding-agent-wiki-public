@@ -8,7 +8,7 @@ import re
 import subprocess
 import sys
 import tomllib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -29,10 +29,34 @@ NEEDED = {"PyYAML": "yaml", "markdown-it-py": "markdown_it"}
 FLOOR = (3, 11)
 BUILTIN = {"tomllib": "tomllib"}
 
-HOOK_MARK = "tool/inject.py"
-SESSION_MARK = "tool/session_state.py"
-SYNC_MARK = "tool/sync.py"
-CONTINUATION_MARK = "tool/declared_continuation.py"
+HOOK_MARK = "inject.py"
+SESSION_MARK = "session_state.py"
+SYNC_MARK = "sync.py"
+CONTINUATION_MARK = "declared_continuation.py"
+
+# The quoted arguments of a hook command. Our own writer emits
+# `"<python>" "<wiki>/tool/<script>"`, so the paths are always quoted.
+ARGS = re.compile(r'"([^"]*)"')
+
+
+def runs(command: str, script: str) -> bool:
+    """Does this command run *this wiki's* copy of `script`?
+
+    Asked of one quoted argument at a time, not of the line as a whole.
+    Containment is a different question and answering it instead cost two
+    review rounds: `python audit.py --watch korean_progress.py` names the
+    script without being ours, and `custom-tool/english_progress.py` ends in
+    `tool/english_progress.py`, which defeated a needle that was meant to be a
+    directory. Here the directory is compared as a path component, so neither
+    passes — and a checkout that moved still matches, which an absolute path
+    would not.
+    """
+
+    for arg in ARGS.findall(command):
+        where = PurePosixPath(arg.replace("\\", "/"))
+        if where.name == script and where.parent.name == "tool":
+            return True
+    return False
 
 
 def declared() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
@@ -174,24 +198,24 @@ def script_entry(python: str, script: str, status: str) -> dict:
     }
 
 
-def put_hook(settings: dict, event: str, mark: str, entry: dict) -> list[str]:
+def put_hook(settings: dict, event: str, script: str, entry: dict) -> list[str]:
     """한 이벤트에 훅 하나를 건다. 같은 스크립트가 이미 있으면 명령만 갱신한다.
 
-    이름이 아니라 명령 안의 스크립트 경로로 자기 것을 알아본다. 이름으로
-    찾으면 사용자가 붙인 훅과 구별이 안 되고, 그러면 남의 훅을 덮는다.
+    이름이 아니라 `runs` 가 자기 것을 가린다. 이름으로 찾으면 사용자가 붙인
+    훅과 구별이 안 되고, 그러면 남의 훅을 덮는다.
     """
 
     groups = settings.setdefault("hooks", {}).setdefault(event, [])
     for group in groups:
         for existing in group.get("hooks", []):
-            if mark in str(existing.get("command", "")):
+            if runs(str(existing.get("command", "")), script):
                 wanted = entry["hooks"][0]
                 if any(existing.get(k) != v for k, v in wanted.items() if k != "statusMessage"):
                     existing.update(wanted)
-                    return [f"{event} 훅 명령 갱신: {mark}"]
+                    return [f"{event} 훅 명령 갱신: tool/{script}"]
                 return []
     groups.append(entry)
-    return [f"{event} 훅 추가: {mark}"]
+    return [f"{event} 훅 추가: tool/{script}"]
 
 
 # Hook scripts that were renamed: old name on the left, current one on the right.
@@ -205,19 +229,6 @@ def put_hook(settings: dict, event: str, mark: str, entry: dict) -> list[str]:
 RETIRED = {"korean_progress.py": "english_progress.py"}
 
 
-def ours(script: str) -> str:
-    """The needle that says a hook command runs *our* copy of that script.
-
-    The bare filename is not that needle. A hook the person wrote themselves —
-    `python audit.py --watch korean_progress.py` — contains it, and matching
-    on it deletes their hook. `put_hook` says it recognises its own by the
-    script path rather than the name, and this is that path: the command holds
-    `<wiki>/tool/<script>`, and nothing else on the machine does.
-    """
-
-    return f"tool/{script}"
-
-
 def retire(settings: dict, gone: str, instead: str) -> list[str]:
     """Drop an owned entry, but only once its replacement is already wired.
 
@@ -227,9 +238,8 @@ def retire(settings: dict, gone: str, instead: str) -> list[str]:
     """
 
     groups = settings.get("hooks", {}).get("PreToolUse", [])
-    old, new = ours(gone), ours(instead)
     has_new = any(
-        new in str(h.get("command", ""))
+        runs(str(h.get("command", "")), instead)
         for group in groups
         for h in group.get("hooks", [])
     )
@@ -238,7 +248,7 @@ def retire(settings: dict, gone: str, instead: str) -> list[str]:
 
     changes: list[str] = []
     for group in list(groups):
-        kept = [h for h in group.get("hooks", []) if old not in str(h.get("command", ""))]
+        kept = [h for h in group.get("hooks", []) if not runs(str(h.get("command", "")), gone)]
         if len(kept) != len(group.get("hooks", [])):
             changes.append(f"PreToolUse 옛 훅 제거: {gone} → {instead}")
             group["hooks"] = kept
@@ -269,7 +279,7 @@ def merge(
 
     changes += put_hook(settings, "UserPromptSubmit", HOOK_MARK, hook)
     for script, entry in sorted((scripts or {}).items()):
-        changes += put_hook(settings, "PreToolUse", ours(script), entry)
+        changes += put_hook(settings, "PreToolUse", script, entry)
     if session:
         changes += put_hook(settings, "SessionStart", SESSION_MARK, session)
     if sync:
@@ -291,7 +301,7 @@ def configure(settings: dict, project: Path, adapter: str | None, python: str, a
         entries = [
             ("UserPromptSubmit", HOOK_MARK, hook_entry(python, adapter, where)),
             ("SessionStart", SESSION_MARK, session_entry(python, where)),
-            ("PreToolUse", "tool/codex_pretool.py",
+            ("PreToolUse", "codex_pretool.py",
              script_entry(python, "codex_pretool.py", "위키: 도구 실행 검사")),
             ("Stop", SYNC_MARK, sync_entry(python, where)),
             ("Stop", CONTINUATION_MARK, continuation_entry(python)),

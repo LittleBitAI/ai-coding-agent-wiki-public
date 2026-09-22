@@ -102,9 +102,15 @@ export type Mirrors = {
   hosts: Record<string, Repo[]>
 }
 
-/** Rises on every repository switch. It answers whose a late piece is. */
+/**
+ * `gen` rises on every repository switch and answers whose a late piece is.
+ * `feed` names the feed those `parts` indexes belong to — a restarted server
+ * hands back the same `gen` for a different feed, and the id is what tells
+ * those two apart.
+ */
 export type Frame = {
   gen: number
+  feed: string
   host: string
   project: string
   parts: Part[]

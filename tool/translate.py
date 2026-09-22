@@ -430,10 +430,16 @@ def baseline(path: Path) -> tuple[dict[str, dict], list[str]]:
         name = str(row.get("output") or "")
         kind = str(row.get("kind") or "")
         where = name or "<output 없음>"
-        if not name or kind not in ("translation", "rewrite", "new"):
-            problems.append(f"{where}: output 과 kind(translation|rewrite|new) 가 있어야 한다")
+        if not name or kind not in ("translation", "rewrite", "new", "kept"):
+            problems.append(
+                f"{where}: output 과 kind(translation|rewrite|new|kept) 가 있어야 한다"
+            )
             continue
-        if kind != "new":
+        if kind == "kept" and not str(row.get("why") or "").strip():
+            # The only thing separating a deliberate Korean document from one
+            # nobody got to is the sentence saying so.
+            problems.append(f"{where}: kept 에는 why 에 한국어로 남긴 이유를 적는다")
+        if kind not in ("new", "kept"):
             if not str(row.get("source") or ""):
                 problems.append(f"{where}: {kind} 에는 source 가 있어야 한다")
             if not SHA.match(str(row.get("commit") or "")):
@@ -471,8 +477,11 @@ def inspect(entry: dict, keep: tuple[str, ...], root: Path | None) -> list[str]:
         if not any((ROOT / scope / f"{slug}.md").exists() for scope in SCOPES):
             found.append(f"{name}: 깨진 링크 [[{slug}]]")
 
-    if entry["kind"] == "new":
-        return found  # written in English from the start; there is no original
+    if entry["kind"] in ("new", "kept"):
+        # `new` was written in English from the start and `kept` stays Korean
+        # on purpose. Neither has a Korean original standing behind an English
+        # output, which is the only thing the comparison below can read.
+        return found
 
     source = str(entry["source"])
     was = original(str(entry["commit"]), source)

@@ -249,6 +249,43 @@ def test_a_new_document_still_owes_its_links(repo: Path, capsys) -> None:
     assert "깨진 링크 [[no-such-page]]" in capsys.readouterr().out
 
 
+def test_a_document_kept_in_korean_is_declared_rather_than_left_out(
+    repo: Path, capsys
+) -> None:
+    """Leaving it out of the manifest is how thirteen files went unchecked.
+
+    Some documents stay Korean on purpose — the install guides a person
+    follows at their own machine. There was no kind for that, so they were
+    simply absent, and absent reads the same as forgotten. It is now said out
+    loud, and the comparison that has no English output to make is skipped.
+    """
+
+    manifest = _manifest(
+        repo,
+        _entry(repo),
+        {"output": "craft/setup.md", "kind": "kept",
+         "why": "팀원이 자기 PC 에서 따라 하는 설치 안내다."},
+    )
+    (repo / "craft" / "hooks.md").write_text(ENGLISH, encoding="utf-8")
+    (repo / "craft" / "setup.md").write_text(
+        "# 설치\n\n규칙. 자기 계정으로 로그인한다.\n", encoding="utf-8"
+    )
+
+    assert T.check(["craft"], manifest, None, 0) == 0
+    assert "결함 없음" in capsys.readouterr().out
+
+
+def test_keeping_a_document_korean_still_owes_a_reason(repo: Path, capsys) -> None:
+    manifest = _manifest(
+        repo, _entry(repo), {"output": "craft/setup.md", "kind": "kept"}
+    )
+    (repo / "craft" / "hooks.md").write_text(ENGLISH, encoding="utf-8")
+    (repo / "craft" / "setup.md").write_text("# 설치\n", encoding="utf-8")
+
+    assert T.check(["craft"], manifest, None, 0) == 1
+    assert "why" in capsys.readouterr().out
+
+
 def test_source_root_says_it_is_not_a_gate_pass(repo: Path, capsys) -> None:
     """Pre-commit work can be checked, but it must not read as shipped."""
 
