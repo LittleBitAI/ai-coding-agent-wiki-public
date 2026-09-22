@@ -33,6 +33,12 @@ export function Mirror() {
   // means the repository changed, and everything held here belongs to the old
   // one.
   const gen = useRef(-1)
+  // The last index taken. A dropped connection is reconnected below, and the
+  // server starts every connection replaying from the top of the feed, so
+  // without this the whole visible session arrives a second time — and again
+  // on every reconnect after that. The index is the server's own absolute
+  // one, which is why `Feed` carries it.
+  const mark = useRef(-1)
 
   useEffect(() => {
     api.getMirrors().then(setWhere).catch(() => setFault('저장소 목록을 못 읽었다'))
@@ -64,10 +70,15 @@ export function Mirror() {
     const take = (frame: Frame) => {
       if (frame.gen !== gen.current) {
         gen.current = frame.gen
+        mark.current = -1
         setParts([])
       }
       setHere({ host: frame.host, project: frame.project })
-      if (frame.parts.length) setParts((prev) => prev.concat(frame.parts))
+      const fresh = frame.parts.filter((part) => part.i > mark.current)
+      if (fresh.length) {
+        mark.current = fresh[fresh.length - 1].i
+        setParts((prev) => prev.concat(fresh))
+      }
     }
 
     void run()

@@ -182,6 +182,26 @@ def main() -> int:
         str(alone),
     ))
 
+    # The person's own hook that merely names the retired script. Matching on
+    # the bare filename deleted it, which is the loss this whole file exists
+    # to prevent — and `put_hook` would have overwritten it on the way in.
+    theirs = {"hooks": {"PreToolUse": [{"hooks": [{
+        "type": "command",
+        "command": "python audit.py --watch korean_progress.py",
+    }]}]}}
+    merge(theirs, [], hook, SCRIPTS)
+    kept = [e["command"] for g in theirs["hooks"]["PreToolUse"] for e in g["hooks"]]
+    results.append(check(
+        "이름만 같은 남의 훅은 안 지운다",
+        any("audit.py" in c for c in kept),
+        str(kept),
+    ))
+    results.append(check(
+        "남의 훅을 덮어쓰지도 않는다",
+        any(c == "python audit.py --watch korean_progress.py" for c in kept),
+        str(kept),
+    ))
+
     print()
     if all(results):
         print(f"{len(results)}건 전부 통과. 병합이 기존 설정을 안 지운다.")

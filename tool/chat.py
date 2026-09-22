@@ -755,7 +755,13 @@ if DIST.is_dir():
 
     @app.get("/")
     def index() -> FileResponse:
-        return FileResponse(DIST / "index.html")
+        # The assets under it are content-hashed and may be cached forever.
+        # This file is the only thing that says which hash is current, so a
+        # cached copy of it pins the tab to a build that no longer exists on
+        # disk — and the person reloads, sees the old screen, and reports the
+        # bug that was just fixed. That happened.
+        return FileResponse(DIST / "index.html",
+                            headers={"Cache-Control": "no-store"})
 else:
     @app.get("/")
     def index() -> dict:

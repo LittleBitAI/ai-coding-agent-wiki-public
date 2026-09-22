@@ -425,9 +425,12 @@ HOSTS = {
 def translated(records: list[dict], host: str, translator=T.translate):
     """Records in, `(marker, Korean, HH:MM)` out. One request for the batch.
 
-    Text that is already Korean is skipped rather than round-tripped: until
-    the enforcement flip lands the agent still writes Korean, and asking for a
-    Korean-to-Korean translation spends a request to get the input reworded.
+    Which of those are worth a request is `translate.worth_translating`'s
+    answer, not one made again here. It skips a line with no English in it, so
+    an old Korean log line is not round-tripped into a reworded version of
+    itself — and it does *not* skip an English line that carries a protected
+    Korean term, which a second "has any Hangul" test here did. The glossary
+    holds those terms precisely so they can stand inside English prose.
     """
 
     _, parts_of = HOSTS[host]
@@ -442,9 +445,7 @@ def translated(records: list[dict], host: str, translator=T.translate):
     # what was understood, not a rewording of what they said — while a
     # translated command is a command that no longer runs.
     wanted = [
-        i
-        for i, (mark, text, _, _) in enumerate(parts)
-        if mark not in (SELF, CODE) and not T.HANGUL.search(text)
+        i for i, (mark, _, _, _) in enumerate(parts) if mark not in (SELF, CODE)
     ]
     if wanted:
         done = translator([parts[i][1] for i in wanted], T.EN_KO)

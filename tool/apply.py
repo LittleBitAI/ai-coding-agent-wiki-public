@@ -201,9 +201,21 @@ def put_hook(settings: dict, event: str, mark: str, entry: dict) -> list[str]:
 # points at a file that is not there — which fails every tool call with "can't
 # open file". That is not a hypothetical; it happened while writing this.
 #
-# Only what this table names gets removed. The test for "is this ours" is the
-# same one `put_hook` uses: the script path inside the command.
+# Only what this table names gets removed.
 RETIRED = {"korean_progress.py": "english_progress.py"}
+
+
+def ours(script: str) -> str:
+    """The needle that says a hook command runs *our* copy of that script.
+
+    The bare filename is not that needle. A hook the person wrote themselves —
+    `python audit.py --watch korean_progress.py` — contains it, and matching
+    on it deletes their hook. `put_hook` says it recognises its own by the
+    script path rather than the name, and this is that path: the command holds
+    `<wiki>/tool/<script>`, and nothing else on the machine does.
+    """
+
+    return f"tool/{script}"
 
 
 def retire(settings: dict, gone: str, instead: str) -> list[str]:
@@ -215,8 +227,9 @@ def retire(settings: dict, gone: str, instead: str) -> list[str]:
     """
 
     groups = settings.get("hooks", {}).get("PreToolUse", [])
+    old, new = ours(gone), ours(instead)
     has_new = any(
-        instead in str(h.get("command", ""))
+        new in str(h.get("command", ""))
         for group in groups
         for h in group.get("hooks", [])
     )
@@ -225,7 +238,7 @@ def retire(settings: dict, gone: str, instead: str) -> list[str]:
 
     changes: list[str] = []
     for group in list(groups):
-        kept = [h for h in group.get("hooks", []) if gone not in str(h.get("command", ""))]
+        kept = [h for h in group.get("hooks", []) if old not in str(h.get("command", ""))]
         if len(kept) != len(group.get("hooks", [])):
             changes.append(f"PreToolUse 옛 훅 제거: {gone} → {instead}")
             group["hooks"] = kept
@@ -256,7 +269,7 @@ def merge(
 
     changes += put_hook(settings, "UserPromptSubmit", HOOK_MARK, hook)
     for script, entry in sorted((scripts or {}).items()):
-        changes += put_hook(settings, "PreToolUse", script, entry)
+        changes += put_hook(settings, "PreToolUse", ours(script), entry)
     if session:
         changes += put_hook(settings, "SessionStart", SESSION_MARK, session)
     if sync:

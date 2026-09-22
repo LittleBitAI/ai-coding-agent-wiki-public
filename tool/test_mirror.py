@@ -192,6 +192,39 @@ def test_the_persons_own_words_are_never_translated_in_either_language():
     ]
 
 
+def test_english_prose_holding_a_protected_korean_term_still_gets_translated():
+    """A glossary term is why English prose is allowed Hangul at all.
+
+    `english_progress.py` permits `keep_korean` words inside an English
+    description — they name a Korean thing and have no English form. A mirror
+    that skipped any line with a Hangul character in it therefore skipped
+    exactly the lines the glossary exists for, and showed them in English.
+    `translate.worth_translating` already draws this line: English present,
+    translate; no English, leave it alone.
+    """
+
+    records = [
+        claude("assistant", [
+            {"type": "text", "text": "Check 나라장터 rules before editing."},
+            # No English at all: an old log line from before the flip. The
+            # translator leaves this one alone by itself.
+            {"type": "text", "text": "훅이 조용히 죽는다"},
+        ]),
+    ]
+    sent: list[str] = []
+
+    def gate(texts, direction=None, deadline=None):
+        sent.extend(texts)
+        return [
+            f"[ko]{t}" if M.T.worth_translating(t, direction) else t for t in texts
+        ]
+
+    said = [text for _, text, _, _ in M.translated(records, "claude", gate)]
+
+    assert "Check 나라장터 rules before editing." in sent
+    assert said == ["[ko]Check 나라장터 rules before editing.", "훅이 조용히 죽는다"]
+
+
 def test_codex_prints_the_same_things():
     records = [
         codex({"type": "UserMessage", "content": [{"type": "text", "text": "진행해라"}]}),
@@ -219,18 +252,27 @@ def test_codex_prints_the_same_things():
 
 
 def test_korean_prose_is_not_round_tripped():
-    """Until the flip lands the agent still writes Korean. Printing it costs nothing."""
+    """A line with no English comes back as itself, reworded by nobody.
+
+    The mirror does not decide this — `translate.worth_translating` does, and
+    it is asserted here through the real function rather than a fake, because
+    a fake deciding it would be the fake under test. The mirror's own job is
+    the line above: it hands prose over and keeps `SELF` and `CODE` back.
+    """
+
+    line = "계획서를 먼저 읽었다."
+    assert not M.T.worth_translating(line, M.T.EN_KO)
 
     seen: list[str] = []
 
     def watched(texts, direction=None, deadline=None):
         seen.extend(texts)
-        return fake(texts)
+        return list(texts)  # what the real one returns for these
 
-    records = [claude("assistant", [{"type": "text", "text": "계획서를 먼저 읽었다."}])]
+    records = [claude("assistant", [{"type": "text", "text": line}])]
 
-    assert M.render(records, "claude", watched) == ["계획서를 먼저 읽었다."]
-    assert seen == []
+    assert M.render(records, "claude", watched) == [line]
+    assert seen == [line]
 
 
 def test_a_failed_translation_prints_the_english():
