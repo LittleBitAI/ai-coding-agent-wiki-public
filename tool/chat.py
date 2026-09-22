@@ -339,7 +339,7 @@ def say(cid: str, body: Say) -> StreamingResponse:
                 # is an error, not an answer. Held together with the partial
                 # answer instead of separately, the reason for the cut-off is
                 # gone when the conversation is restored — a retro that hit a
-                # session limit survived as the single line "세겠습니다".
+                # session limit survived as the single line `세겠습니다`.
                 if ev.kind == "done" and ev.meta.get("error"):
                     failed = ev.text or "완료된 답변이 없습니다"
                     yield sse({"kind": "error", "text": failed, **ev.meta})

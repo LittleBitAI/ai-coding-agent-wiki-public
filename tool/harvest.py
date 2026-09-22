@@ -26,8 +26,8 @@ DOMAINS: list[tuple[str, tuple[str, ...], list[str]]] = [
      ["기억", "memory", "회상", "mem0", "저장소.{0,4}기억"]),
     ("tts", ("tts", "qwen", "voice", "audio", "음성", "발화"),
      ["tts", "qwen", "음성", "목소리", "합성", "재생"]),
-    # `프롬프트` and `응답` must not stand alone. "사용자 프롬프트를 작성해줘"
-    # (a session handover) and "대화 프롬프트" (the product) are the same word,
+    # `프롬프트` and `응답` must not stand alone. `사용자 프롬프트를 작성해줘`
+    # (a session handover) and `대화 프롬프트` (the product) are the same word,
     # and the first is far more common. Only the compounds are matched.
     ("dialogue", ("dialogue", "response", "prompt", "persona", "gemini",
                   "openai", "대화", "응답", "프롬프트"),

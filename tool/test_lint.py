@@ -227,64 +227,65 @@ def main() -> int:
     if not passed:
         failed.append("선언 무시")
 
-    # Citing Korean is not writing Korean, in every quote a person types.
-    #
-    # The first version of check 9 knew backticks and double quotes, so a
-    # comment citing a marker with single quotes was blocked by the gate. A
-    # check that stops correct work is the one that gets switched off, so the
-    # false-positive side gets asserted as hard as the true-positive side.
+    # Citing Korean is not writing Korean, and the backtick is what says so.
+    # A check that stops correct work is the one that gets switched off, so
+    # the false-positive side is asserted as hard as the true-positive side.
     tick = chr(96)
-    cited = {
-        "backticks": f"# The marker {tick}왜.{tick} is parsed.",
-        "double quotes": '# The marker "왜." is parsed.',
-        "single quotes": "# The marker '왜.' is parsed.",
-        "curly double": "# The marker “왜.” is parsed.",
-        "curly single": "# The marker ‘왜.’ is parsed.",
-        "a possessive beside a citation": "# The page's rule cites '왜.' and stops.",
-    }
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        for n, (label, source) in enumerate(cited.items()):
-            _clean_tool(root, f"cited{n}.py", source + "\n")
+        _clean_tool(root, "cited.py", f"# The marker {tick}왜.{tick} is parsed.\n")
+        _clean_tool(
+            root,
+            "cited_doc.py",
+            f'def f():\n    """English first.\n\n    It cites {tick}왜.{tick} and stops.\n    """\n',
+        )
         quiet = korean_prose(root)
-    print(f"  {'통과 ' if not quiet else '실패 '} 인용은 안 잡는다            → {quiet or '없음'}")
+    print(f"  {'통과 ' if not quiet else '실패 '} 백틱 인용은 안 잡는다        → {quiet or '없음'}")
     if quiet:
         failed.append("인용 오탐")
 
-    # And a quote mark inside a word is not a quote. Read as a pair these
-    # swallow the Korean between them, which is a miss — the failure the
-    # check was built to end. A digit and an underscore are inside a word
-    # too: a first version tested `[A-Za-z]` and let `6'` and `foo_'` open a
-    # span.
-    masked = {
+    # A quotation mark is punctuation, not a marker, so pairing two of them
+    # is a guess. Three rounds added members to a set of quote characters and
+    # the fourth found the guess going wrong the expensive way: an unclosed
+    # `"` pairs with a later one and the Korean between the two disappears
+    # from the gate. Every one of these has to be caught.
+    unmarked = {
+        "double quotes": '# The marker "왜." is parsed.',
+        "single quotes": "# The marker '왜.' is parsed.",
         "an apostrophe": "# It doesn't parse 왜. and won't either.",
-        "a prime after a digit": "# The 6' case parses 왜. unlike the 5' case.",
-        "an underscore before it": "# foo_' masks 왜. until bar_' here.",
+        "an unclosed quote": (
+            'def f():\n'
+            '    """The output starts with " but never closes it.\n'
+            '    한국어 산문이다.\n'
+            '    Later it names "done" as a separate token.\n'
+            '    """\n'
+        ),
+        "a span cut by a line wrap": (
+            f"# Fitting the width cut the span: {tick}왜.\n"
+            f"# 그리고 다음 줄{tick} was one span.\n"
+        ),
     }
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        for n, (label, source) in enumerate(masked.items()):
-            _clean_tool(root, f"masked{n}.py", source + "\n")
-        caught = korean_prose(root)
-    ok = len(caught) == len(masked)
-    print(f"  {'통과 ' if ok else '실패 '} 낱말 안의 따옴표는 인용이 아니다 → {len(caught)}/{len(masked)}")
+        for n, (label, source) in enumerate(unmarked.items()):
+            _clean_tool(root, f"unmarked{n}.py", source)
+        caught = {at.split(":")[0] for at, _line in korean_prose(root)}
+    ok = len(caught) == len(unmarked)
+    print(f"  {'통과 ' if ok else '실패 '} 표지 없는 한국어는 다 잡는다 → {len(caught)}/{len(unmarked)}")
     if not ok:
-        failed.append("낱말 안 따옴표 미탐")
+        failed.append("표지 없는 한국어 미탐")
 
-    # A citation that spans a line break. The unit is one docstring, not one
-    # line — splitting first meant such a quote could never close, and a
-    # docstring quoting across two lines was blocked as Korean prose.
+    # The line number names the line the Korean is on, not the `def` above
+    # the docstring. Preserving the line structure while masking is what this
+    # is for, and it was preserved for two rounds without being used.
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        _clean_tool(
-            root,
-            "spanning.py",
-            'def f():\n    """The parser cites “첫째\n    둘째” as one example."""\n',
-        )
-        spanning = korean_prose(root)
-    print(f"  {'통과 ' if not spanning else '실패 '} 줄 넘는 인용도 인용이다     → {spanning or '없음'}")
-    if spanning:
-        failed.append("줄 넘는 인용 오탐")
+        _clean_tool(root, "where.py", 'def f():\n    """English first.\n    한국어 산문이다.\n    """\n')
+        where = korean_prose(root)
+    ok = where == [("tool/where.py:5", "한국어 산문이다.")]
+    print(f"  {'통과 ' if ok else '실패 '} 발견이 그 줄을 가리킨다     → {where or '없음'}")
+    if not ok:
+        failed.append("발견 줄 번호 어긋남")
 
     print()
     if failed:

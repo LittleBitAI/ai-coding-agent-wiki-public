@@ -180,7 +180,7 @@ def check(
         findings.append((
             "주석이 한국어다",
             f"`{where}`: {line} — `operator/english-progress` 는 에이전트가 "
-            "쓰는 것을 영어로 둔다. 인용하는 한국어는 백틱이나 따옴표 안에 둬라",
+            "쓰는 것을 영어로 둔다. 인용하는 한국어는 한 줄 안에서 백틱으로 감싸라",
         ))
 
     return loaded, declared, findings
@@ -191,29 +191,33 @@ def check(
 HANGUL = re.compile(r"[가-힣]")
 
 # A Korean example being quoted, as opposed to a comment written in Korean.
-# An example is delimited — backticks or quotes — because that is how a
-# comment shows the reader it is pointing at a string rather than speaking.
+# One notation marks it, and the notation is the backtick.
 #
-# Every quote a person actually types, not the subset that came to mind. The
-# first version knew backticks and double quotes, and a comment citing `'왜.'`
-# with single quotes was blocked by the gate as if it were Korean prose. A
-# list of delimiters is the same mistake as a list of verbs: what sits outside
-# the short list is the next incident.
-# The straight single quote carries an apostrophe as well as a quote, and an
-# apostrophe does not open anything. `doesn't parse 왜. and won't` has two of
-# them, and read as a pair they swallow the Korean between — a miss, which is
-# the failure that produced this check in the first place. A quote mark with a
-# letter on both sides is inside a word.
-# `\w` rather than `[A-Za-z]`: a digit or an underscore sits inside a word
-# too. Two primes written after digits, and two written after underscores,
-# both read as a pair and hid the Korean between them — a digit and an
-# underscore fell outside a list of letters. The same mistake as listing
-# delimiters, one level down.
-CITED = re.compile(
-    r"`[^`]*`"
-    r"|[\"“][^\"”]*[\"”]"
-    r"|(?<!\w)['‘][^'’]*['’](?!\w)"
-)
+# Three rounds tried to read ordinary quotation marks as citation and each one
+# found another member missing from the set: single quotes, then curly ones,
+# then a prime after a digit and after an underscore. The fourth round ended
+# the argument. A quote mark is not a marker — it is ordinary English
+# punctuation, so pairing two of them is a guess about which two belong
+# together, and the guess is wrong exactly where it hurts:
+#
+#     The output starts with " but has no closing delimiter.
+#     `한국어 산문이다.`
+#     Later the comment names "done" as a separate token.
+#
+# The first `"` paired with the one in front of `done`, the Korean between the
+# two vanished, and the gate went green over a violation. That is the failure
+# this check was built to end. No amount of adjacency rules fixes it, because
+# the information needed — did the author mean to quote — is not in the
+# characters.
+#
+# A backtick carries no other meaning in a comment. Writing one says "this is
+# a string, not my sentence", which is the distinction being asked about.
+#
+# The span stops at a line break. A span that wraps is already a finding of
+# its own (`끊긴 줄바꿈`), so nothing legitimate crosses one, and confining it
+# bounds what an unmatched backtick can swallow to its own line instead of a
+# whole docstring.
+CITED = re.compile(r"`[^`\n]*`")
 
 
 def blank(match: re.Match[str]) -> str:
@@ -229,12 +233,15 @@ def blank(match: re.Match[str]) -> str:
 def korean_prose(wiki: Path = WIKI) -> list[tuple[str, str]]:
     """`tool/*.py` comments and docstrings still written in Korean.
 
-    Delimiters are what separates the two cases, not a ratio. A comment that
-    cites `올리겠습니다` is describing the data a regex matches and has to keep
-    it; a comment written in Korean is the thing `english-progress` asks to
-    move. A first attempt scored the share of Hangul per line and could not
-    tell them apart at any threshold — the citations landed at 0.40 to 0.47,
-    in among real violations. Shape standing in for the thing, again.
+    One notation separates the two cases, not a ratio and not a set of
+    punctuation marks. A comment that cites `올리겠습니다` is describing the
+    data a regex matches and has to keep it; a comment written in Korean is
+    the thing `english-progress` asks to move. A first attempt scored the
+    share of Hangul per line and could not tell them apart at any threshold —
+    the citations landed at 0.40 to 0.47, in among real violations. A second
+    read ordinary quotation marks as citation and spent three review rounds
+    adding members to that set before an unmatched `"` hid a violation
+    outright. See `CITED` for why the backtick is the whole rule.
 
     Read through `ast` and `tokenize` rather than by matching `#` against raw
     lines. A regex on `#` sees no docstring at all, and that is exactly how
@@ -242,10 +249,10 @@ def korean_prose(wiki: Path = WIKI) -> list[tuple[str, str]]:
     measurement answered a narrower question than the claim made.
 
     The unit is one comment or one whole docstring, never a line. Splitting
-    first was an artifact of wanting a line number to report, and it meant a
-    citation spanning a line break could never close — a docstring quoting
-    `“첫째` / `둘째”` across two lines was blocked as Korean prose. A comment
-    happens to be one line; a docstring is one text.
+    first was an artifact of wanting a line number to report, and it cut the
+    text before the question was asked. A comment happens to be one line; a
+    docstring is one text. The line number comes back out of the offset
+    inside the piece, which is what `blank` preserves the shape for.
     """
 
     directory = wiki / "tool"
@@ -268,7 +275,10 @@ def korean_prose(wiki: Path = WIKI) -> list[tuple[str, str]]:
                                  ast.AsyncFunctionDef)):
                 doc = ast.get_docstring(node, clean=False)
                 if doc:
-                    pieces.append((getattr(node, "lineno", 1), doc))
+                    # The string literal's own line, not the `def` above it.
+                    # `clean=False` keeps the text line for line, so line `n`
+                    # of the docstring is line `n` of the file from here.
+                    pieces.append((node.body[0].lineno, doc))
         try:
             for token in tokenize.generate_tokens(io.StringIO(source).readline):
                 if token.type == tokenize.COMMENT:
@@ -281,7 +291,7 @@ def korean_prose(wiki: Path = WIKI) -> list[tuple[str, str]]:
             for n, line in enumerate(bare.splitlines()):
                 if HANGUL.search(line):
                     shown = piece.splitlines()[n].strip()
-                    found.append((f"tool/{path.name}:{at}", shown[:60]))
+                    found.append((f"tool/{path.name}:{at + n}", shown[:60]))
     return found
 
 
