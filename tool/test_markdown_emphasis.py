@@ -131,6 +131,65 @@ def test_an_inline_tag_is_not_part_of_the_label(tmp_path: Path) -> None:
     assert markdown_emphasis.scan(labelled)[2] == ["규칙."]
     assert blocked(CLEAN.replace("규칙. 훅은", "**<span>규칙.</span>** 훅은"))
 
+    # And with the tag outside the bold. An invisible tag does not make the
+    # bold behind it mid-sentence emphasis, which is how this order slipped
+    # past once the tag was merely kept out of the label text.
+    wrapped = "<span>**규칙.**</span> 훅은 세션을 멈추지 않는다.\n"
+    assert markdown_emphasis.scan(wrapped)[2] == ["규칙."]
+    assert blocked(CLEAN.replace("규칙. 훅은", "<span>**규칙.**</span> 훅은"))
+
+
+def test_a_code_span_outside_the_bold_does_not_convict_it(tmp_path: Path) -> None:
+    """Folding is owned only by a bold that holds every code span in the block.
+
+    The block knows how many lines vanished but not into which span. Charging
+    that to any bold merely holding a code span refused correct prose — one
+    bold with a one-line span, beside an unrelated span that wrapped.
+    """
+
+    tick = chr(96)
+    elsewhere = ("**" + tick + "one" + tick + "** and "
+                 + tick + "multi\nline" + tick)
+    assert findings(elsewhere, whole=False) == []
+
+    # The same block with no other span: now the folding can only be its own.
+    inside = "**" + tick + "multi\nline" + tick + "**"
+    assert any("줄바꿈을 품은" in line for line in findings(inside, whole=False))
+
+
+def test_fragments_are_not_stitched_into_a_paragraph(tmp_path: Path) -> None:
+    """Two edits are two fragments; whatever separates them is not in the call.
+
+    Joining a `MultiEdit`'s edits with a newline — and a patch's hunks the same
+    way — built a paragraph that exists in no file, so two bolds landing in two
+    different paragraphs read as one crowded paragraph and correct prose was
+    refused. Each fragment is judged by itself; what they add up to is
+    `lint.loud_emphasis`'s job, reading the real file afterwards.
+    """
+
+    apart = verdict({"tool_name": "MultiEdit", "tool_input": {
+        "file_path": "docs/nowhere.md",
+        "edits": [{"new_string": "첫 번째 문단의 **하나**다."},
+                  {"new_string": "두 번째 문단의 **둘**이다."}]}})
+    assert apart is None
+
+    together = blocked("한 문단에 **하나**와 **둘**이 있다.\n",
+                       path="docs/nowhere.md", tool="Edit")
+    assert together and "한 문단에 굵게가 둘 이상" in together
+
+    hunks = (
+        "*** Begin Patch\n*** Update File: docs/x.md\n"
+        "@@\n-옛 줄\n+첫 번째 문단의 **하나**다.\n"
+        "@@\n-다른 옛 줄\n+두 번째 문단의 **둘**이다.\n*** End Patch"
+    )
+    assert verdict({"tool_name": "apply_patch", "tool_input": {"input": hunks}}) is None
+
+    one_hunk = (
+        "*** Begin Patch\n*** Update File: docs/x.md\n"
+        "@@\n-옛 줄\n+한 문단에 **하나**와 **둘**이 있다.\n*** End Patch"
+    )
+    assert verdict({"tool_name": "apply_patch", "tool_input": {"input": one_hunk}})
+
 
 def test_density_over_the_limit_is_refused() -> None:
     body = "\n\n".join(f"{n} 번째 문단이고 여기 **강조**가 있다." for n in range(9))
@@ -553,11 +612,11 @@ def test_the_official_install_provides_the_parser() -> None:
     interpreter. A parser named anywhere else is a parser that machine does not
     get, and the hook then fails open there — wired, reported as enforced,
     never once firing. So one file says what a hooks install needs, and this
-    holds the three readers of it together: the file, `setup_agents.NEEDED`
-    which refuses to install without them, and the documents that name it.
+    holds its readers together: the file, `apply.NEEDED` which is what the
+    install actually probes with, and the documents that name it.
     """
 
-    import setup_agents
+    import apply
 
     root = HERE.parent
     declared = {
@@ -566,7 +625,7 @@ def test_the_official_install_provides_the_parser() -> None:
             encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith(("#", "-"))
     }
-    assert declared == set(setup_agents.NEEDED), (declared, setup_agents.NEEDED)
+    assert declared == set(apply.NEEDED), (declared, apply.NEEDED)
     assert "markdown-it-py" in declared, "강조 훅이 쓰는 파서가 설치 목록에 없다"
 
     # The chat and dev installs must inherit it rather than restate it.
@@ -578,26 +637,32 @@ def test_the_official_install_provides_the_parser() -> None:
             encoding="utf-8"), f"{doc} 가 설치 목록을 안 가리킨다"
 
 
-def test_the_install_refuses_when_a_hook_package_is_missing(tmp_path) -> None:
-    """`install()` stops rather than wiring a hook that cannot run."""
+def test_wiring_refuses_an_interpreter_without_the_parser(tmp_path: Path) -> None:
+    """The check sits where the wiring is written, not at one way in.
 
-    import setup_agents
+    There are two documented ways to install: `apply --write`, which README
+    shows, and `setup_agents`. Putting the check in the second left the first
+    wiring a hook that cannot run, on a machine that then reported it as
+    enforced. `apply` is what both go through, and it probes the interpreter
+    the hooks will actually run under rather than the one doing the install.
+    """
 
-    real = setup_agents.importlib.util.find_spec
+    import os
 
-    def hidden(name, *args, **kwargs):
-        return None if name == "markdown_it" else real(name, *args, **kwargs)
+    # The same interpreter with the parser taken away: a shadowing module
+    # earlier on the path that refuses to import.
+    (tmp_path / "markdown_it.py").write_text(
+        'raise ImportError("hidden for this test")\n', encoding="utf-8")
 
-    setup_agents.importlib.util.find_spec = hidden
-    try:
-        setup_agents.install(tmp_path, "claude", check=True)
-    except ValueError as error:
-        assert "markdown-it-py" in str(error)
-        assert "requirements-hooks.txt" in str(error)
-    else:
-        raise AssertionError("파서가 없는데 설치가 통과했다")
-    finally:
-        setup_agents.importlib.util.find_spec = real
+    done = subprocess.run(
+        [sys.executable, "-X", "utf8", str(HERE / "apply.py"),
+         "--project", str(HERE.parent), "--check"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        env={**os.environ, "PYTHONPATH": str(tmp_path)}, check=False,
+    )
+    assert done.returncode == 2, done.stdout + done.stderr
+    assert "markdown-it-py" in done.stdout
+    assert "requirements-hooks.txt" in done.stdout
 
 
 def test_a_missing_parser_is_said_out_loud(monkeypatch, tmp_path) -> None:

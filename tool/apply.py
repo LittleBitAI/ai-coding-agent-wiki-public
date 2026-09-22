@@ -16,6 +16,11 @@ sys.path.insert(0, str(HERE))
 from inject import WIKI, adapter_path, slots_for  # noqa: E402
 from wikilib import front_matter  # noqa: E402
 
+# `requirements-hooks.txt` 의 배포 이름과 임포트 이름. pip 이름으로는 설치
+# 여부를 못 물어보므로 짝이 필요하다. 이 표가 그 파일과 어긋나면 시험이 잡는다 —
+# 그게 이 표를 손으로 두 번 적는 것을 감당할 수 있게 만드는 유일한 이유다.
+NEEDED = {"PyYAML": "yaml", "markdown-it-py": "markdown_it"}
+
 HOOK_MARK = "tool/inject.py"
 SESSION_MARK = "tool/session_state.py"
 SYNC_MARK = "tool/sync.py"
@@ -324,14 +329,19 @@ def main() -> int:
 
     print(f"# apply — {project.name}\n")
 
-    # 훅을 돌릴 인터프리터가 위키를 읽을 수 있어야 한다. 못 읽으면 훅은
-    # 조용히 아무것도 안 하고, 그게 강제 계층의 가장 나쁜 실패 모양이다.
-    probe = subprocess.run(
-        [args.python, "-c", "import yaml, tomllib"], capture_output=True
-    )
-    if probe.returncode != 0:
-        print(f"`{args.python}` 이 yaml/tomllib 를 못 읽는다. 훅이 조용히 죽는다.")
-        print("`--python` 으로 다른 인터프리터를 대라.")
+    # 훅을 돌릴 인터프리터가 훅이 쓰는 것을 전부 읽을 수 있어야 한다. 못 읽으면
+    # 훅은 조용히 아무것도 안 하고, 그게 강제 계층의 가장 나쁜 실패 모양이다.
+    #
+    # 이 검사는 여기 하나만 있다. 설치 출구가 둘이라 — README 가 안내하는
+    # `apply --write` 와 `setup_agents` — 한쪽에만 걸었더니 다른 쪽으로 들어온
+    # 기계에서 강조 훅이 붙은 채로 매번 통과했다. 배선을 쓰는 것은 결국 이
+    # 함수 하나뿐이므로 검사도 여기 하나다.
+    missing = [name for name, module in NEEDED.items() if subprocess.run(
+        [args.python, "-c", f"import {module}"], capture_output=True).returncode]
+    if missing:
+        print(f"`{args.python}` 이 {', '.join(missing)} 를 못 읽는다. 훅이 조용히 죽는다.")
+        print(f"`{args.python} -m pip install -r {WIKI / 'requirements-hooks.txt'}`"
+              " 를 돌리거나 `--python` 으로 다른 인터프리터를 대라.")
         return 2
 
     source = adapter_path(adapter, project)

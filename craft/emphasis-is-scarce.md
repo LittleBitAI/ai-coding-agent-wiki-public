@@ -52,6 +52,11 @@ surrounding text to be right — a ratio needs the whole document, a label needs
 to know a block begins there. Guessing either from a fragment refuses correct
 prose, and a hook that refuses correct prose gets switched off.
 
+Each fragment is judged by itself. A `MultiEdit`'s edits and a patch's runs of
+added lines are not put next to each other, because whatever separates them in
+the real file is not in the call — joining them built a paragraph no file
+contains and refused two bolds that were landing in two different paragraphs.
+
 So what a fragment could push over the limit is caught afterwards.
 `lint.loud_emphasis` reads every `.md` in the hub, and `repo_lint` runs the
 same check in each target repository, which is where `sync` calls it on Stop.
@@ -77,6 +82,17 @@ and reconstructing one by stepping on each soft break is wrong: a code span's
 newlines are already spaces by then, so every line it swallowed is lost and
 every count after it is off. A block is a unit the parser hands over exactly,
 so that is the unit.
+
+A block still knows how many of its lines vanished, from its own line span
+against the breaks it shows. It does not know into which code span, so a bold
+is charged with the folding only when every code span in the block is inside
+it. An inline tag counts for nothing at all: it is not what the reader sees,
+so it neither joins a label's text nor ends the run of nothing-seen-yet that
+makes a bold a label.
+
+The parser is checked where the wiring is written — `apply.py`, which both
+documented installs go through — and it probes the interpreter the hooks will
+run under, not the one doing the installing.
 
 `markdown-it-py` is in `requirements-hooks.txt`, the one file that says what a
 hooks install needs and which the chat and dev requirements both pull in. It is

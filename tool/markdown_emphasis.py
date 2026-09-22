@@ -12,6 +12,7 @@ off — then nothing is enforced at all.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import re
 import sys
 
@@ -42,9 +43,11 @@ MOVE_TO = re.compile(r"^\*\*\* Move to: (.+)$", re.M)
 # says what a hooks install needs. It is not optional: a
 # missing parser is reported, never quietly skipped, because "every `.md`
 # passes" must not be able to mean "no `.md` was read".
+# 절대경로다. 훅의 작업 디렉터리는 보통 대상 저장소이고 이 파일은 허브 위키에
+# 있으므로, 상대경로로 적은 복구 명령은 화면에서 읽은 그대로는 안 돈다.
 MISSING = (
-    "markdown-it-py 가 없어 강조 검사를 돌리지 못했다 — "
-    "`python -m pip install -r requirements-hooks.txt`"
+    "markdown-it-py 가 없어 강조 검사를 돌리지 못했다 — `python -m pip "
+    f"install -r {Path(__file__).resolve().parents[1] / 'requirements-hooks.txt'}`"
 )
 
 _PARSER: object | None = None
@@ -160,6 +163,11 @@ def scan(text: str) -> tuple[int, int, list[str], int, int]:
         # stream — it is how `**`+"`a\nb`"+`**` looks like a single-line bold.
         breaks = sum(1 for c in children if c.type in ("softbreak", "hardbreak"))
         folded = max(0, token.map[1] - token.map[0] - 1 - breaks)
+        # Which code span ate them is not recorded, so a bold owns the folding
+        # only when every code span in the block is inside it. Attributing it
+        # to any bold that merely holds a code span refused correct prose --
+        # one bold with a one-line span beside an unrelated span that wrapped.
+        spans = sum(1 for c in children if c.type == "code_inline")
 
         here = 0
         opens: list[dict] = []
@@ -173,12 +181,13 @@ def scan(text: str) -> tuple[int, int, list[str], int, int]:
                 first = False
             elif child.type == "strong_open":
                 opens.append({"parts": [], "opened": first, "broken": False,
-                              "code": False})
+                              "spans": 0})
                 first = False
             elif child.type == "strong_close" and opens:
                 frame = opens.pop()
                 here += 1
-                if frame["broken"] or (frame["code"] and folded):
+                if frame["broken"] or (
+                        folded and frame["spans"] and frame["spans"] == spans):
                     wrapped += 1
                 inner = "".join(frame["parts"])
                 if frame["opened"] and LABEL.match(inner):
@@ -186,14 +195,17 @@ def scan(text: str) -> tuple[int, int, list[str], int, int]:
                 if opens:
                     opens[-1]["parts"].append(inner)
             elif child.type == "html_inline":
-                # A tag is not what the reader sees. Joining its source into
-                # the label text made `**<span>Rule.</span>**` stop matching.
-                first = False
+                # A tag is not what the reader sees, so it neither joins the
+                # label text nor ends the run of nothing-yet-seen. Both faces
+                # of treating it as visible were review findings: the source
+                # inside the label string, and `<span>**Rule.**</span>` being
+                # let through because the tag had already said "not first".
+                pass
             elif child.content:
                 for frame in opens:
                     frame["parts"].append(child.content)
                     if child.type == "code_inline":
-                        frame["code"] = True
+                        frame["spans"] += 1
                 if child.content.strip():
                     first = False
         bolds += here
@@ -252,22 +264,30 @@ def written(given: dict, tool: str) -> list[tuple[str, str, bool]]:
 
     So this claims only what it can see. `Write` carries a whole document and
     is judged as one. Everything else is a fragment and gets the two checks
-    that hold on any line by itself. What a fragment could push over the limit
+    that hold on any text by itself. What a fragment could push over the limit
     is caught by `lint.loud_emphasis`, which reads the real file afterwards and
     has nothing to guess about.
+
+    One entry per fragment, never one joined entry. Joining a `MultiEdit`'s
+    edits with a newline built a paragraph that exists in no file: two edits
+    landing in two different paragraphs read as one paragraph with two bolds,
+    and correct prose was refused. The same for a patch's hunks. Whatever
+    separates two fragments in the real file is not in this call, so they are
+    not put next to each other here.
     """
 
     path = str(given.get("file_path") or "")
     if path:
+        if tool == "Write":
+            text = str(given.get("content") or "")
+            return [(path, text, True)] if text.strip() else []
         edits = given.get("edits")
         pairs = (
             [e for e in edits if isinstance(e, dict)] if isinstance(edits, list)
             else [given]
         )
-        text = "\n".join(str(e.get("new_string") or "") for e in pairs)
-        if tool == "Write":
-            text = str(given.get("content") or "")
-        return [(path, text, tool == "Write")] if text.strip() else []
+        return [(path, str(e.get("new_string") or ""), False) for e in pairs
+                if str(e.get("new_string") or "").strip()]
 
     patch = str(given.get("input") or given.get("patch") or "")
     out = []
@@ -278,13 +298,20 @@ def written(given: dict, tool: str) -> list[tuple[str, str, bool]]:
         # reading only the source header lets `notes.txt -> docs/x.md` past a
         # check that keys on the extension.
         moved = MOVE_TO.search(body)
-        added = "\n".join(
-            line[1:] for line in body.splitlines() if line.startswith("+")
-        )
-        if added.strip():
-            whole = match.group(0).startswith("*** Add File:")
-            out.append(((moved.group(1) if moved else match.group(1)).strip(),
-                        added, whole))
+        where = (moved.group(1) if moved else match.group(1)).strip()
+        whole = match.group(0).startswith("*** Add File:")
+        # One entry per run of consecutive added lines. Only such a run is
+        # contiguous in the result; joining runs that a context line or a
+        # second hunk separates invents a paragraph no file contains. An
+        # `Add File` body is one run, so it arrives whole either way.
+        run: list[str] = []
+        for line in body.splitlines() + [""]:
+            if line.startswith("+"):
+                run.append(line[1:])
+                continue
+            if "".join(run).strip():
+                out.append((where, "\n".join(run), whole))
+            run = []
     return out
 
 
