@@ -51,7 +51,7 @@ CORRECTIONS = ROOT / "raw" / "corrections.jsonl"
 DROPPED = ROOT / "raw" / "retro-dropped.jsonl"
 PY = sys.executable
 
-MAX_REPLAY = 200  # 화면에 되살릴 지난 발화 수
+MAX_REPLAY = 200  # How many past turns the screen restores
 
 _sessions: dict[tuple[str, str], ChatSession] = {}
 _lock = threading.Lock()
@@ -132,7 +132,8 @@ def session(cid: str) -> ChatSession:
     `kept: True` while the session id had been replaced. Reviving it is
     `ensure`'s job.
 
-    다른 프로젝트로 갔다 돌아와도 같은 프로젝트·채널의 객체를 다시 쓴다.
+    Going to another project and coming back reuses the same object for that
+    project and channel.
     """
 
     with _lock:
@@ -273,7 +274,7 @@ def configure(cid: str, body: Config) -> dict:
         chat = _sessions.pop(key, None) if moved else _sessions.get(key)
         inactive = [s for (repo, _), s in _sessions.items() if repo != key[0]] if switched else []
     for old in inactive:
-        old.close()  # session_id는 남겨 두고 돌아오면 --resume으로 재개한다.
+        old.close()  # the session_id is kept, so coming back resumes it
     if chat is not None:
         if moved:
             chat.close()
@@ -376,7 +377,7 @@ def say(cid: str, body: Say) -> StreamingResponse:
                 except Exception as exc:
                     simple, simple_error = "", f"{type(exc).__name__}: {exc}"
                     yield sse({"kind": "simple_error", "text": simple_error})
-        except Exception as exc:  # 스트림이 끊겨도 화면은 이유를 받아야 한다
+        except Exception as exc:  # a cut stream still owes the screen a reason
             failed = f"{type(exc).__name__}: {exc}"
             yield sse({"kind": "error", "text": failed})
         finally:
@@ -424,7 +425,7 @@ def hits_for(cid: str, text: str) -> list[str]:
 # -- That was wrong ---------------------------------------------------------
 
 class Mark(BaseModel):
-    kind: str            # 교정 · 재입력 · 부분수행 · 되돌림
+    kind: str            # correction, re-entry, partial completion, reversal
     user_text: str
     assistant_text: str = ""
     session_id: str = ""

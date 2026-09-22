@@ -19,7 +19,8 @@ from wikilib import front_matter  # noqa: E402
 
 SCOPES = ("operator", "craft")
 HOOK_MARK = "inject.py"
-NS = "rule"          # 이 파일이 담는 축. 지식 축은 대상 저장소의 `.wiki/graph.json`
+NS = "rule"          # the axis this file holds; the knowledge axis lives in a
+                     # target repository's own `.wiki/graph.json`
 
 # The enforcement ladder. The colours run from solid to diffuse: layer 1
 # blocks, layer 5 is a sentence.

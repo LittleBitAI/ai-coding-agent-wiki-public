@@ -1,4 +1,5 @@
-"""다른 checkout·현재 사용자 CLI·로그인 실패·설치 순서의 경계를 검사한다."""
+"""The boundaries: another checkout, this user's CLI, a failed sign-in, and
+the order the install happens in."""
 
 import json
 from pathlib import Path
@@ -34,7 +35,7 @@ def test_projects_are_local_and_include_wiki_outside_workspace(tmp_path):
 
 
 def _npm_shim(shim, entry):
-    """npm이 만드는 shim은 실제 진입점 경로를 그대로 담는다."""
+    """A shim npm writes carries the real entry point's path verbatim."""
     target = shim.parent / entry
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("", encoding="utf-8")
@@ -66,7 +67,8 @@ def test_current_user_cli_and_npm_shim_avoid_shell(tmp_path):
 
 
 def test_workspace_cannot_be_the_wiki_itself(tmp_path, monkeypatch):
-    """위키 아래에는 프로젝트가 없다. 그대로 두면 목록이 위키 한 장으로 조용히 줄어든다."""
+    """There are no projects under the wiki. Left alone, the list quietly
+    shrinks to the wiki alone."""
     root = tmp_path.resolve()
     with patch.object(setup_chat, "ROOT", root):
         with pytest.raises(ValueError, match="위키 자신"):
@@ -87,7 +89,7 @@ def test_login_uses_official_commands_and_never_changes_user_environment(agent, 
 
     def run(command, **kwargs):
         calls.append((command, kwargs))
-        assert "env" not in kwargs  # OS 사용자와 CLI가 고른 계정 경로를 그대로 상속한다.
+        assert "env" not in kwargs  # inherits the OS user and the CLI's own account path
         assert "shell" not in kwargs
         return subprocess.CompletedProcess(command, next(codes))
 

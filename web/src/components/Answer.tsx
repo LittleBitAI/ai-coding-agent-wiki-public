@@ -9,6 +9,7 @@ const SHA = /^[0-9a-f]{7,40}$/
 
 export type AnswerProps = {
   text: string
+  korean: boolean
   remote: string
   onPeek: (path: string, line: number) => void
   onDecide?: (candidate: string, target: 'wiki' | 'claude_md' | 'drop') => Promise<string>
@@ -23,7 +24,7 @@ export type AnswerProps = {
  *  Inline code shaped like a path or a SHA becomes clickable — "all the way
  *  to the original". A path opens that line in the side drawer; a SHA goes to
  *  GitHub. */
-export function Answer({ text, remote, onPeek, onDecide }: AnswerProps) {
+export function Answer({ text, korean, remote, onPeek, onDecide }: AnswerProps) {
   return (
     <div className="prose-answer">
       <Markdown
@@ -43,10 +44,12 @@ export function Answer({ text, remote, onPeek, onDecide }: AnswerProps) {
             const raw = String(children ?? '').replace(/\n$/, '')
 
             // A ```retro-candidates fence: the retro's candidates, which get
-            // buttons.
+            // buttons. `korean` goes in because the translator protects a
+            // fence byte for byte, so the overlay on the answer never reaches
+            // inside this one — and these are the lines a person decides on.
             if (className === 'language-retro-candidates') {
               return onDecide ? (
-                <Candidates raw={raw} onDecide={onDecide} />
+                <Candidates raw={raw} korean={korean} onDecide={onDecide} />
               ) : (
                 <code className={className}>{raw}</code>
               )

@@ -29,7 +29,7 @@ from chat_local import cli_command
 # endpoints instead of Bash.
 READ_TOOLS = "Bash,Read,Glob,Grep"
 
-BOOT_TIMEOUT = 120.0   # 첫 턴은 훅과 적재가 있어 느리다
+BOOT_TIMEOUT = 120.0   # the first turn is slow: hooks, and loading
 TURN_TIMEOUT = 600.0
 
 
@@ -374,7 +374,7 @@ def demo() -> None:
 
     chat.close()
     assert len(said) == 2, said
-    assert token in said[1], said[1]  # 한 프로세스가 앞 턴을 들고 있다
+    assert token in said[1], said[1]  # one process is holding the first turn
     print(f"ok  두 턴이 이어진다 — {first:.1f}s → {second:.1f}s")
     print(f"    1: {said[0][:60]}")
     print(f"    2: {said[1][:60]}")

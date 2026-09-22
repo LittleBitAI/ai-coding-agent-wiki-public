@@ -101,7 +101,7 @@ def test_it_finds_the_attached_repositories_itself():
     with patch.object(graph, "WIKI", wiki), patch.object(graph, "HERE", wiki / "tool"):
         assert graph.connected() == [workspace / "붙은 저장소", wiki]
         (wiki / ".chat-local.json").write_text('{"workspace": "."}', encoding="utf-8")
-        assert graph.connected() == []          # 위키 아래에는 저장소가 없다
+        assert graph.connected() == []          # there are no repositories under the wiki
         (wiki / ".chat-local.json").write_text("깨진 JSON", encoding="utf-8")
         assert graph.connected() == [workspace / "붙은 저장소", wiki]
     # With `WIKI_ROOT` pointing at another hub, its parent is not searched.

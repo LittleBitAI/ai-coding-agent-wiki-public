@@ -630,7 +630,7 @@ def test_every_repo_with_a_session_is_offered(tmp_path, monkeypatch):
     day.mkdir(parents=True)
     for name, cwd in (
         ("rollout-a.jsonl", tmp_path / "work"),
-        ("rollout-b.jsonl", tmp_path / "work" / "web"),  # 같은 저장소의 하위 폴더
+        ("rollout-b.jsonl", tmp_path / "work" / "web"),  # a subfolder of the same repo
         ("rollout-c.jsonl", tmp_path / "other"),
     ):
         (day / name).write_text(

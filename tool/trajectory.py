@@ -15,9 +15,10 @@ sys.path.insert(0, str(HERE))
 
 from census import DEFAULT_MARKERS, Markers  # noqa: E402
 
-KEEP = 500          # 발화를 몇 자까지 남기나
-RESUME_MAX = 120    # census 와 같은 값. 긴 지시문 안의 "이어서" 는 재개 요구가 아니다
-TAIL = 8192         # 마지막 줄을 찾으려고 읽는 꼬리 크기
+KEEP = 500          # How much of an utterance to keep
+RESUME_MAX = 120    # The census's own value: `이어서` inside a long
+                    # instruction is not a request to resume
+TAIL = 8192         # How much of the tail to read to find the last line
 FILENAME = "trajectory.jsonl"
 
 

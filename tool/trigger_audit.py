@@ -103,7 +103,7 @@ def main() -> int:
     for _meta, _body, path in available:
         name = label(path)
         if name == "operator/agent-delegation":
-            continue  # 전 발화 규칙이 다른 페이지의 미적중 표본을 숨겨서는 안 된다.
+            continue  # an every-utterance rule must not hide another page's misses
         print(f"### {name}\n")
         for hit in (True, False):
             selected = [(where, text) for (where, text), row in zip(turns, after)

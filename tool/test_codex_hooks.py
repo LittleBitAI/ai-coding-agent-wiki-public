@@ -1,4 +1,4 @@
-"""설치된 Codex 명령을 실제 프로세스로 호출해 위키 연결을 검증한다."""
+"""Call the installed Codex command as a real process and verify the wiring."""
 
 import json
 import os
@@ -171,10 +171,11 @@ def test_installed_stop(connected, message, active, blocked):
 
 @pytest.mark.skipif(os.name != "nt", reason="Git Bash 탐색은 Windows 에서만 돈다")
 def test_git_bash_is_found_from_every_copy_of_git_exe(tmp_path, monkeypatch):
-    """Git for Windows 는 git.exe 를 세 곳에 둔다. 한 층만 올라가면 못 찾는다.
+    """Git for Windows puts `git.exe` in three places, and one level up misses it.
 
-    `mingw64/bin/git.exe` 가 PATH 에 걸린 기계에서 실제로 빨갰다 — 한 층 위는
-    `mingw64` 이고 거기엔 `bin/bash.exe` 가 없다. 설치 루트는 세 층 위다.
+    This went red on a machine with `mingw64/bin/git.exe` on PATH: one level
+    up is `mingw64`, which has no `bin/bash.exe`. The install root is three
+    levels up.
     """
     from setup_agents import hook_shell
 

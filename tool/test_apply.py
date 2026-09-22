@@ -1,4 +1,4 @@
-"""apply 의 병합이 기존 설정을 지우지 않는지 증명한다."""
+"""Prove `apply`'s merge never erases settings that were already there."""
 
 from __future__ import annotations
 

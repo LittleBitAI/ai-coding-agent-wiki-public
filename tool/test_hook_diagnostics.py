@@ -1,4 +1,5 @@
-"""강제 종료되어도 원문 없이 멈춘 위치가 남고 정상 출력은 보존된다."""
+"""Even when killed, where it stopped is recorded without the payload, and a
+normal run's output survives."""
 
 import os
 from pathlib import Path

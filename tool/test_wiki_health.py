@@ -1,4 +1,5 @@
-"""측정기·배선·검사의 사각지대를 임시 저장소에서 재현한다."""
+"""Reproduce the blind spots of the meters, the wiring and the checks in a
+throwaway repository."""
 
 import json
 import os

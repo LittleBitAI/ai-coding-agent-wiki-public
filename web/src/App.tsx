@@ -337,7 +337,9 @@ export default function App() {
                 {note}
               </div>
             )}
-            {handoff && <Handoff text={handoff} onClose={() => setHandoff('')} />}
+            {handoff && (
+              <Handoff text={handoff} korean={korean} onClose={() => setHandoff('')} />
+            )}
             {legacy.length > 0 && (
               <details key={active} className="max-h-64 overflow-auto border-b border-border px-6 py-2 text-xs">
                 <summary className="cursor-pointer">프로젝트 미분류 이전 기록 ({legacy.length}개)</summary>

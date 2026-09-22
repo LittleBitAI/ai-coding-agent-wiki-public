@@ -7,7 +7,9 @@ out rather than in the files.
 
 from __future__ import annotations
 
-import hook_diagnostics  # noqa: F401 -- 진입점의 제한 시간 전 스택 보존
+# First import of the entry point: it keeps the stack from before whatever
+# time limit kills this.
+import hook_diagnostics  # noqa: F401
 import argparse
 import json
 import re
@@ -198,9 +200,9 @@ def source_map(matched: list, project: str | None) -> str:
     the header said "this repository's wiki", and the hub's path appeared
     nowhere. A name cannot decide it — both places are called "the wiki".
 
-    범위별로 갈리는 규칙도 같이 적는다. `operator`·`craft` 는 저장소를 안
-    가리므로 허브에, 저장소의 게이트·런처·포트·불변식은 그 저장소의 `.wiki/`
-    에 산다.
+    Which scope holds what is stated alongside it. `operator` and `craft`
+    name no repository, so they live in the hub; a repository's gates,
+    launchers, ports and invariants live in that repository's `.wiki/`.
     """
 
     hub = Path(__file__).resolve().parents[1]

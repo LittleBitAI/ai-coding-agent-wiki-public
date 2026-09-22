@@ -1,4 +1,4 @@
-"""lint 의 검사가 실제로 빨개지는지 증명한다."""
+"""Prove each of `lint`'s checks actually goes red."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ links: {links}
 
 
 def build(root: Path, pages: dict[str, dict]) -> None:
-    """페이지 표를 임시 위키로 쓴다. 근거 파일도 같이 만든다."""
+    """Write a table of pages as a throwaway wiki, grounds files and all."""
 
     (root / "raw").mkdir(parents=True, exist_ok=True)
     (root / "raw" / "c.jsonl").write_text("{}\n", encoding="utf-8")
@@ -57,7 +57,7 @@ CLEAN = {
 
 
 def _tool(root: Path, name: str, source: str) -> None:
-    """임시 위키에 도구 하나를 심는다. 인코딩 검사가 보는 곳은 `tool/` 이다."""
+    """Plant one tool in the throwaway wiki. The encoding check looks in `tool/`."""
     (root / "tool").mkdir(parents=True, exist_ok=True)
     (root / "tool" / name).write_text(source, encoding="utf-8")
 
@@ -66,9 +66,10 @@ FIXED = 'import sys\nsys.stdout.reconfigure(encoding="utf-8")\n'
 
 
 def _clean_tool(root: Path, name: str, source: str) -> None:
-    """인코딩만 고정해 둔 도구를 심는다.
+    """Plant a tool with its encoding already pinned.
 
-    한 결함이 두 검사를 빨갛게 하면 어느 검사가 잡은 것인지 못 가른다.
+    One defect turning two checks red leaves no way to tell which check
+    caught it.
     """
 
     _tool(root, name, FIXED + source)
@@ -80,7 +81,7 @@ def kinds(root: Path) -> set[str]:
 
 
 def run(label: str, mutate, expect: str) -> bool:
-    """결함을 심고 그 검사가 빨개지는지 본다."""
+    """Plant a defect and watch that check go red."""
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -217,5 +218,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    shutil.rmtree  # noqa: B018  (tempfile 이 정리한다)
+    shutil.rmtree  # noqa: B018  (tempfile does the cleaning up)
     raise SystemExit(main())

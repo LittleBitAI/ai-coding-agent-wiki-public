@@ -9,7 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-MAX_WHY = 400      # 이유를 몇 자까지 담을 것인가
+MAX_WHY = 400      # How much of the reason to carry
 MAX_WHAT = 260
 
 # The domain table: (name, what to look for in a branch or title, the

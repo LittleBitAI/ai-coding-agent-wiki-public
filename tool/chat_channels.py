@@ -163,8 +163,8 @@ class Channel:
     label: str
     blurb: str
     preamble: str
-    model: str = ""     # 기본 모델
-    effort: str = ""    # 기본 effort
+    model: str = ""     # the CLI's own default model
+    effort: str = ""    # the CLI's own default effort
 
 
 CHANNELS: list[Channel] = [
@@ -172,7 +172,7 @@ CHANNELS: list[Channel] = [
         id="progress",
         label="진척도",
         blurb="무엇이 닫혔고 다음이 무엇인가",
-        effort="low",   # 읽고 옮기는 일이라 깊이 생각할 게 없다
+        effort="low",   # reading and reporting; nothing to think hard about
         preamble=(
             "Focus: repository progress and plans. Read `.wiki/plan-active.md` first "
             "and follow the progress skill's document order. Use commits to verify "
@@ -184,7 +184,7 @@ CHANNELS: list[Channel] = [
         id="diagnose",
         label="진단",
         blurb="왜 안 되나 — 기록부터 본다",
-        effort="high",  # 원인을 캐는 자리다
+        effort="high",  # this is where a cause gets dug out
         preamble=(
             "Focus: diagnosis. Follow `.wiki/telemetry.md`. Before interpreting code, "
             "inspect available `.omm/`, `data/latency_logs/`, Langfuse, and "

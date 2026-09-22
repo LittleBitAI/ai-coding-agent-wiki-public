@@ -127,11 +127,13 @@ function AnswerVersions(
       {simple ? (
         <div className="space-y-2">
           <p className="text-[12px] text-muted-foreground">같은 내용을 쉽게 풀었습니다. 근거와 조건은 원문에서 함께 확인할 수 있습니다.</p>
-          {m.simpleText && <Answer text={m.simpleText} {...props} onDecide={undefined} />}
+          {m.simpleText && (
+            <Answer text={m.simpleText} korean={korean} {...props} onDecide={undefined} />
+          )}
           {m.simplePending && <p role="status" className="text-[12px] text-muted-foreground">의미와 조건을 유지하며 쉽게 풀어 쓰는 중…</p>}
           {m.simpleError && <p role="alert" className="text-[12px] text-destructive">쉬운 설명을 만들지 못했습니다. ‘정확한 답변’에서 원문을 볼 수 있습니다. {m.simpleError}</p>}
         </div>
-      ) : <Answer text={text} {...props} />}
+      ) : <Answer text={text} korean={korean} {...props} />}
       {!simple && m.simplePending && <p role="status" className="text-[12px] text-muted-foreground">원문을 읽는 동안 쉬운 설명을 준비하고 있습니다.</p>}
     </div>
   )

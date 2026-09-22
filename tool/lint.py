@@ -175,9 +175,76 @@ def check(
             "폭이 아니라 문장·절 경계에서 끊어라",
         ))
 
+    # --- 9. Comments and docstrings still written in Korean
+    for where, line in korean_prose(wiki):
+        findings.append((
+            "주석이 한국어다",
+            f"`{where}`: {line} — `operator/english-progress` 는 에이전트가 "
+            "쓰는 것을 영어로 둔다. 인용하는 한국어는 백틱이나 따옴표 안에 둬라",
+        ))
+
     return loaded, declared, findings
 
 
+
+
+HANGUL = re.compile(r"[가-힣]")
+
+# A Korean example being quoted, as opposed to a comment written in Korean.
+# An example is delimited — backticks or quotes — because that is how a
+# comment shows the reader it is pointing at a string rather than speaking.
+CITED = re.compile(r'`[^`\n]*`|"[^"\n]*"|“[^”\n]*”')
+
+
+def korean_prose(wiki: Path = WIKI) -> list[tuple[str, str]]:
+    """`tool/*.py` comments and docstrings still written in Korean.
+
+    Delimiters are what separates the two cases, not a ratio. A comment that
+    cites `올리겠습니다` is describing the data a regex matches and has to keep
+    it; a comment written in Korean is the thing `english-progress` asks to
+    move. A first attempt scored the share of Hangul per line and could not
+    tell them apart at any threshold — the citations landed at 0.40 to 0.47,
+    in among real violations. Shape standing in for the thing, again.
+
+    Read through `ast` and `tokenize` rather than by matching `#` against raw
+    lines. A regex on `#` sees no docstring at all, and that is exactly how
+    this was reported complete while 104 lines were still Korean: the
+    measurement answered a narrower question than the claim made.
+    """
+
+    directory = wiki / "tool"
+    if not directory.is_dir():
+        return []
+
+    found: list[tuple[str, str]] = []
+    for path in sorted(directory.glob("*.py")):
+        try:
+            source = path.read_text(encoding="utf-8")
+            tree = ast.parse(source)
+        except (OSError, SyntaxError, UnicodeDecodeError):
+            # Unreadable or unparsable is a finding of its own, raised by the
+            # checks that own it. Silence here would make this one green.
+            continue
+
+        pieces: list[tuple[int, str]] = []
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                                 ast.AsyncFunctionDef)):
+                doc = ast.get_docstring(node, clean=False)
+                if doc:
+                    at = getattr(node, "lineno", 1)
+                    pieces += [(at, line) for line in doc.splitlines()]
+        try:
+            for token in tokenize.generate_tokens(io.StringIO(source).readline):
+                if token.type == tokenize.COMMENT:
+                    pieces.append((token.start[0], token.string))
+        except tokenize.TokenError:
+            continue
+
+        for at, line in pieces:
+            if HANGUL.search(CITED.sub(" ", line)):
+                found.append((f"tool/{path.name}:{at}", line.strip()[:60]))
+    return found
 
 
 def fragile_tools(wiki: Path = WIKI) -> list[str]:
@@ -190,9 +257,10 @@ def fragile_tools(wiki: Path = WIKI) -> list[str]:
     which was already reading files with `encoding="utf-8"`. Fixing the read
     does not fix the write.
 
-    `craft/hooks-fail-open` 은 이 실패를 훅에 대해 적었지만, 실패하는 조건은
-    훅이라는 것이 아니라 **stdout 이 파이프인 파이썬** 이다. 훅 넷이 고쳐지고
-    같은 조건의 CLI 여덟이 안 고쳐진 채 남은 것이 그 좁힘의 값이다.
+    `craft/hooks-fail-open` wrote this failure down as being about hooks, but
+    the condition that fails is not being a hook — it is being Python whose
+    stdout is a pipe. Four hooks got fixed and eight CLIs under the same
+    condition did not, and that gap is what the narrowing cost.
     """
     directory = wiki / "tool"
     if not directory.is_dir():
@@ -299,10 +367,11 @@ def pinned_originals(root: Path, names: list[str]) -> set[str]:
     the health check forever and the next person makes the same judgement
     again.
 
-    이름으로 걸지 않는다. `tracked_markdown` 이 적어 둔 대로 `archive/` 같은
-    이름 목록은 남의 저장소에서 진짜 문서를 통째로 지웠다. 여기서 보는 것은
-    이름이 아니라 그 저장소가 실제로 적어 둔 해시다 — 못 박기를 풀면 검사가
-    다시 돈다. 스스로의 해시를 적을 수는 없으므로 순환도 없다.
+    Not matched by name. As `tracked_markdown` records, a list of names like
+    `archive/` wiped out real documents in other repositories. What decides it
+    here is the hash that repository actually wrote down — remove the pin and
+    the check runs again. A file cannot record its own hash, so there is no
+    circularity either.
     """
 
     digests: dict[str, str] = {}

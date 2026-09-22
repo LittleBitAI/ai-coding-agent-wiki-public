@@ -126,9 +126,10 @@ def rule_half(text: str) -> str:
     absence of decisions registers as the difference and the thing actually
     being measured never gets measured.
 
-    머리말도 뺀다. 출처 표에 대상 저장소의 절대 경로가 들어 있고 `build` 는
-    부를 때마다 새 임시 폴더를 만들므로, 안 빼면 경로가 달라 매번 다르다고
-    나온다. 이 함수가 재려는 것은 **규칙이 줄었는가** 하나다.
+    The header goes too. The source table carries the target repository's
+    absolute path and `build` makes a fresh temporary folder on every call,
+    so leaving it in reports a difference every time because the path
+    differs. The one thing this function measures is whether the rules shrank.
     """
 
     head = text.split(MARK)[0]

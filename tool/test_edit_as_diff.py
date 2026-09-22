@@ -1,4 +1,4 @@
-"""`edit_as_diff` 가 막는 자리와 안 막는 자리."""
+"""Where `edit_as_diff` blocks, and where it does not."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ HOOK = Path(__file__).with_name("edit_as_diff.py")
 
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
-    """이미 있는 파일 하나를 가진 저장소."""
+    """A repository holding one file that already exists."""
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "existing.py").write_text("x = 1\n", encoding="utf-8")
     (tmp_path / "README.md").write_text("# 제목\n", encoding="utf-8")
@@ -98,12 +98,13 @@ def test_what_it_must_not_block(repo: Path, command: str) -> None:
 
 
 def test_a_commit_message_that_quotes_a_command_is_not_a_command(repo: Path) -> None:
-    """이 훅이 처음 쓰인 자리에서 자기 오탐으로 잡힌 것.
+    """The hook's own false positive, caught the first time it was used.
 
-    커밋 메시지를 heredoc 으로 넘기는데 그 메시지가 막힌 명령을 인용하고 있었고,
-    훅이 그 문자열을 보고 커밋을 막았다. 리뷰 지시문·PR 본문·문서가 명령을
-    인용하는 것은 정상이고 흔하다 -- 그리고 이 규칙을 설명하는 글은 반드시
-    그 명령을 인용한다.
+    A commit message was being passed through a heredoc and that message
+    quoted a blocked command; the hook read the string and blocked the commit.
+    A review instruction, a PR body or a document quoting a command is normal
+    and common — and any text explaining this rule necessarily quotes the
+    command it is about.
     """
     command = (
         "git commit -F - <<'MSG'\n"
@@ -117,7 +118,7 @@ def test_a_commit_message_that_quotes_a_command_is_not_a_command(repo: Path) -> 
 
 
 def test_a_heredoc_into_an_interpreter_is_still_code(repo: Path) -> None:
-    """데이터 본문을 뺀다고 코드 본문까지 빼면 잡던 것을 놓친다."""
+    """Dropping a data body must not drop a code body with it."""
     command = (
         "python - <<'PY'\n"
         "from pathlib import Path\n"
@@ -129,14 +130,14 @@ def test_a_heredoc_into_an_interpreter_is_still_code(repo: Path) -> None:
 
 
 def test_a_redirection_on_the_command_line_survives_a_data_heredoc(repo: Path) -> None:
-    """본문은 데이터여도 명령줄의 리다이렉션은 본문 밖이다."""
+    """Even with a data body, the command line's redirection is outside it."""
     command = "cat > README.md <<'MD'\n한 줄\nMD"
 
     assert verdict(bash(command), repo) is not None
 
 
 def test_write_onto_an_existing_file_is_refused(repo: Path) -> None:
-    """`Write` 는 새 파일 전용이라고 페이지가 정했다."""
+    """The page decides that `Write` is for a new file and nothing else."""
     answer = verdict(
         {"tool_name": "Write", "tool_input": {"file_path": "README.md"}}, repo
     )
@@ -153,7 +154,7 @@ def test_write_onto_a_new_file_passes(repo: Path) -> None:
 
 
 def test_the_edit_tool_is_never_looked_at(repo: Path) -> None:
-    """고치라고 권하는 도구를 막으면 막다른 길이 된다."""
+    """Blocking the very tool the refusal recommends is a dead end."""
     assert (
         verdict({"tool_name": "Edit", "tool_input": {"file_path": "README.md"}}, repo)
         is None
@@ -161,13 +162,14 @@ def test_the_edit_tool_is_never_looked_at(repo: Path) -> None:
 
 
 def test_a_broken_payload_passes_rather_than_stopping_the_session(repo: Path) -> None:
-    """`craft/hooks-fail-open`. 훅이 깨져서 작업이 멈추면 안 된다."""
+    """`craft/hooks-fail-open`. A broken hook must not stop the work."""
     for payload in [{}, {"tool_name": "Bash"}, {"tool_name": "Bash", "tool_input": {}}]:
         assert verdict(payload, repo) is None
 
 
 def test_it_runs_as_a_process_and_answers_on_stdout(repo: Path) -> None:
-    """훅은 프로세스로 불린다. 한글이 섞인 판정이 파이프에서 안 죽는지까지 본다."""
+    """The hook is called as a process, so this also checks that a refusal
+    containing Korean survives the pipe."""
     payload = json.dumps(
         {
             "tool_name": "Bash",

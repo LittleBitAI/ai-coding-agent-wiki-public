@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-from harvest import record, triggers_for  # noqa: E402 -- 위의 reconfigure 가 먼저 돌아야 한다
+from harvest import record, triggers_for  # noqa: E402 -- the reconfigure above runs first
 
 BODY = """## 왜 셀을 지우면 안 됐나
 
@@ -45,7 +45,7 @@ def test_a_body_that_has_a_reason_is_not_recorded_as_having_none() -> None:
 
 
 def test_a_body_with_genuinely_no_reason_is_recorded_as_having_none() -> None:
-    """반대쪽 절반. 없는 것을 지어내지 않는지도 같이 못박는다."""
+    """The other half: it must not invent a reason that is not there."""
     assert "이 결정의 근거는 기록되지 않았다" in _record("한 문단뿐인 본문.")
 
 
@@ -85,7 +85,7 @@ def test_prose_is_found_with_no_blank_line_between_heading_and_body() -> None:
 
 
 def test_a_body_of_nothing_but_headings_records_no_summary() -> None:
-    """걷어낸 뒤 남는 산문이 없으면 지어내지 않는다."""
+    """With no prose left after the headings are stripped, it invents none."""
     assert "PR 본문에 요약 절이 없다" in _record("## 제목뿐\n\n### 또 제목뿐")
 
 
@@ -129,7 +129,7 @@ def test_a_korean_marker_still_matches_inside_a_compound() -> None:
 
 
 def test_a_marker_standing_as_a_word_still_matches() -> None:
-    """엄격해지느라 진짜 양성을 놓치면 안 된다."""
+    """Getting stricter must not start missing the real positives."""
     assert triggers_for("CI 를 붙입니다", "feat/ci-pipeline")[0] == "infra"
     assert triggers_for("프레임 동기화", "feat/frame-sync")[0] == "vision"
     assert triggers_for("턴 조립", "feat/turn-assembly")[0] == "api"

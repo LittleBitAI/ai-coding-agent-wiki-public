@@ -1,4 +1,4 @@
-"""이 훅이 자기 조건에서만 되돌리는지 증명한다."""
+"""Prove this hook reverts only under its own conditions."""
 
 from __future__ import annotations
 
