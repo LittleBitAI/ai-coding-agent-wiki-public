@@ -59,7 +59,7 @@ def run_hook(connected, event, payload, script=""):
     payload = {"cwd": str(project), "hook_event_name": event, "session_id": "test", **payload}
     command = commands[0]["command"]
     if os.name == "nt":
-        # shell=True는 cmd.exe를 골라 Codex의 PowerShell 파싱 오류를 놓친다.
+        # `shell=True` picks cmd.exe and misses Codex's PowerShell parse errors.
         command = [shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-Command", command]
     result = subprocess.run(
         command, shell=os.name != "nt", cwd=project,
@@ -86,13 +86,15 @@ def test_installed_context_and_sync(connected):
 
 
 def test_question_policy_before_agent_decides_to_ask(connected):
-    # 일반 발화: 에이전트가 뒤에서 질문할지는 사용자 발화로 알 수 없다.
+    # An ordinary utterance: whether the agent will ask something later cannot
+    # be read off what the person typed.
     payload = {"prompt": "현재 이 프로젝트의 진척도를 알려줘."}
     context = run_hook(connected, "UserPromptSubmit", payload)["hookSpecificOutput"]["additionalContext"]
     assert "operator/ask-with-arrow-key-options" in context
     assert "AskUserQuestion" in context and "default_mode_request_user_input" in context
     assert run_hook(connected, "PreToolUse", {"tool_name": "request_user_input", "tool_input": {}}) == {}
-    # Claude는 별도 설치 파일과 네이티브 도구를 쓴다. Codex의 실험 설정을 쓰지 않는다.
+    # Claude has its own settings file and its own native tool. Codex's
+    # experiment settings do not apply to it.
     from setup_agents import hook_shell
     project, _ = connected
     done = subprocess.run([sys.executable, str(TOOL / "apply.py"), "--project", str(project),

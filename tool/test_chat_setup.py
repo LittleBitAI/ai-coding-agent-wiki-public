@@ -47,9 +47,10 @@ def test_current_user_cli_and_npm_shim_avoid_shell(tmp_path):
     home = tmp_path / "다른 팀원"
     home.mkdir()
     script = _npm_shim(home / "codex.cmd", "node_modules/@openai/codex/bin/codex.js")
-    # 네이티브 바이너리를 배포하는 패키지(claude)는 node 없이 그 바이너리를 직접 실행한다.
+    # A package shipping a native binary (claude) runs that binary directly,
+    # without node.
     native = _npm_shim(home / "claude.cmd", "node_modules/@anthropic-ai/claude-code/bin/claude.exe")
-    # npm.cmd는 경로를 여러 개 담는다. 실제 진입점은 마지막 것이다.
+    # `npm.cmd` carries several paths. The real entry point is the last one.
     npm_cli = _npm_shim(home / "npm.cmd", "node_modules/npm/bin/npm-cli.js")
     (home / "npm.cmd").write_text(r'SET "NPM_PREFIX_JS=%~dp0\node_modules\npm\bin\npm-prefix.js"'
                                   '\n' r'SET "NPM_CLI_JS=%~dp0\node_modules\npm\bin\npm-cli.js"',

@@ -500,7 +500,8 @@ def test_the_feed_forgets_the_far_past_without_losing_its_place():
 
     _, parts = feed.since(0)
     assert [p["text"] for p in parts] == ["둘", "셋"]
-    # Indices stay absolute, so a tab holding `i == 0` is not sent "둘" twice.
+    # Indices stay absolute, so a tab holding `i == 0` is not sent the second
+    # part twice.
     assert [p["i"] for p in parts] == [1, 2]
 
 

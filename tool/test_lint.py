@@ -94,7 +94,8 @@ def run(label: str, mutate, expect: str) -> bool:
 
 
 def main() -> int:
-    # 출력이 파이프로 가면 기본이 cp949 다. 인코딩을 환경에 안 맡긴다.
+    # Down a pipe the default here is cp949. The encoding is not left to the
+    # environment.
     sys.stdout.reconfigure(encoding="utf-8")
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -146,9 +147,10 @@ def main() -> int:
             "인코딩 미고정",
         ),
         (
-            # 첫 판이 놓친 자리. 발견 메시지가 고치는 방법으로 그 이름을 담고
-            # 있어서, `lint.py` 자신이 "고쳤다" 로 판정됐다. 이름이 아니라
-            # 호출문을 세는지 보는 것이 이 줄의 전부다.
+            # What the first version missed. The finding message contained
+            # that name as the way to fix it, so `lint.py` itself was judged
+            # "already fixed". This line is entirely about whether the check
+            # counts the call or the name.
             "이름만 문자열에 있고 호출은 없다",
             lambda p, r: _tool(
                 r,
@@ -158,9 +160,11 @@ def main() -> int:
             "인코딩 미고정",
         ),
         (
-            # 판정이 한국어 관형형에서 잘린 스팬으로 바뀌었다. 영어에서 줄 끝의
-            # `the` 는 정상 조판이라 그 판이 1,515쌍 중 437건을 짚었다 — 29%는
-            # 검사가 아니라 끄게 되는 소음이다. 표본도 같이 바뀌어야 한다.
+            # The judgement moved from a Korean adnominal ending to a span cut
+            # in half. A `the` at the end of a line is ordinary English
+            # typesetting, and that version flagged 437 of 1,515 pairs — 29%
+            # is not a check, it is noise that gets switched off. The samples
+            # had to move with it.
             "주석의 코드 스팬이 줄바꿈에 잘린다",
             lambda p, r: _clean_tool(
                 r,
@@ -171,9 +175,10 @@ def main() -> int:
             "끊긴 줄바꿈",
         ),
         (
-            # 페이지 산문은 다른 경로로 읽는다 — front matter 를 건너뛰고 표와
-            # 코드 울타리를 거른다. 그 경로가 조용히 아무것도 안 읽으면 검사는
-            # 초록인 채로 남고, 그 초록이 검사가 도는 증거처럼 보인다.
+            # Page prose is read by a different path — front matter skipped,
+            # tables and code fences filtered out. If that path quietly reads
+            # nothing the check stays green, and that green looks like
+            # evidence the check ran.
             "페이지 산문에서 숫자와 단위가 갈린다",
             lambda p, r: p["operator/a"].update(
                 extra="\nMeasuring the corpus gave a median across the 21\npages already here."
@@ -185,7 +190,7 @@ def main() -> int:
     print(f"\n결함을 하나씩 심는다 ({len(checks)}건)\n")
     failed = [label for label, mutate, expect in checks if not run(label, mutate, expect)]
 
-    # 선언하면 지나가는가 — 모순 처리의 핵심이다
+    # Does declaring it let it pass — the heart of how contradictions work
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         pages = {name: dict(spec) for name, spec in CLEAN.items()}

@@ -1,4 +1,4 @@
-"""주입 기록이 앞 턴을 제대로 채점하는지만 본다."""
+"""Only whether the injection record scores the previous turn correctly."""
 
 import sys
 import tempfile
@@ -17,7 +17,7 @@ def say(root: Path, prompt: str, session: str = "s1", injected=None) -> None:
     trajectory.record(root, prompt, injected or [], 100, session)
 
 
-def test_같은_세션이면_다음_발화가_앞_턴을_채점한다():
+def test_in_one_session_the_next_utterance_scores_the_turn_before():
     root = wiki()
     say(root, "주석 좀 고쳐줘")
     say(root, "아니, 그게 아니라 줄바꿈을 말한 거다")
@@ -27,30 +27,31 @@ def test_같은_세션이면_다음_발화가_앞_턴을_채점한다():
     assert rows[1]["prev"] == "교정", rows[1]
 
 
-def test_평범한_다음_발화는_ok_다():
+def test_an_ordinary_next_utterance_is_ok():
     root = wiki()
     say(root, "주석 좀 고쳐줘")
     say(root, "이제 커밋해라")
     assert trajectory.rows(root)[1]["prev"] == "ok"
 
 
-def test_세션이_바뀌면_앞_줄을_채점하지_않는다():
+def test_a_different_session_does_not_score_the_previous_line():
     root = wiki()
     say(root, "주석 좀 고쳐줘", session="s1")
     say(root, "아니, 틀렸다", session="s2")
     assert "prev" not in trajectory.rows(root)[1]
 
 
-def test_세션_id_가_없으면_잇지_않는다():
-    # 훅 입력에 `session_id` 가 없는 환경이 있다. 빈 문자열끼리 같다고 보면
-    # 서로 다른 세션이 한 줄로 이어져 없는 인과를 만든다.
+def test_without_a_session_id_nothing_is_joined():
+    # Some environments send no `session_id` in the hook input. Treating two
+    # empty strings as equal joins separate sessions into one line and
+    # manufactures a causality that was never there.
     root = wiki()
     say(root, "주석 좀 고쳐줘", session="")
     say(root, "아니, 틀렸다", session="")
     assert "prev" not in trajectory.rows(root)[1]
 
 
-def test_긴_지시문_안의_이어서는_재개_요구가_아니다():
+def test_resume_inside_a_long_instruction_is_not_a_request_to_resume():
     root = wiki()
     say(root, "첫 턴")
     say(root, "이어서 진행해라. " + "그리고 다음 항목도 처리하고 보고해라. " * 6)
@@ -62,14 +63,15 @@ def test_긴_지시문_안의_이어서는_재개_요구가_아니다():
     assert trajectory.rows(short)[1]["prev"] == "재개요구"
 
 
-def test_안_걸린_턴도_남는다():
-    # 무엇이 실렸는지만큼 무엇이 안 실렸는지가 근거다. 빈 목록으로 남는다.
+def test_a_turn_that_matched_nothing_is_recorded_too():
+    # What was not carried is as much evidence as what was. It stays, as an
+    # empty list.
     root = wiki()
     say(root, "아무 규칙도 안 걸리는 말")
     assert trajectory.rows(root)[0]["injected"] == []
 
 
-def test_발화는_잘리되_원래_길이는_남는다():
+def test_the_utterance_is_cut_and_its_real_length_is_kept():
     root = wiki()
     long = "가" * (trajectory.KEEP + 200)
     say(root, long)
@@ -78,13 +80,13 @@ def test_발화는_잘리되_원래_길이는_남는다():
     assert row["chars"] == trajectory.KEEP + 200
 
 
-def test_스트림은_깃에_안_담긴다():
+def test_the_stream_does_not_go_into_git():
     root = wiki()
     say(root, "첫 턴")
     assert trajectory.FILENAME in (root / ".gitignore").read_text(encoding="utf-8")
 
 
-def test_두_번_불러도_ignore_가_한_줄이다():
+def test_called_twice_the_ignore_entry_is_still_one_line():
     root = wiki()
     say(root, "첫 턴")
     say(root, "둘째 턴")
@@ -92,8 +94,9 @@ def test_두_번_불러도_ignore_가_한_줄이다():
     assert lines.count(trajectory.FILENAME) == 1, lines
 
 
-def test_깨진_줄이_있어도_앞_줄을_찾는다():
-    # 꼬리만 읽으므로 첫 줄이 잘려 들어올 수 있다. 그 조각에서 멈추면 안 된다.
+def test_a_broken_line_does_not_hide_the_one_before_it():
+    # Only the tail is read, so the first line can arrive cut in half.
+    # Stopping at that fragment is not allowed.
     root = wiki()
     say(root, "첫 턴")
     with trajectory.path_for(root).open("a", encoding="utf-8") as handle:
@@ -102,9 +105,10 @@ def test_깨진_줄이_있어도_앞_줄을_찾는다():
     assert trajectory.rows(root)[-1]["prev"] == "교정"
 
 
-def test_쓸_수_없어도_안_죽되_조용하지도_않다():
-    # 훅은 무슨 일이 있어도 세션을 멈추지 않는다 — craft/hooks-fail-open.
-    # 다만 조용히 실패하면 안 도는데 도는 줄 알게 되므로 이름은 돌려준다.
+def test_an_unwritable_path_neither_kills_it_nor_passes_silently():
+    # A hook never stops the session, whatever happens —
+    # `craft/hooks-fail-open`. Failing silently, though, leaves it looking
+    # like it runs when it does not, so the name of the failure comes back.
     assert trajectory.record(None, "아무 말", [], 0, "s1") is None
     blocked = Path(tempfile.mkdtemp()) / "파일"
     blocked.write_text("나는 폴더가 아니다", encoding="utf-8")

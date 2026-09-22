@@ -37,20 +37,23 @@ def bash(command: str) -> dict:
         "python - <<'PY'\nopen('README.md', 'w').write('x')\nPY",
         "tee src/existing.py <<PY\nPY",
         "echo hi > README.md",
-        # 경로를 변수에 받아 두고 나중에 쓰는 모양. 한 세션이 이것으로 다지점
-        # 치환을 열 번 넘게 했고 훅은 한 번도 안 걸렸다 — 위의 두 파이썬 패턴이
-        # `Path(...)` 와 `.write_` 가 **붙어 있을 때만** 맞기 때문이다.
+        # The shape that takes the path in a variable and writes through it
+        # later. One session did more than ten multi-point replacements this
+        # way without the hook firing once, because the two python patterns
+        # above only match when `Path(...)` and `.write_` sit together.
         "python - <<'PY'\nimport pathlib\np = pathlib.Path('src/existing.py')\nt = p.read_text()\np.write_text(t.replace('a', 'b'))\nPY",
-        # 인터프리터가 절대 경로로 불린 모양. 이 세션이 실제로 쓴 것이다.
+        # The interpreter called by absolute path. This session actually did
+        # write it that way.
         "/c/py/python.exe - <<'PY'\nimport pathlib\np = pathlib.Path('README.md')\np.write_text('x')\nPY",
-        # `open` 을 변수로 받는 모양.
+        # The shape that takes `open` into a variable.
         "python - <<'PY'\nf = open('README.md', 'w')\nf.write('x')\nPY",
         # `Path.open('w')`.
         "python - <<'PY'\nfrom pathlib import Path\np = Path('src/existing.py')\nwith p.open('w') as f:\n    f.write('x')\nPY",
-        # 대입이 줄 처음에 없는 모양. `-c` 한 줄은 이 규칙이 겨냥한 바로 그
-        # 모양인데, 줄 처음만 보던 첫 판이 통째로 놓쳤다.
+        # The assignment not at the start of a line. A one-line `-c` is the
+        # exact shape this rule aims at, and the first version — which looked
+        # only at the start of a line — missed it entirely.
         "python -c \"import pathlib; p = pathlib.Path('README.md'); p.write_text('x')\"",
-        # 같은 것이 힙독 안에 들어온 모양.
+        # The same thing, arriving inside a heredoc.
         "python - <<'PY'\nimport pathlib; p = pathlib.Path('src/existing.py'); p.write_text('x')\nPY",
     ],
 )
@@ -68,22 +71,25 @@ def test_rewriting_a_file_that_is_already_there_is_refused(
 @pytest.mark.parametrize(
     "command",
     [
-        # 새 파일. 지울 것이 없으므로 diff 가 될 수 없다 -- 페이지의 명시된 예외.
+        # A new file. Nothing to erase, so it cannot become a diff — the
+        # page's stated exception.
         "cat > src/brand_new.py <<PY\nPY",
-        # 저장소 밖. diff 가 남을 자리가 없다.
+        # Outside the repository. There is nowhere for a diff to live.
         'cat > "$TMPDIR/scratch.py" <<PY\nPY',
         "python - <<'PY'\nPath('/tmp/x.py').write_text('x')\nPY",
-        # 읽기만 하는 명령. 리다이렉션이 있어도 대상이 파일이 아니다.
+        # A read-only command. There is redirection, but not onto a file.
         "grep -rn foo src/ > /dev/null",
         "pytest -q 2>&1 | tail -3",
         "git diff --stat > /dev/null 2>&1",
-        # 파일을 아예 안 쓰는 것.
+        # Writes no file at all.
         "ls -la src/",
         "git log --oneline -5",
-        # 저장소 파일을 **읽기만** 하고 결과는 화면으로. 변수 추적이 이것까지
-        # 잡으면 오탐이고, 오탐이 작업을 멈추면 사용자가 훅을 끈다.
+        # Only reads a repository file; the result goes to the screen. The
+        # variable tracking catching this too would be a false positive, and a
+        # false positive that stops the work gets the hook turned off.
         "python - <<'PY'\nimport pathlib\np = pathlib.Path('src/existing.py')\nprint(len(p.read_text()))\nPY",
-        # 저장소 파일을 읽어 **스크래치에** 쓴다. 쓰는 대상이 저장소가 아니다.
+        # Reads a repository file and writes into the scratch directory. What
+        # is being written is not in the repository.
         "python - <<'PY'\nimport pathlib\nsrc = pathlib.Path('src/existing.py')\nout = pathlib.Path('/tmp/copy.py')\nout.write_text(src.read_text())\nPY",
     ],
 )
@@ -174,12 +180,13 @@ def test_it_runs_as_a_process_and_answers_on_stdout(repo: Path) -> None:
         input=payload,
         capture_output=True,
         text=True,
-        # 인코딩을 로케일에 안 맡긴다. 자식이 한글을 내고 부모가 cp949 로 읽으면
-        # 리더 스레드에서 조용히 죽는다 -- craft/hooks-fail-open 의 셋째 얼굴.
+        # The encoding is not left to the locale. A child emitting Korean and
+        # a parent reading cp949 dies quietly in the reader thread — the third
+        # face of `craft/hooks-fail-open`.
         encoding="utf-8",
         errors="replace",
-        # 0 이 아닌 코드도 이 테스트의 판정 대상이다. 훅은 무슨 일이 있어도 0 을
-        # 돌려야 하고, 그것을 아래에서 단언한다.
+        # A non-zero exit code is part of what this test judges. Whatever
+        # happens, the hook has to return 0, and that is asserted below.
         check=False,
     )
 
