@@ -532,6 +532,21 @@ def user_wired(agent: str) -> bool:
 
 
 
+def keep_denies(settings: dict) -> list[str]:
+    """Put the pages' deny rules into a checkout's own `permissions.deny`.
+
+    The user-level install judges them in `deny.py`, which passes when the
+    hook fails or times out. The host enforces `permissions.deny` itself, so
+    the checkouts named at install keep it; worktrees fall back to `deny.py`.
+    Only added, never removed — a rule a person wrote there stays.
+    """
+
+    existing = settings.setdefault("permissions", {}).setdefault("deny", [])
+    missing = [rule for rule in declared()[0] if rule not in existing]
+    existing.extend(missing)
+    return [f"deny 추가: {rule}" for rule in missing]
+
+
 def unwire(settings: dict) -> list[str]:
     """Drop this wiki's per-project hooks, for a machine that moved to the user level.
 
@@ -579,8 +594,9 @@ def wiring_drift(project: Path, agents: tuple[str, ...] | None = None) -> list[t
         try:
             settings = read_json(paths[agent])
             if user_wired(agent):
-                changes = [f"{c} — 전역 설치가 있다. `setup_agents.py --global --project` 로 걷어라"
-                           for c in unwire(json.loads(json.dumps(settings)))]
+                copy = json.loads(json.dumps(settings))
+                changes = [f"{c} — 전역 설치가 있다. `setup_agents.py --global --project` 로 고쳐라"
+                           for c in unwire(copy) + (keep_denies(copy) if agent == "claude" else [])]
             else:
                 changes = drift(settings, project, agent)
             findings.extend(("훅 배선 드리프트", f"{agent}: {change}") for change in changes)

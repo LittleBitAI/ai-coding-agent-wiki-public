@@ -90,13 +90,19 @@ def test_user_level_install_moves_the_drift_check():
             apply.configure(settings, None, None, sys.executable, "claude")
             user.parent.mkdir(parents=True, exist_ok=True)
             user.write_text(json.dumps(settings), encoding="utf-8")
-            assert not apply.wiring_drift(project), "전역에 걸렸으면 프로젝트 설정이 없어도 된다"
+            assert apply.wiring_drift(project), "전역만으로는 호스트가 직접 막는 deny 가 없다"
+            (project / ".claude").mkdir()
+            local = {"permissions": {"deny": ["Bash(rm -rf /*)"]}}
+            assert apply.keep_denies(local) and not apply.keep_denies(local), "한 번만 더한다"
+            assert "Bash(rm -rf /*)" in local["permissions"]["deny"], "사람이 쓴 규칙은 남는다"
+            (project / ".claude/settings.json").write_text(json.dumps(local), encoding="utf-8")
+            assert not apply.wiring_drift(project), "전역 훅 + 프로젝트 deny 면 맞다"
             old = {}
             apply.configure(old, project, None, sys.executable, "claude")
-            (project / ".claude").mkdir()
             (project / ".claude/settings.json").write_text(json.dumps(old), encoding="utf-8")
             assert apply.wiring_drift(project), "전역과 겹친 옛 프로젝트 훅은 걷으라고 말한다"
             assert apply.unwire(old) and not apply.unwire(old)
+            assert old["permissions"]["deny"], "훅을 걷어도 deny 는 남는다"
         finally:
             user.unlink(missing_ok=True)
 

@@ -96,9 +96,12 @@ with no adapter passes silently. Run it from the stable wiki checkout:
 python tool/setup_agents.py --global --trust-codex --project "../example-project"
 ```
 
-The pages' deny rules are not written into `permissions.deny` here — in the
-user settings they would bind every repository on the machine. `tool/deny.py`
-judges them behind the dispatcher, so they bind attached projects only.
+The pages' deny rules are not written into the user-level `permissions.deny`
+— there they would bind every repository on the machine. Each checkout named
+with `--project` gets them in its own `permissions.deny`, where the host
+enforces them even if a hook fails. Everywhere else attached, a worktree
+included, `tool/deny.py` judges them behind the dispatcher; that one passes
+when the hook fails or times out.
 
 `--project` (repeatable) removes that checkout's old per-project hooks, which
 would otherwise keep the job — the dispatcher steps aside for them.

@@ -228,7 +228,7 @@ def install_global(choice, check, projects, trust):
         if any(char in str(path) for char in ('"', '$', '`', '\n', '\r')):
             raise ValueError(f"셸 인용이 지원하지 않는 문자가 경로에 있습니다: {path}")
     os.environ["WIKI_ROOT"] = str(WIKI)
-    from apply import configure, read_json, unusable, unwire, user_files
+    from apply import configure, keep_denies, read_json, unusable, unwire, user_files
 
     missing = unusable(sys.executable)
     if missing:
@@ -256,16 +256,20 @@ def install_global(choice, check, projects, trust):
                 print(f"그대로: {path}")
         for project in projects:
             path = project / SETTINGS[agent]
-            if not path.exists():
+            if not path.exists() and agent != "claude":
                 continue
             settings = read_json(path)
             changes = unwire(settings)
+            # The named checkout keeps its deny rules where the host enforces
+            # them, so a failed hook does not let `git reset --hard` through.
+            changes += keep_denies(settings) if agent == "claude" else []
             if check:
-                broken += [f"{path}: 옛 프로젝트 훅이 남았다" for _ in changes[:1]]
+                broken += [f"{path}: {change}" for change in changes]
             elif changes:
+                path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
                                 encoding="utf-8", newline="\n")
-                print(f"옛 프로젝트 훅을 걷었다: {path} ({len(changes)}건)")
+                print(f"프로젝트 설정 정리: {path} ({len(changes)}건)")
         if agent == "codex":
             for path in user_files("codex"):
                 hooks = codex_hooks(path.parent, trust and not check)
