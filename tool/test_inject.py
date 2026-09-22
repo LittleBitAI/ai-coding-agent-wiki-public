@@ -181,27 +181,33 @@ def test_예산이_없으면_아무것도_안_다듬는다():
 #
 # 가짜 번역기로 잰다. 진짜를 부르면 시험이 네트워크와 돈에 매이고, 무엇보다
 # 번역이 실패한 회차와 성공한 회차가 같은 초록으로 보인다.
+#
+# `monkeypatch` 픽스처를 안 쓴다. 이 파일 끝의 직접 실행 러너가 인자 없이
+# 부르므로, 픽스처를 받으면 pytest 에서만 도는 검사가 된다. `docs/development.md`
+# 가 이 파일을 직접 실행하라고 적어 두었다.
 
 
-def _rendering(monkeypatch, prompt: str, answer: str | None) -> str:
+def _rendering(prompt: str, answer: str | None) -> str:
     import inject
     import translate
 
-    monkeypatch.setattr(
-        translate, "ko_to_en", lambda text, deadline=None: answer or text
-    )
-    return inject.rendering(prompt)
+    was = translate.ko_to_en
+    translate.ko_to_en = lambda text, deadline=None: answer or text
+    try:
+        return inject.rendering(prompt)
+    finally:
+        translate.ko_to_en = was
 
 
-def test_영어본은_발화가_한국어일_때만_붙는다(monkeypatch):
-    korean = _rendering(monkeypatch, "규칙을 지켜라", "Follow the rule")
+def test_영어본은_발화가_한국어일_때만_붙는다():
+    korean = _rendering("규칙을 지켜라", "Follow the rule")
     assert "Follow the rule" in korean
     assert "English rendering" in korean
 
-    assert _rendering(monkeypatch, "just plain english", "SHOULD NOT BE CALLED") == ""
+    assert _rendering("just plain english", "SHOULD NOT BE CALLED") == ""
 
 
-def test_번역이_실패하면_영어본_표지를_안_붙인다(monkeypatch):
+def test_번역이_실패하면_영어본_표지를_안_붙인다():
     """원문을 영어본이라고 이름 붙이는 것이 가장 나쁜 실패다.
 
     읽는 쪽은 그것이 번역된 것인지 아닌지 확인할 방법이 없으므로, 틀린
@@ -209,10 +215,10 @@ def test_번역이_실패하면_영어본_표지를_안_붙인다(monkeypatch):
     원문을 그대로 돌려주면 — 즉 실패하면 — 블록 자체를 안 만든다.
     """
 
-    assert _rendering(monkeypatch, "규칙을 지켜라", None) == ""
+    assert _rendering("규칙을 지켜라", None) == ""
 
 
-def test_트리거는_한국어_원문에_걸린다(monkeypatch):
+def test_트리거는_한국어_원문에_걸린다():
     """순서가 이 변경의 전부다.
 
     `match_pages` 에 번역본을 주면 한국어 정규식이 영어 문장을 훑게 되어
@@ -231,17 +237,14 @@ def test_트리거는_한국어_원문에_걸린다(monkeypatch):
     )
 
 
-def test_걸린_규칙이_없어도_영어본은_나간다(monkeypatch):
+def test_걸린_규칙이_없어도_영어본은_나간다():
     """`if not parts: return 0` 이 원래 여기서 발화 번역을 통째로 삼켰다.
 
-    발화는 매 턴 에이전트 입력이다. 그것을 트리거에 매달면 **어떤 규칙도
-    해당 안 되는 턴** — 즉 위키가 도울 말이 없는 턴 — 에서만 번역이 사라진다.
+    발화는 매 턴 에이전트 입력이다. 그것을 트리거에 매달면 어떤 규칙도 해당
+    안 되는 턴 — 즉 위키가 도울 말이 없는 턴 — 에서만 번역이 사라진다.
     """
 
-    import inject
-
-    monkeypatch.setattr(inject.translate, "ko_to_en", lambda t, deadline=None: "EN")
-    assert inject.rendering("규칙을 지켜라").endswith("EN")
+    assert _rendering("규칙을 지켜라", "EN").endswith("EN")
 
 
 if __name__ == "__main__":

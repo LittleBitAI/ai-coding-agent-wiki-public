@@ -191,10 +191,10 @@ Slack·인계의 한국어 보존을 기존 검사에 추가한다.
 | 1 | translate | `tool/translate.py` + `glossary.toml` + 캐시 | 완료 |
 | 2 | check | Git 기준 manifest·`translate.py --check`·원문/이름 변경/새 문서 표본·역번역 기록 | 완료 |
 | 3 | test | `tool/test_translate.py` — 자리표시자 왕복·키 없음·파이프 인코딩 | 완료 |
-| 4 | inject | `inject.py` 에 ko→en (트리거 매칭 뒤에) + timeout 15 | 미착수 |
-| 5 | session | `report()`에서만 결정·계획 번역, 공용 함수 한국어 유지 + timeout 25 | 미착수 |
-| 6 | prompts | 프롬프트 4개·스킬 4개·chat 인라인 writer 2개 점검/영어화, 출력 한국어 유지 | 미착수 |
-| 7 | gate | `tool/lint.py --check` 와 `pytest tool/` 초록 | 미착수 |
+| 4 | inject | `inject.py` 에 ko→en (트리거 매칭 뒤에) + timeout 15 | 완료 |
+| 5 | session | `report()`에서만 결정·계획 번역, 공용 함수 한국어 유지 + timeout 25 | 완료 |
+| 6 | prompts | 프롬프트 4개·스킬 4개·chat 인라인 writer 2개 점검/영어화, 출력 한국어 유지 | 완료 |
+| 7 | gate | `tool/lint.py --check` 와 `pytest tool/` 초록 | 완료 |
 
 ## 검증
 
