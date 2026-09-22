@@ -40,7 +40,15 @@ BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
 
 # Inline code, lifted before counting. Asterisks inside it are characters, not
 # emphasis, and counting them refused correct prose about Markdown itself.
-CODE = re.compile(r"`+[^`\n]*`+")
+#
+# A code span opens with a run of backticks and closes with a run of the same
+# length — that is the whole rule, and writing anything less than it was wrong.
+# `` `+[^`\n]*`+ `` looked equivalent and is not: given `` ` a ` and ` b ` ``
+# it ate the opening double run plus the space plus the next single backtick,
+# and left the middle exposed. A review round found that and I rejected it,
+# because the string I reproduced with had no spaces inside the span — the one
+# shape where the loose pattern happens to be right.
+CODE = re.compile(r"(?<!`)(?P<run>`+)(?!`).+?(?<!`)(?P=run)(?!`)")
 
 # A paragraph label: the line opens with a short bolded run ending in a period
 # or a colon. This repo's own pages write those plain -- `규칙.`, `어겼을 때.` --

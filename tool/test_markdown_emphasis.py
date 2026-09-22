@@ -292,13 +292,30 @@ def test_the_counter_is_about_asterisks_and_says_so() -> None:
 
 
 def test_inline_code_is_not_counted() -> None:
-    """코드 안의 별표는 문자다. 세면 마크다운을 설명하는 산문이 거부된다."""
+    """코드 안의 별표는 문자다. 세면 마크다운을 설명하는 산문이 거부된다.
+
+    여는 백틱 런과 닫는 런의 길이가 같아야 한다는 것이 규칙 전부다. 그보다 느슨한
+    `` `+[^`\\n]*`+ `` 는 같아 보였지만 아니었다 — 공백을 둔 두 백틱 스팬에서
+    여는 런과 공백과 다음 한 백틱을 먹고 가운데를 드러냈다. 리뷰가 그것을
+    찾았는데 내가 공백 없는 문자열로 재현해 보고 없는 결함이라고 답했다.
+    그 공백이 바로 느슨한 패턴이 틀리는 자리였다.
+    """
 
     tick = chr(96)
-    assert findings(f"{tick}**a**{tick} and {tick}**b**{tick}", whole=False) == []
-    assert findings(f"{tick * 2}{tick}**a**{tick} and {tick}**b**{tick}{tick * 2}",
-                    whole=False) == []
+    for name, text in {
+        "spaces inside a double-backtick span":
+            f"{tick * 2} {tick}**a**{tick} and {tick}**b**{tick} {tick * 2}",
+        "no spaces inside it":
+            f"{tick * 2}{tick}**a**{tick} and {tick}**b**{tick}{tick * 2}",
+        "two single-backtick spans":
+            f"{tick}**a**{tick} and {tick}**b**{tick}",
+        "asterisks inside double-backtick spans":
+            f"{tick * 2}**a**{tick * 2} and {tick * 2}**b**{tick * 2}",
+    }.items():
+        assert findings(text, whole=False) == [], name
+
     assert findings("**a** and **b**", whole=False), "코드 밖은 그대로 센다"
+    assert findings(f"{tick}**a**{tick} and **b** and **c**", whole=False)
 
 
 def test_a_markdown_file_that_cannot_be_read_is_a_finding(tmp_path: Path) -> None:
