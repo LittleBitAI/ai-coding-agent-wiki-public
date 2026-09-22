@@ -74,9 +74,17 @@ the rule be bypassed or refused correct prose.
 
 `markdown-it-py` is in `requirements-dev.txt` and is not optional. When it is
 missing the hook lets the write through and says so on screen, and `lint`
-raises it as a finding. A check that cannot run and reports nothing reads
-exactly like a check that ran and found nothing — that is how a gate stays
-green with the rule switched off.
+raises it as a finding. Any other way the parse can fail reports the same way.
+A check that cannot run and reports nothing reads exactly like a check that ran
+and found nothing — that is how a gate stays green with the rule switched off.
+
+The parse is CommonMark with the table rule on, and nothing else. The
+`gfm-like` preset would also turn on linkify, which needs `linkify-it-py` — an
+*extra* of markdown-it-py that requiring the package does not install. Without
+it that preset builds fine and raises inside `parse`, which is past the check
+for a missing parser and into the blanket except that keeps the hook from
+stopping the work. It was installed on the machine this was written on only
+because an unrelated package wanted it.
 
 ## What neither of them refuses
 

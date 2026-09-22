@@ -444,6 +444,70 @@ def test_the_parser_answers_not_a_regex() -> None:
         assert twice == (bold > 1), source
 
 
+def test_the_parser_needs_no_undeclared_extra() -> None:
+    """The check must work with exactly what requirements-dev.txt installs.
+
+    `gfm-like` turns on linkify, and linkify needs `linkify-it-py` — an extra
+    of markdown-it-py that a plain requirement does not pull in. Where it is
+    absent that preset builds fine and raises inside `parse`, past the `None`
+    check and into the blanket except in `main`: the write goes through and
+    nothing is said. This runs in a child with the module hidden.
+    """
+
+    child = """
+import builtins, sys
+real = builtins.__import__
+def blocked(name, *a, **k):
+    if name.startswith("linkify_it"):
+        raise ModuleNotFoundError("No module named 'linkify_it'")
+    return real(name, *a, **k)
+builtins.__import__ = blocked
+for name in [n for n in sys.modules if n.startswith("linkify_it")]:
+    del sys.modules[name]
+sys.path.insert(0, {here!r})
+from markdown_emphasis import findings
+table = "| a | b |\\n| --- | --- |\\n| **x** | **y** |\\n"
+assert findings(table, whole=False) == [], findings(table, whole=False)
+assert findings("text **one** and **two**", whole=False)
+print("ok")
+""".format(here=str(HERE))
+    done = subprocess.run(
+        [sys.executable, "-c", child],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == "ok"
+
+
+def test_a_broken_parse_is_not_a_silent_pass() -> None:
+    """Whatever the parser throws, the hook says so instead of going quiet.
+
+    `main` swallows it and passes -- the fail-open contract, and right. But a
+    check that fails and reports nothing reads exactly like a check that ran
+    and found nothing, which is the shape this whole page exists to stop.
+    """
+
+    import markdown_emphasis
+
+    def explode(*_a, **_k):
+        raise RuntimeError("parse blew up")
+
+    original = markdown_emphasis.findings
+    markdown_emphasis.findings = explode
+    try:
+        answer = markdown_emphasis.verdict({
+            "tool_name": "Write",
+            "tool_input": {"file_path": "docs/x.md", "content": "**a** **b**\n"},
+        })
+    finally:
+        markdown_emphasis.findings = original
+
+    assert answer is not None
+    assert "permissionDecision" not in json.dumps(answer)
+    assert "RuntimeError" in answer["systemMessage"]
+
+
 def test_a_missing_parser_is_said_out_loud(monkeypatch, tmp_path) -> None:
     """Not running is reported by both callers, and never as "clean".
 

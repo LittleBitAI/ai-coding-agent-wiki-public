@@ -50,12 +50,19 @@ _PARSER: object | None = None
 
 
 def parser():
-    """The shared CommonMark parser, or `None` when it is not installed.
+    """The shared parser: CommonMark plus tables, or `None` when unavailable.
 
-    `gfm-like` rather than `commonmark`, for tables. A bolded table cell often
-    reads as a column label, so this check has always exempted tables; the bare
-    commonmark preset has no table rule and would read one as a paragraph and
-    count its cells.
+    Tables, because a bolded table cell often reads as a column label and this
+    check has always exempted them. The bare commonmark preset has no table
+    rule and would read a table as a paragraph and count its cells.
+
+    Tables and nothing else. The `gfm-like` preset also turns on linkify, and
+    linkify needs `linkify-it-py`, which is an *extra* of markdown-it-py that
+    a plain `markdown-it-py` requirement does not install. Where it is absent
+    `MarkdownIt("gfm-like")` constructs fine and then raises inside `parse` —
+    past the `None` check, into the blanket except in `main`, and the write
+    goes through with nothing said. That is the exact failure this check
+    exists to prevent, so the preset that can reach it is not used.
     """
 
     global _PARSER
@@ -64,7 +71,7 @@ def parser():
             from markdown_it import MarkdownIt
         except Exception:
             return None
-        _PARSER = MarkdownIt("gfm-like")
+        _PARSER = MarkdownIt("commonmark").enable("table")
     return _PARSER
 
 
@@ -283,8 +290,16 @@ def verdict(payload: dict) -> dict | None:
         return {"systemMessage": MISSING}
 
     found = []
-    for text, whole in targets:
-        found += findings(text, whole)
+    try:
+        for text, whole in targets:
+            found += findings(text, whole)
+    except Exception as error:  # noqa: BLE001
+        # `main` catches this too and passes silently, which is the fail-open
+        # contract and is right -- but silent is what makes a broken check
+        # indistinguishable from a clean document. One preset already reached
+        # here: `gfm-like` constructs without `linkify-it-py` and then raises
+        # inside `parse`. Say it on screen and still let the write through.
+        return {"systemMessage": f"강조 검사가 실패했다: {type(error).__name__}"}
     if not found:
         return None
     return {
