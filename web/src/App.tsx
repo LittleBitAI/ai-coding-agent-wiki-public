@@ -52,6 +52,13 @@ export default function App() {
   const [note, setNote] = useState('')
   const [handoff, setHandoff] = useState('')
   const [peek, setPeek] = useState<{ data: PeekData | null; error?: string } | null>(null)
+  // The Korean overlay, on by default. The agent's surfaces are English now,
+  // and this is the half the person reads. Remembered per browser so the
+  // choice is not made again every time the page opens.
+  const [korean, setKorean] = useState(() => localStorage.getItem('korean') !== 'off')
+  useEffect(() => {
+    localStorage.setItem('korean', korean ? 'on' : 'off')
+  }, [korean])
 
   useEffect(() => {
     Promise.all([api.getChannels(), api.getOptions()])
@@ -299,7 +306,8 @@ export default function App() {
               <div className="flex flex-wrap items-center gap-3">
                 {here && (
                   <Toolbar channel={here} options={options} busy={busy}
-                    projectBusy={busyOn.length > 0 || configuring} onChange={apply} />
+                    projectBusy={busyOn.length > 0 || configuring}
+                    korean={korean} onKorean={setKorean} onChange={apply} />
                 )}
                 <button
                   type="button"
@@ -336,6 +344,7 @@ export default function App() {
               <div className="flex min-w-0 flex-1 flex-col">
                 <Stream
                   messages={messages}
+                  korean={korean}
                   remote={here?.remote ?? ''}
                   onPeek={showPeek}
                   onDecide={active === 'retro' ? decideOne : undefined}

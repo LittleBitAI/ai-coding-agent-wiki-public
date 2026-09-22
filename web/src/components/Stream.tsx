@@ -3,17 +3,19 @@ import { Answer } from '@/components/Answer'
 import type { AnswerProps } from '@/components/Answer'
 import { KINDS } from '@/lib/api'
 import type { Kind } from '@/lib/api'
+import { useOverlay } from '@/lib/overlay'
 import type { Msg } from '@/App'
 
 type Props = {
   messages: Msg[]
+  korean: boolean
   remote: string
   onPeek: AnswerProps['onPeek']
   onDecide: AnswerProps['onDecide']
   onMark: (index: number, kind: Kind) => Promise<void>
 }
 
-export function Stream({ messages, remote, onPeek, onDecide, onMark }: Props) {
+export function Stream({ messages, korean, remote, onPeek, onDecide, onMark }: Props) {
   const end = useRef<HTMLDivElement>(null)
 
   // 답이 토막으로 자라므로 길이가 바뀔 때마다 따라 내려간다.
@@ -52,17 +54,11 @@ export function Stream({ messages, remote, onPeek, onDecide, onMark }: Props) {
                     관련 규칙 · {m.hits.join(' · ')}
                   </div>
                 )}
-                {m.tools.length > 0 && (
-                  <ul className="space-y-0.5">
-                    {m.tools.map((t, j) => (
-                      <li key={j} className="font-mono text-[11px] leading-snug text-faint">
-                        · {t}
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                {m.tools.length > 0 && <Tools tools={m.tools} korean={korean} />}
                 {m.text ? (
-                  <AnswerVersions m={m} remote={remote} onPeek={onPeek} onDecide={onDecide} />
+                  <AnswerVersions
+                    m={m} korean={korean} remote={remote} onPeek={onPeek} onDecide={onDecide}
+                  />
                 ) : (
                   m.pending && <Blink />
                 )}
@@ -80,9 +76,40 @@ export function Stream({ messages, remote, onPeek, onDecide, onMark }: Props) {
   )
 }
 
-function AnswerVersions({ m, ...props }: { m: Msg } & Omit<AnswerProps, 'text'>) {
+/** The tool lines. Translated, because they are the agent describing itself.
+ *
+ *  What a tool *ran* never comes through here — `chat_session` already
+ *  reduced the call to its one-line description, which is the sentence the
+ *  person reads. */
+function Tools({ tools, korean }: { tools: string[]; korean: boolean }) {
+  const shown = useOverlay(tools, korean)
+  return (
+    <ul className="space-y-0.5">
+      {shown.map((t, j) => (
+        <li key={j} className="font-mono text-[11px] leading-snug text-faint">
+          · {t}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function AnswerVersions(
+  { m, korean, ...props }: { m: Msg; korean: boolean } & Omit<AnswerProps, 'text'>,
+) {
   const [simple, setSimple] = useState(false)
   const available = m.simpleText !== undefined || m.simplePending || Boolean(m.simpleError)
+  // Only the answer, and only once it is finished. The plain explanation is
+  // written in Korean by `chat-explain.md` — a different feature from this
+  // one — so translating it again would pay twice for the same words and
+  // reword what that prompt deliberately said.
+  //
+  // `!m.pending` is what keeps this from translating a partial answer on
+  // every chunk. Measured before it was added: one answer made three
+  // requests, each for a prefix that was about to be replaced. A cut
+  // translation also reads exactly like a whole one, so a half-streamed
+  // paragraph is the wrong thing to render Korean.
+  const [text] = useOverlay([m.text], korean && !m.pending)
   return (
     <div className="space-y-3">
       {available && (
@@ -103,7 +130,7 @@ function AnswerVersions({ m, ...props }: { m: Msg } & Omit<AnswerProps, 'text'>)
           {m.simplePending && <p role="status" className="text-[12px] text-muted-foreground">의미와 조건을 유지하며 쉽게 풀어 쓰는 중…</p>}
           {m.simpleError && <p role="alert" className="text-[12px] text-destructive">쉬운 설명을 만들지 못했습니다. ‘정확한 답변’에서 원문을 볼 수 있습니다. {m.simpleError}</p>}
         </div>
-      ) : <Answer text={m.text} {...props} />}
+      ) : <Answer text={text} {...props} />}
       {!simple && m.simplePending && <p role="status" className="text-[12px] text-muted-foreground">원문을 읽는 동안 쉬운 설명을 준비하고 있습니다.</p>}
     </div>
   )

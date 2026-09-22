@@ -12,6 +12,8 @@ type Props = {
   options: Options | null
   busy: boolean
   projectBusy: boolean
+  korean: boolean
+  onKorean: (on: boolean) => void
   onChange: (next: { repo: string; model: string; effort: string }) => void
 }
 
@@ -24,7 +26,9 @@ const inn = (v: string) => v || NONE
 
 type Item = { value: string; label: string; note?: string }
 
-export function Toolbar({ channel, options, busy, projectBusy, onChange }: Props) {
+export function Toolbar({
+  channel, options, busy, projectBusy, korean, onKorean, onChange,
+}: Props) {
   const pick = (patch: Partial<Channel>) =>
     onChange({
       repo: channel.repo,
@@ -77,6 +81,31 @@ export function Toolbar({ channel, options, busy, projectBusy, onChange }: Props
         disabled={busy || !options}
         onPick={(v) => pick({ effort: out(v) })}
       />
+      <div
+        role="group"
+        aria-label="답변 언어"
+        className="inline-flex gap-0.5 rounded-lg border border-border p-0.5"
+      >
+        {[
+          { on: true, label: '한국어' },
+          { on: false, label: 'English' },
+        ].map((option) => (
+          <button
+            key={option.label}
+            type="button"
+            aria-pressed={korean === option.on}
+            onClick={() => onKorean(option.on)}
+            className={
+              'rounded-md px-2 py-1 text-[11.5px] ' +
+              (korean === option.on
+                ? 'bg-secondary font-medium'
+                : 'text-muted-foreground hover:bg-secondary/60')
+            }
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
       {options?.codex_error && <p role="status" className="w-full text-xs text-destructive">{options.codex_error}</p>}
     </div>
   )

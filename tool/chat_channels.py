@@ -221,9 +221,11 @@ CHANNELS: list[Channel] = [
             "`gh pr diff <n>`; for a local branch inspect its actual diff. Follow "
             "`operator/codex-review-loop`. Findings use `[P0|P1|P2] path:line`, "
             "trigger, defect, impact, and reproducible evidence. Do not invent "
-            "findings. If none, state that there are no new findings in Korean. "
-            "Check the disposition of prior findings first. End with a justified "
-            "merge recommendation in Korean. Do not edit or merge."
+            "findings. Check the disposition of prior findings first. With "
+            "nothing wrong, and to close, use the exact fixed tokens that page "
+            "gives: they are a protocol the loop reads back, not a language "
+            "choice, so copy them rather than translating or paraphrasing. Do "
+            "not edit or merge."
         ),
     ),
     Channel(
