@@ -1,9 +1,15 @@
 """translate — Gemini translation that can never cost more than the original.
 
 Every entry point fails open. A missing key, a timeout, a malformed response,
-or a protected span that came back changed all return the input unchanged.
-Callers are hooks assembling an injection: the injection must still go out, so
-a translation failure is allowed to cost the translation and nothing else.
+a protected span that came back changed, or a deadline already spent all return
+the input unchanged. Callers are hooks assembling an injection: the injection
+must still go out, so a translation failure is allowed to cost the translation
+and nothing else.
+
+One thing that is not failure: the cache answers before the key is looked at.
+A hit needs no request and no key, so removing the key stops new translations
+without retracting the ones already made. Point `TRANSLATE_CACHE` somewhere
+disposable to get a run with neither.
 
 The protected-span machinery is the load-bearing part, not the prompt. Commands,
 paths, wiki links, front matter and glossary terms are lifted out of the text
@@ -331,13 +337,20 @@ def _translate(
         masked: list[tuple[str, list[str]]] = [protect(texts[i], keep) for i in wanted]
         seconds = TIMEOUT if deadline is None else max(0.0, deadline - time.monotonic())
         answer = _ask(instruction(direction, fixed), [m for m, _ in masked], seconds)
+        # The socket timeout bounds one read, not the whole exchange, so a
+        # response can still land after the caller's budget is gone. Cache it,
+        # because it is a valid translation the next turn can have for free,
+        # and hand back the originals so this turn still assembles in time.
+        late = deadline is not None and time.monotonic() > deadline
         if answer is not None:
             fresh: list[tuple[str, str]] = []
             for i, reply, (_, spans) in zip(wanted, answer, masked):
                 if not intact(reply, len(spans)):
                     continue  # keep the original; a mangled span is not a translation
-                out[i] = restore(reply, spans)
-                fresh.append((keys[i], out[i]))
+                done = restore(reply, spans)
+                fresh.append((keys[i], done))
+                if not late:
+                    out[i] = done
             if db is not None and fresh:
                 try:
                     db.executemany("INSERT OR REPLACE INTO shots VALUES (?, ?)", fresh)

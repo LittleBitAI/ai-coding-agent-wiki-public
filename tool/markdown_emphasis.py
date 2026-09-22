@@ -15,7 +15,14 @@ import json
 import re
 import sys
 
-WATCHED = {"Write", "Edit"}
+# Both hosts' editing tools. Claude sends `Write`/`Edit`/`MultiEdit`; Codex
+# sends `apply_patch`, sometimes as `functions.apply_patch`. Listing only
+# Claude's names is how this hook came to be installed on Codex and let every
+# Codex edit through -- wired, reported as enforced, never once firing.
+WATCHED = {"Write", "Edit", "MultiEdit", "apply_patch"}
+
+# `*** Add File: path` / `*** Update File: path` inside an apply_patch body.
+PATCH_FILE = re.compile(r"^\*\*\* (?:Add|Update) File: (.+)$", re.M)
 
 BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
 
@@ -69,7 +76,10 @@ def prose(text: str) -> list[tuple[str, bool]]:
                 start = n + 1
                 break
     for line in lines[start:]:
-        if line.lstrip().startswith("```"):
+        # Both fence spellings. Only backticks were recognised at first, so a
+        # tilde-fenced code sample counted as prose and its asterisks pushed a
+        # correct document over the limit.
+        if line.lstrip().startswith(("```", "~~~")):
             fence = not fence
             blank = True
             continue
@@ -86,8 +96,13 @@ def prose(text: str) -> list[tuple[str, bool]]:
     return out
 
 
-def findings(text: str) -> list[str]:
-    """Everything certain that is wrong with this text's emphasis."""
+def findings(text: str, whole: bool = True) -> list[str]:
+    """Everything certain that is wrong with this text's emphasis.
+
+    `whole` is False when the text is part of a document rather than all of it
+    — an `Edit` replacement or the added lines of a patch. A ratio over a
+    fragment says nothing, so density is only judged on a whole document.
+    """
 
     found = []
     rows = prose(text)
@@ -107,7 +122,7 @@ def findings(text: str) -> list[str]:
         found.append(f"- 줄바꿈을 건너뛰는 굵게가 {wrapped}곳 있다")
 
     bold = len(BOLD.findall(body))
-    if bold >= MIN_BOLD and len(lines) >= MIN_LINES:
+    if whole and bold >= MIN_BOLD and len(lines) >= MIN_LINES:
         share = bold / len(lines)
         if share > LIMIT:
             found.append(
@@ -117,17 +132,54 @@ def findings(text: str) -> list[str]:
     return found
 
 
+def targets(given: dict, tool: str) -> list[tuple[str, str, bool]]:
+    """`(path, text, whole)` for every file this call would write.
+
+    Three shapes reach here. `Write` carries a whole document, `Edit` and
+    `MultiEdit` carry replacements, and `apply_patch` carries a patch body that
+    can touch several files at once.
+    """
+
+    path = str(given.get("file_path") or "")
+    if path:
+        edits = given.get("edits")
+        if isinstance(edits, list):
+            text = "\n".join(
+                str(e.get("new_string") or "") for e in edits if isinstance(e, dict)
+            )
+        else:
+            text = str(given.get("content") or given.get("new_string") or "")
+        return [(path, text, tool == "Write")] if text.strip() else []
+
+    patch = str(given.get("input") or given.get("patch") or "")
+    if not patch:
+        return []
+    out = []
+    for match in PATCH_FILE.finditer(patch):
+        after = PATCH_FILE.search(patch, match.end())
+        chunk = patch[match.end():after.start() if after else len(patch)]
+        # Only the added lines. The context and removals are what is already
+        # there, and judging those would refuse an edit for someone else's bold.
+        added = "\n".join(
+            line[1:] for line in chunk.splitlines() if line.startswith("+")
+        )
+        if added.strip():
+            out.append((match.group(1).strip(), added, False))
+    return out
+
+
 def verdict(payload: dict) -> dict | None:
     """The hook's answer, or `None` to let the write through."""
 
-    if str(payload.get("tool_name")) not in WATCHED:
+    # Codex prefixes some tool names with `functions.`.
+    tool = str(payload.get("tool_name") or "").removeprefix("functions.")
+    if tool not in WATCHED:
         return None
-    given = payload.get("tool_input") or {}
-    path = str(given.get("file_path") or "")
-    if not path.lower().endswith(".md"):
-        return None
-    written = str(given.get("content") or given.get("new_string") or "")
-    found = findings(written)
+
+    found = []
+    for path, text, whole in targets(payload.get("tool_input") or {}, tool):
+        if path.lower().endswith(".md"):
+            found += findings(text, whole)
     if not found:
         return None
     return {

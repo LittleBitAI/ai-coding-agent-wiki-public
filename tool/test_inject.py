@@ -237,6 +237,38 @@ def test_트리거는_한국어_원문에_걸린다():
     )
 
 
+def test_저장소_페이지와_결정_요약만_번역된다():
+    """계획서가 1단계로 적어 둔 것이고, 한 번 빠뜨렸던 자리다.
+
+    `.wiki/` 페이지 본문과 결정 요약은 에이전트 입력이므로 번역한다. 허브의
+    `operator/`·`craft/` 는 2단계에서 원본을 영어로 다시 쓰므로 여기서 옮기면
+    같은 낱말 값을 두 번 내고 두 번째를 버린다.
+    """
+
+    import time
+
+    import inject
+    import translate
+
+    was = translate.translate
+    translate.translate = lambda texts, direction=None, deadline=None: [
+        "EN:" + t for t in texts
+    ]
+    try:
+        rules = [("contract", "규칙. 허브", Path("craft/x.md")),
+                 ("contract", "규칙. 저장소", Path(".wiki/y.md"))]
+        parts = ["<!-- wiki:craft/x -->\n규칙. 허브",
+                 "<!-- wiki:.wiki/y -->\n규칙. 저장소"]
+        repo = ["<!-- wiki:decisions -->\n한국어 요약"]
+        out, done = inject.localised(parts, rules, repo, time.monotonic() + 5)
+    finally:
+        translate.translate = was
+
+    assert out[0] == parts[0], "허브 페이지는 이 단계에서 안 옮긴다"
+    assert out[1].startswith("EN:"), "저장소 페이지가 번역을 안 거쳤다"
+    assert done[0].startswith("EN:"), "결정 요약이 번역을 안 거쳤다"
+
+
 def test_걸린_규칙이_없어도_영어본은_나간다():
     """`if not parts: return 0` 이 원래 여기서 발화 번역을 통째로 삼켰다.
 

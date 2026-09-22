@@ -7,6 +7,7 @@ import argparse
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
 import trajectory
@@ -16,6 +17,10 @@ from wikilib import WIKI, front_matter
 INJECTABLE = {"landmine", "contract"}
 SLOT = re.compile(r"\{([a-z][a-z0-9_]*)\}")
 HANGUL = re.compile(r"[가-힣]")
+
+# 번역 전체에 주는 시간. 훅 예산 15초 아래에 둔다 — 넘기면 번역이 아니라
+# 주입 전체를 잃는다. 못 끝낸 것은 한국어 원문으로 나간다.
+BUDGET = 8.0
 
 # 기본 예산은 없다. 걸린 규칙은 다 싣는다.
 #
@@ -293,7 +298,33 @@ def render_parts(matched: list, rule_limit: int | None, repo_limit: int | None) 
     return rules, decisions, parts, knowledge(decisions, repo_limit), trimmed
 
 
-def rendering(prompt: str) -> str:
+def localised(
+    parts: list[str], rules: list, repo: list[str], deadline: float
+) -> tuple[list[str], list[str]]:
+    """Translate the repo's own pages and its decision digest in one request.
+
+    Only `.wiki/` pages. The hub's `operator/` and `craft/` prose is rewritten
+    in English at the source in stage 2, so translating it here would pay for
+    the same words twice and throw the second copy away.
+
+    Runs after `fit` and `knowledge`, so what goes to the model is what would
+    have been injected — a page shortened to its rule line costs one line to
+    translate, not the whole page.
+    """
+
+    mine = [i for i, (_s, _b, path) in enumerate(rules)
+            if str(label(path)).startswith(".wiki/")]
+    batch = [parts[i] for i in mine] + list(repo)
+    if not batch:
+        return parts, repo
+    done = translate.translate(batch, translate.KO_EN, deadline)
+    out = list(parts)
+    for at, i in enumerate(mine):
+        out[i] = done[at]
+    return out, done[len(mine):]
+
+
+def rendering(prompt: str, deadline: float | None = None) -> str:
     """The English rendering of the utterance, or `""` if there is none.
 
     **This must run after `match_pages`, never before.** Triggers are Korean
@@ -307,7 +338,7 @@ def rendering(prompt: str) -> str:
 
     if not HANGUL.search(prompt):
         return ""
-    english = translate.ko_to_en(prompt)
+    english = translate.ko_to_en(prompt, deadline)
     if english == prompt:
         # Unchanged means the translation failed. Labelling the Korean as an
         # English rendering would be a lie the reader cannot check.
@@ -365,7 +396,12 @@ def main() -> int:
         print(f"trajectory skipped: {failed}", file=sys.stderr)
 
     # After `trajectory.record`, so the trajectory keeps the Korean original.
-    english = rendering(prompt)
+    # One deadline covers both calls, so the hook's budget bounds the pair
+    # rather than each of them separately.
+    deadline = time.monotonic() + BUDGET
+    rule_parts, repo_parts = localised(rule_parts, rules, repo_parts, deadline)
+    parts = rule_parts + repo_parts
+    english = rendering(prompt, deadline)
     if not parts and not english:
         return 0
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -114,6 +115,49 @@ def test_a_missing_key_returns_the_input_unchanged(
 ) -> None:
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     assert T.ko_to_en("훅이 조용히 죽는다") == "훅이 조용히 죽는다"
+
+
+def test_a_cached_entry_is_served_without_a_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cache answers before the key is read, and that is the contract.
+
+    The test above only holds because its cache is empty. Written as "no key
+    means the original" and nothing more, it reads as a guarantee it cannot
+    make — a run seeded by an earlier one translates with no key at all. This
+    names the real boundary so the pair cannot drift back into that claim.
+    """
+
+    monkeypatch.setattr(T, "_ask", _rewrites_all_prose)
+    assert T.ko_to_en("훅이 조용히 죽는다") == "ENGLISH ENGLISH ENGLISH"
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr(T, "_ask", lambda *_a: None)
+    assert T.ko_to_en("훅이 조용히 죽는다") == "ENGLISH ENGLISH ENGLISH"
+
+
+def test_a_response_that_lands_after_the_deadline_is_not_adopted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The socket timeout bounds one read, not the whole exchange.
+
+    Passing the remaining seconds into the request and never looking at the
+    clock again let a slow success be adopted past the caller's budget — which
+    costs the caller its whole injection, not just the translation.
+    """
+
+    def slow(_system: str, batch: list[str], _seconds: float) -> list[str]:
+        time.sleep(0.05)
+        return ["EN"] * len(batch)
+
+    monkeypatch.setattr(T, "_ask", slow)
+    assert T.translate(["훅이 조용히 죽는다"], T.KO_EN, time.monotonic() + 0.01) == [
+        "훅이 조용히 죽는다"
+    ]
+
+    # It was still cached: the work was done and the next turn should have it.
+    monkeypatch.setattr(T, "_ask", lambda *_a: None)
+    assert T.ko_to_en("훅이 조용히 죽는다") == "EN"
 
 
 def test_a_deadline_already_past_returns_the_input_unchanged() -> None:
