@@ -60,15 +60,23 @@ A file it cannot read is itself a finding: skipping one quietly would make
 
 ## What the counter counts
 
-`**bold**`, outside fences, tables, front matter and inline code. Not `__bold__`
-— counting that means implementing CommonMark's delimiter rules, because
-`foo__bar__baz` is an identifier and not emphasis, and every further clause of
-those rules is another round of review. The habit this exists to stop is
-written with asterisks. `__` is checked in the one place it cannot be the
-middle of a word: a label opening a block.
+Whatever CommonMark calls strong emphasis — `**bold**` and `__bold__` alike —
+outside fences, tables, front matter and inline code. A parser decides that,
+not a regex over the source.
 
-This is a scanner, not a Markdown parser, and the line is drawn where a scanner
-can still be right.
+Six rounds of review went into deciding it by hand, and every one of them said
+the same thing in a different shape: a tilde fence, a four-backtick fence, an
+info string, U+00A0, an escaped backtick, a code span crossing a line break,
+`** not bold **`, `foo__bar__baz`. Each fix bought exactly one shape and the
+next round found the next one. An inline lexer written a clause at a time
+inside a style hook is not a job that ends, and each wrong clause either let
+the rule be bypassed or refused correct prose.
+
+`markdown-it-py` is in `requirements-dev.txt` and is not optional. When it is
+missing the hook lets the write through and says so on screen, and `lint`
+raises it as a finding. A check that cannot run and reports nothing reads
+exactly like a check that ran and found nothing — that is how a gate stays
+green with the rule switched off.
 
 ## What neither of them refuses
 
@@ -78,6 +86,9 @@ can still be right.
   works as a label.
 - A document with fewer than four bolds or fewer than eight prose lines. A
   ratio over that little says nothing either way.
+- A bold inside a table cell — but the table has to be one. A block of
+  pipe-shaped lines with no delimiter row is a paragraph, and CommonMark
+  renders its pipes literally, so its emphasis counts like any other.
 - Files that are not `.md`. Emphasis in code comments belongs to
   [[comments-carry-why]].
 

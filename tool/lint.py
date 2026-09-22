@@ -241,8 +241,9 @@ def tracked_markdown(root: Path) -> list[str]:
     사정이고 대상 저장소의 사정이 아니라, 남의 저장소에서는 진짜 문서가 통째로
     빠졌다. `node_modules-guide.md` 처럼 이름이 앞자리만 같은 파일도 같이 빠졌다.
 
-    "이 파일이 우리 것인가" 는 git 이 이미 답을 안다. 추적되는 것만 본다 —
-    생성물과 vendor 는 어차피 무시 대상이고, 아무도 리뷰하지 않는다.
+    "이 파일이 우리 것인가" 는 git 이 이미 답을 안다. 추적되는 것과 아직
+    `git add` 안 했지만 무시 대상도 아닌 것을 본다 — 생성물과 vendor 는
+    `.gitignore` 에 있으므로 빠지고, 아무도 리뷰하지 않는다.
     """
 
     # `-c` 는 인덱스, `-o` 는 아직 `git add` 안 한 것, `--exclude-standard` 가
@@ -280,6 +281,10 @@ def loud_emphasis(wiki: Path = WIKI) -> list[tuple[str, str]]:
     import markdown_emphasis
 
     found = []
+    if markdown_emphasis.parser() is None:
+        # 검사를 못 돌린 것과 돌려서 깨끗한 것은 다른 일이다. 여기서 조용히
+        # 빈 목록을 돌려주면 게이트가 초록인 채로 이 규칙만 꺼져 있게 된다.
+        return [("강조 과다", markdown_emphasis.MISSING)]
     for name in tracked_markdown(wiki):
         path = wiki / name
         try:
@@ -453,8 +458,9 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="게이트용: 슬롯 값 차이만 종료 코드에서 제외")
     parser.add_argument(
         "--repo", action="append", type=Path, default=[],
-        help="같이 검진할 저장소. 낡은 서술과 그 저장소가 추적하는 `.md` 의 "
-             "강조를 본다. 여러 번 줄 수 있다",
+        help="같이 검진할 저장소. 낡은 서술과 그 저장소의 `.md` 강조를 본다. "
+             "무시 대상이 아닌 `.md` 는 아직 `git add` 안 한 것도 본다. "
+             "여러 번 줄 수 있다",
     )
     args = parser.parse_args()
 

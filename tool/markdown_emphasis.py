@@ -26,37 +26,54 @@ WATCHED = {"Write", "Edit", "MultiEdit", "apply_patch"}
 PATCH_FILE = re.compile(r"^\*\*\* (?:Add|Update) File: (.+)$", re.M)
 MOVE_TO = re.compile(r"^\*\*\* Move to: (.+)$", re.M)
 
-# A fenced code block per CommonMark: up to three spaces of indent, then three
-# or more backticks or tildes, then an info string.
-FENCE = re.compile(r"^ {0,3}(?P<run>`{3,}|~{3,})(?P<info>.*)$")
-
-# `**` only, on purpose. Counting `__` too meant implementing CommonMark's
-# delimiter rules, because `foo__bar__baz` is a plain identifier and not
-# emphasis — and one round of review found exactly that false positive. Every
-# further clause of those rules is another round. The habit this exists to
-# stop is written with `**`; `__` is covered where it is unambiguous, at the
-# start of a block, by LABEL below.
-BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
-
-# Inline code, lifted before counting. Asterisks inside it are characters, not
-# emphasis, and counting them refused correct prose about Markdown itself.
+# Emphasis is read off a CommonMark parse, not off regexes over the source.
 #
-# A code span opens with a run of backticks and closes with a run of the same
-# length — that is the whole rule, and writing anything less than it was wrong.
-# `` `+[^`\n]*`+ `` looked equivalent and is not: given `` ` a ` and ` b ` ``
-# it ate the opening double run plus the space plus the next single backtick,
-# and left the middle exposed. A review round found that and I rejected it,
-# because the string I reproduced with had no spaces inside the span — the one
-# shape where the loose pattern happens to be right.
-CODE = re.compile(r"(?<!`)(?P<run>`+)(?!`).+?(?<!`)(?P=run)(?!`)")
+# Six review rounds went into a hand-written scanner and every one of them
+# found the same thing: the scanner and CommonMark disagreed about some input
+# shape. A tilde fence, a four-backtick fence, an info string, U+00A0, an
+# escaped backtick, a code span crossing a line break, `** not bold **`,
+# `foo__bar__baz` — each needed one more clause of the spec, and the next
+# round found the next shape. Reimplementing an inline lexer inside a style
+# hook is not a job that ends, and every wrong clause either let the rule be
+# bypassed or refused correct prose.
+#
+# So the parser answers. `markdown-it-py` is a strict CommonMark
+# implementation, declared in requirements-dev.txt. It is not optional: a
+# missing parser is reported, never quietly skipped, because "every `.md`
+# passes" must not be able to mean "no `.md` was read".
+MISSING = (
+    "markdown-it-py 가 없어 강조 검사를 돌리지 못했다 — "
+    "`python -m pip install -r requirements-dev.txt`"
+)
 
-# A paragraph label: the line opens with a short bolded run ending in a period
+_PARSER: object | None = None
+
+
+def parser():
+    """The shared CommonMark parser, or `None` when it is not installed.
+
+    `gfm-like` rather than `commonmark`, for tables. A bolded table cell often
+    reads as a column label, so this check has always exempted tables; the bare
+    commonmark preset has no table rule and would read one as a paragraph and
+    count its cells.
+    """
+
+    global _PARSER
+    if _PARSER is None:
+        try:
+            from markdown_it import MarkdownIt
+        except Exception:
+            return None
+        _PARSER = MarkdownIt("gfm-like")
+    return _PARSER
+
+
+# A paragraph label: a short bolded run opening a block and ending in a period
 # or a colon. This repo's own pages write those plain -- `규칙.`, `어겼을 때.` --
 # and bolding them puts emphasis on the scaffolding instead of the content.
-# Both spellings are safe here and nowhere else. A label opens a block, so a
-# run of underscores at the start of a line cannot be the middle of a word —
-# the one place `__` is unambiguous without CommonMark's delimiter rules.
-LABEL = re.compile(r"^\s*(\*\*[^*\n]{1,24}[.:]\*\*|__[^_\n]{1,24}[.:]__)")
+# This matches the text the parser resolved, so the delimiters are already
+# gone and `**Rule.**` and `__Rule.__` arrive here identical.
+LABEL = re.compile(r"^[^\n]{1,24}[.:]$")
 
 # Above this share of prose lines, emphasis is no longer marking exceptions.
 # Not taken from the pages in this repo: several of them are already past it,
@@ -82,66 +99,77 @@ REASON = (
 )
 
 
-def prose(text: str) -> list[tuple[str, bool]]:
-    """`(line, opens_a_block)` for what a reader reads as prose.
+def blanked(text: str) -> str:
+    """`text` with YAML front matter replaced by empty lines.
 
-    Fences, tables and front matter are not prose. The flag matters because a
-    bold run at the start of a *wrapped* line is ordinary mid-sentence emphasis,
-    while the same run at the start of a block is a label. Without the
-    distinction the check fires on correct prose, and a hook that fires on
-    correct prose gets switched off — and then it enforces nothing.
+    Blanked rather than cut, so every remaining line keeps its number. Front
+    matter is not prose, and this repo's `triggers` hold regexes with asterisks
+    in them.
     """
 
-    out: list[tuple[str, bool]] = []
-    # The run that opened the current block, or `""` outside one.
-    fence = ""
-    blank = True
     lines = text.splitlines()
-    start = 0
     if lines and lines[0].strip() == "---":
         for n, line in enumerate(lines[1:], 1):
             if line.strip() == "---":
-                start = n + 1
+                lines[:n + 1] = [""] * (n + 1)
                 break
-    for line in lines[start:]:
-        # Both fence spellings. Only backticks were recognised at first, so a
-        # tilde-fenced code sample counted as prose and its asterisks pushed a
-        # correct document over the limit.
-        # The whole CommonMark fence rule at once, not one condition per
-        # review round. Three rounds each added a single missing clause — the
-        # marker character, then its length, then the info string — and each
-        # time the next input shape was still wrong. What ends that is writing
-        # the rule rather than the cases.
-        mark = FENCE.match(line)
-        if mark:
-            run, info = mark.group("run"), mark.group("info")
-            if fence:
-                # A close is the same character, at least as long, and carries
-                # no info string. Anything else on that line is content.
-                # `strip()` here also ate U+00A0, which CommonMark counts as
-                # content. Only ASCII space and tab are blank in a fence line.
-                if (run[0] == fence[0] and len(run) >= len(fence)
-                        and not info.strip(" \t")):
-                    fence = ""
-                    blank = True
-                    continue
-            # A backtick fence's info string may not contain a backtick, so
-            # `` `a` and `b` `` on its own line opens nothing.
-            elif not (run[0] == "`" and "`" in info):
-                fence = run
-                blank = True
-                continue
-        if fence:
+    return "\n".join(lines)
+
+
+def scan(text: str) -> tuple[dict[int, int], int, list[str], int]:
+    """`(bolds per line, bolds crossing a line break, labels, prose lines)`.
+
+    Only what a reader reads as prose gets here. A fence, a table and inline
+    code carry no emphasis tokens of their own, so nothing inside them is
+    counted without a single rule about any of them being written here.
+    """
+
+    md = parser()
+    per_line: dict[int, int] = {}
+    wrapped = 0
+    labels: list[str] = []
+    rows: set[int] = set()
+    table = 0
+    for token in md.parse(blanked(text)):
+        if token.type == "table_open":
+            table += 1
+        elif token.type == "table_close":
+            table -= 1
+        if token.type != "inline" or token.map is None or table:
             continue
-        if not line.strip():
-            blank = True
-            continue
-        if line.lstrip().startswith("|"):
-            blank = True
-            continue
-        out.append((line, blank))
-        blank = False
-    return out
+        rows.update(range(token.map[0], token.map[1]))
+        # Inline children carry no line numbers, so count them off the block's
+        # first line: a soft or hard break is exactly one line down, and a code
+        # span's own newlines are already spaces by the time it is a token.
+        line = token.map[0]
+        opens: list[list] = []
+        # True until something printable has been seen on this block, which is
+        # what makes a bold run a label rather than mid-sentence emphasis.
+        first = True
+        for child in token.children or []:
+            if child.type in ("softbreak", "hardbreak"):
+                line += 1
+                first = False
+            elif child.type == "strong_open":
+                opens.append([line, [], first])
+                first = False
+            elif child.type == "strong_close" and opens:
+                start, parts, opened = opens.pop()
+                if start == line:
+                    per_line[start] = per_line.get(start, 0) + 1
+                else:
+                    wrapped += 1
+                inner = "".join(parts)
+                if opened and LABEL.match(inner):
+                    labels.append(inner)
+                if opens:
+                    opens[-1][1].append(inner)
+            elif child.content:
+                for frame in opens:
+                    frame[1].append(child.content)
+                if child.content.strip():
+                    first = False
+    return per_line, wrapped, labels, len(rows)
 
 
 def findings(text: str, whole: bool = True) -> list[str]:
@@ -152,36 +180,34 @@ def findings(text: str, whole: bool = True) -> list[str]:
     a ratio needs the whole document, and a label needs to know a block starts
     there. On a fragment both are guesses, and a guess that refuses correct
     prose is how a hook gets switched off. Only the context-free two remain.
+
+    A missing parser is not a finding here. This runs in two places that must
+    say so differently: the hook tells the session and lets the write through,
+    `lint` fails the gate. Returning `[]` would tell both of them "clean".
     """
 
-    found = []
-    rows = prose(text)
-    # Inline code is blanked, not removed, so line numbers and the label check
-    # still see the line they were written against.
-    lines = [CODE.sub(lambda m: " " * len(m.group(0)), line) for line, _ in rows]
-    body = "\n".join(lines)
+    if parser() is None:
+        return []
 
-    labels = [
-        line.strip()[:40] for (line, opens), bare in zip(rows, lines)
-        if whole and opens and LABEL.match(bare)
-    ]
-    if labels:
+    per_line, wrapped, labels, rows = scan(text)
+
+    found = []
+    if whole and labels:
         found.append(f"- 문단 라벨을 굵게 했다 ({len(labels)}곳): {labels[0]} …")
 
-    twice = sum(1 for line in lines if len(BOLD.findall(line)) > 1)
+    twice = sum(1 for count in per_line.values() if count > 1)
     if twice:
         found.append(f"- 한 줄에 굵게가 둘 이상인 줄이 {twice}개 있다")
 
-    wrapped = sum(1 for m in BOLD.finditer(body) if "\n" in m.group(1))
     if wrapped:
         found.append(f"- 줄바꿈을 건너뛰는 굵게가 {wrapped}곳 있다")
 
-    bold = len(BOLD.findall(body))
-    if whole and bold >= MIN_BOLD and len(lines) >= MIN_LINES:
-        share = bold / len(lines)
+    bold = sum(per_line.values()) + wrapped
+    if whole and bold >= MIN_BOLD and rows >= MIN_LINES:
+        share = bold / rows
         if share > LIMIT:
             found.append(
-                f"- 산문 {len(lines)}줄에 굵게가 {bold}개다 "
+                f"- 산문 {rows}줄에 굵게가 {bold}개다 "
                 f"({share:.0%}, 상한 {LIMIT:.0%})"
             )
     return found
@@ -242,10 +268,23 @@ def verdict(payload: dict) -> dict | None:
     if tool not in WATCHED:
         return None
 
+    targets = [
+        (text, whole)
+        for path, text, whole in written(payload.get("tool_input") or {}, tool)
+        if path.lower().endswith(".md")
+    ]
+    if not targets:
+        return None
+    if parser() is None:
+        # Let the write through — a style hook must never stop the work — but
+        # say so on screen. A check that cannot run and reports nothing is
+        # indistinguishable from a check that ran and found nothing, and that
+        # is the shape this repo calls a silent gate.
+        return {"systemMessage": MISSING}
+
     found = []
-    for path, text, whole in written(payload.get("tool_input") or {}, tool):
-        if path.lower().endswith(".md"):
-            found += findings(text, whole)
+    for text, whole in targets:
+        found += findings(text, whole)
     if not found:
         return None
     return {

@@ -1,4 +1,7 @@
 -r requirements-chat.txt
 pytest>=8,<10
+# markdown_emphasis / lint.loud_emphasis 의 강조 검사가 이것으로 파싱한다.
+# 없으면 훅은 통과시키며 화면에 말하고, lint 는 발견으로 올린다.
+markdown-it-py>=2,<5
 httpx>=0.27,<1
 ruff>=0.9,<1

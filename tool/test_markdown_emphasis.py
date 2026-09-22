@@ -110,7 +110,12 @@ def test_fences_and_tables_are_not_counted() -> None:
     """Asterisks inside a fence and bold in a table cell do not move the ratio."""
 
     fence = "```\n" + "\n".join("**x**" for _ in range(40)) + "\n```"
-    rows = "\n".join("| **a** | **b** |" for _ in range(40))
+    # A real table, delimiter row and all. Without that row GFM reads these
+    # lines as an ordinary paragraph — the reader sees literal pipes — and the
+    # bolds in it are bolds. The line-based check this replaced skipped any
+    # line opening with `|`, so a table-shaped paragraph hid its emphasis.
+    rows = "| a | b |\n| --- | --- |\n" + "\n".join(
+        "| **a** | **b** |" for _ in range(40))
     plain = "\n\n".join(f"{n} 번째 문단." for n in range(12))
     assert blocked(f"# 제목\n\n{plain}\n\n{fence}\n\n{rows}\n") is None
 
@@ -410,3 +415,60 @@ def test_it_runs_as_a_process_and_answers_on_stdout() -> None:
     answer = json.loads(done.stdout)
     assert answer["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert "문단 라벨" in answer["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_the_parser_answers_not_a_regex() -> None:
+    """Six review rounds' worth of input shapes, each against CommonMark.
+
+    Every one of these was a round of review: the hand-written scanner said one
+    thing and CommonMark said another, and each fix bought exactly one shape.
+    They are here together because the point is that a parse settles all of
+    them at once — if this check ever goes back to matching source text, this
+    is the test that goes red.
+    """
+
+    from markdown_it import MarkdownIt
+
+    strict = MarkdownIt("commonmark")
+    for source in [
+        "\\`**a**\\` and \\`**b**\\`",          # escaped backticks are text
+        "`**a\nb**`",                            # a code span crosses lines
+        "** not bold ** and ** also not **",    # flanking rules
+        "text __one__ and __two__",             # `__` is emphasis here
+        "foo__bar__baz and qux__quux__corge",   # and not here
+        "`` ` a ` and ` b ` ``",                # runs match by length
+        "text **one** and **two**",             # the shape being enforced
+    ]:
+        bold = strict.render(source).count("<strong>")
+        twice = any("둘 이상" in line for line in findings(source, whole=False))
+        assert twice == (bold > 1), source
+
+
+def test_a_missing_parser_is_said_out_loud(monkeypatch, tmp_path) -> None:
+    """Not running is reported by both callers, and never as "clean".
+
+    A check that cannot run and says nothing reads exactly like a check that
+    ran and found nothing. That is how a gate stays green with the rule off.
+    """
+
+    import lint
+    import markdown_emphasis
+
+    monkeypatch.setattr(markdown_emphasis, "parser", lambda: None)
+
+    loud = "text **one** and **two**\n"
+    assert findings(loud, whole=False) == []
+
+    # The hook lets the write through -- it never stops the work -- and says so.
+    answer = verdict({
+        "tool_name": "Write",
+        "tool_input": {"file_path": "docs/x.md", "content": loud},
+    })
+    assert answer is not None
+    assert "permissionDecision" not in json.dumps(answer)
+    assert "markdown-it-py" in answer["systemMessage"]
+
+    # lint fails the gate instead.
+    (tmp_path / "x.md").write_text(loud, encoding="utf-8")
+    found = lint.loud_emphasis(tmp_path)
+    assert len(found) == 1 and "markdown-it-py" in found[0][1]
