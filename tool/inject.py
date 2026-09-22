@@ -116,7 +116,15 @@ def digest(body: str, path: Path) -> str:
     """
 
     title = next((x[2:].strip() for x in body.splitlines() if x.startswith("# ")), path.stem)
-    why = next((x[3:].strip() for x in body.splitlines() if x.startswith("왜.")), "")
+    # Both spellings, for the same reason `shrink` takes both. The body is
+    # translated before this runs, so a parser that only knows `왜.` finds
+    # nothing and the agent gets a decision title with no reason under it —
+    # which reads as a decision made for no reason.
+    why = next(
+        (x.split(".", 1)[1].strip() for x in body.splitlines()
+         if x.startswith(("왜.", "Why."))),
+        "",
+    )
     head = re.split(r"(?<=다\.)\s", why, maxsplit=1)[0][:180] if why else ""
     return f"- {title}\n  {head}\n  Full record: `.wiki/decisions/{path.stem}.md`"
 

@@ -41,6 +41,7 @@ def check(
         from apply import wiring_drift
         findings += wiring_drift(wiki)
     findings += fragile_io(wiki)
+    findings += loud_emphasis(wiki)
     findings += missing_hook_guards(wiki, loaded)
 
     # --- 1. 끊어진 링크
@@ -227,6 +228,31 @@ def missing_hook_guards(wiki: Path, loaded: dict) -> list[tuple[str, str]]:
     return found
 
 
+def loud_emphasis(wiki: Path = WIKI) -> list[tuple[str, str]]:
+    """강조가 소음이 된 `.md`. 훅이 못 보는 자리를 여기서 본다.
+
+    `markdown_emphasis` 훅은 쓰기 **전에** 불리므로 `Edit` 이나 패치가 만들
+    문서를 못 본다. 그것을 예측하려 한 판이 리뷰 세 라운드 동안 입력 모양마다
+    구멍을 냈다 — 여러 hunk, `replace_all`, 백틱 네 개. 예측을 지우고 여기서
+    실제 파일을 읽는다. 읽을 것이 이미 디스크에 있으므로 틀릴 자리가 없다.
+    """
+
+    import markdown_emphasis
+
+    found = []
+    for path in sorted(wiki.rglob("*.md")):
+        name = path.relative_to(wiki).as_posix()
+        if name.startswith(("node_modules", "web/", "artifacts/", "raw/", ".venv")):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        for line in markdown_emphasis.findings(text):
+            found.append(("강조 과다", f"`{name}`: {line.lstrip('- ')}"))
+    return found
+
+
 def fragile_io(wiki: Path = WIKI) -> list[tuple[str, str]]:
     """stdin과 운영 도구의 텍스트 자식 출력. 테스트의 엄격한 디코딩은 유지한다."""
     found = []
@@ -409,7 +435,7 @@ def main() -> int:
     for kind, message in findings:
         kinds.setdefault(kind, []).append(message)
     for kind in (
-        "훅 배선 드리프트", "훅 가드 누락", "페이지 형식 오류", "인코딩 미고정", "끊어진 링크", "근거 없는 landmine", "낡은 서술",
+        "훅 배선 드리프트", "훅 가드 누락", "페이지 형식 오류", "인코딩 미고정", "강조 과다", "끊어진 링크", "근거 없는 landmine", "낡은 서술",
         "모순(슬롯)", "고아 페이지", "빠진 연결", "끊긴 줄바꿈",
     ):
         if kind not in kinds:

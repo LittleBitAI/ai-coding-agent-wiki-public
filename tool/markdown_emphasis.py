@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import re
 import sys
-from pathlib import Path
 
 # Both hosts' editing tools. Claude sends `Write`/`Edit`/`MultiEdit`; Codex
 # sends `apply_patch`, sometimes as `functions.apply_patch`. Listing only
@@ -85,9 +84,16 @@ def prose(text: str) -> list[tuple[str, bool]]:
         # Both fence spellings. Only backticks were recognised at first, so a
         # tilde-fenced code sample counted as prose and its asterisks pushed a
         # correct document over the limit.
-        mark = next((m for m in ("```", "~~~") if line.lstrip().startswith(m)), "")
-        if mark and (not fence or fence == mark):
-            fence = "" if fence else mark
+        bare = line.lstrip()
+        run = next((c * len(bare) for c in "`~"
+                    if bare.startswith(c * 3)), "")
+        run = run[:len(bare) - len(bare.lstrip(bare[0]))] if run else ""
+        if run and (not fence or (run[0] == fence[0] and len(run) >= len(fence))):
+            # Markdown closes a fence only with the same character, at least as
+            # long as the one that opened it. Three backticks inside a
+            # four-backtick block are content, and reading them as a close made
+            # every asterisk after that count as prose.
+            fence = "" if fence else run
             blank = True
             continue
         if fence:
@@ -144,90 +150,51 @@ def findings(text: str, whole: bool = True) -> list[str]:
     return found
 
 
-def contents(root: Path, path: str) -> str | None:
-    try:
-        return (root / path).read_text(encoding="utf-8")
-    except Exception:
-        return None
+def written(given: dict, tool: str) -> list[tuple[str, str, bool]]:
+    """`(path, text, whole)` for what this call puts on the page.
 
+    It does not predict the resulting document, and that is the point. Three
+    review rounds found faces of trying to: a tool name, a rename header, a
+    dropped context line, a second hunk, `replace_all`, a four-backtick fence.
+    Each fix reimplemented a little more of `git apply` and a Markdown lexer
+    inside a style hook, and the next round found the next input shape.
 
-def patched(root: Path, patch: str) -> list[tuple[str, str, bool]]:
-    """Each file an apply_patch would leave behind, as it would then read."""
-
-    out: list[tuple[str, str, bool]] = []
-    for match in PATCH_FILE.finditer(patch):
-        after = PATCH_FILE.search(patch, match.end())
-        body = patch[match.end():after.start() if after else len(patch)]
-
-        # The destination, not the source. A patch may rename as it edits, and
-        # reading only the source header lets `notes.txt -> docs/x.md` slip past
-        # a check that keys on the extension.
-        moved = MOVE_TO.search(body)
-        path = (moved.group(1) if moved else match.group(1)).strip()
-
-        lines = [
-            line for line in body.splitlines()
-            if not line.startswith(("***", "@@"))
-        ]
-        added = "\n".join(line[1:] for line in lines if line.startswith("+"))
-
-        if match.group(0).startswith("*** Add File:"):
-            out.append((path, added, True))
-            continue
-
-        # Apply it. The context lines locate the hunk, so the result is the
-        # real document rather than a guess assembled from the diff.
-        before = "\n".join(line[1:] for line in lines if line[:1] in ("-", " "))
-        want = "\n".join(line[1:] for line in lines if line[:1] in ("+", " "))
-        now = contents(root, match.group(1).strip())
-        if now is not None and before and before in now:
-            out.append((path, now.replace(before, want, 1), True))
-        elif added.strip():
-            out.append((path, added, False))
-    return out
-
-
-def resulting(given: dict, tool: str, root: Path) -> list[tuple[str, str, bool]]:
-    """`(path, text, whole)` — the document each write would leave behind.
-
-    Judging the result rather than the change is what keeps this from guessing
-    document structure out of a diff. Two review rounds found faces of that one
-    mistake: a wrapped line read as a paragraph label, a fence marker that was
-    a string inside another fence, a destination sitting in a header nobody
-    parsed. They were not three bugs. They were one wrong choice of place.
-
-    `whole` is False only where the result could not be built — a file that is
-    not there, a hunk whose context does not match. Then the fragment is judged
-    for what holds without surrounding text, and nothing else.
+    So this claims only what it can see. `Write` carries a whole document and
+    is judged as one. Everything else is a fragment and gets the two checks
+    that hold on any line by itself. What a fragment could push over the limit
+    is caught by `lint.loud_emphasis`, which reads the real file afterwards and
+    has nothing to guess about.
     """
 
     path = str(given.get("file_path") or "")
-    if not path:
-        return patched(root, str(given.get("input") or given.get("patch") or ""))
+    if path:
+        edits = given.get("edits")
+        pairs = (
+            [e for e in edits if isinstance(e, dict)] if isinstance(edits, list)
+            else [given]
+        )
+        text = "\n".join(str(e.get("new_string") or "") for e in pairs)
+        if tool == "Write":
+            text = str(given.get("content") or "")
+        return [(path, text, tool == "Write")] if text.strip() else []
 
-    if tool == "Write":
-        text = str(given.get("content") or "")
-        return [(path, text, True)] if text.strip() else []
-
-    edits = given.get("edits")
-    pairs = (
-        [e for e in edits if isinstance(e, dict)] if isinstance(edits, list)
-        else [{"old_string": given.get("old_string"),
-               "new_string": given.get("new_string")}]
-    )
-    now = contents(root, path)
-    if now is not None:
-        for edit in pairs:
-            old = str(edit.get("old_string") or "")
-            if not old or old not in now:
-                now = None
-                break
-            now = now.replace(old, str(edit.get("new_string") or ""), 1)
-        if now is not None:
-            return [(path, now, True)]
-
-    fragment = "\n".join(str(e.get("new_string") or "") for e in pairs)
-    return [(path, fragment, False)] if fragment.strip() else []
+    patch = str(given.get("input") or given.get("patch") or "")
+    out = []
+    for match in PATCH_FILE.finditer(patch):
+        after = PATCH_FILE.search(patch, match.end())
+        body = patch[match.end():after.start() if after else len(patch)]
+        # The destination, not the source. A patch may rename as it edits, and
+        # reading only the source header lets `notes.txt -> docs/x.md` past a
+        # check that keys on the extension.
+        moved = MOVE_TO.search(body)
+        added = "\n".join(
+            line[1:] for line in body.splitlines() if line.startswith("+")
+        )
+        if added.strip():
+            whole = match.group(0).startswith("*** Add File:")
+            out.append(((moved.group(1) if moved else match.group(1)).strip(),
+                        added, whole))
+    return out
 
 
 def verdict(payload: dict) -> dict | None:
@@ -238,9 +205,8 @@ def verdict(payload: dict) -> dict | None:
     if tool not in WATCHED:
         return None
 
-    root = Path(str(payload.get("cwd") or Path.cwd()))
     found = []
-    for path, text, whole in resulting(payload.get("tool_input") or {}, tool, root):
+    for path, text, whole in written(payload.get("tool_input") or {}, tool):
         if path.lower().endswith(".md"):
             found += findings(text, whole)
     if not found:

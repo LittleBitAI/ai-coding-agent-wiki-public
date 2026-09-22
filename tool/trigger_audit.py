@@ -72,7 +72,8 @@ def main() -> int:
     print(f"대상: {project} · 어댑터: {adapter}\n" if project else
           "공유 규칙만 측정. 프로젝트 지식은 **미측정** (--project 필요).\n")
     print("현재 페이지로 재생한 결과다. 과거 실행이나 자동 오탐 판정이 아니다.\n")
-    print("글자 수는 trajectory.cost와 같다. 헤더·출처·구분자는 제외한다.")
+    print("글자 수는 번역 전 크기다. 헤더·출처·구분자는 제외한다.")
+    print("번역이 성공한 턴의 trajectory.cost 는 이보다 크다 — 두 수를 그대로 비교하지 마라.")
     print("repo는 결정 블록이다. .wiki/*.md 규칙은 rule, SessionStart 목록은 별도다.\n")
     print("| 축 | 축약 전 최대 | 실제 블록 최대 | p95 | 중앙 | 예산 |")
     print("| --- | ---: | ---: | ---: | ---: | --- |")

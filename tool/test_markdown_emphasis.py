@@ -132,7 +132,7 @@ def test_a_fragment_is_judged_only_on_what_needs_no_context() -> None:
     assert why and "한 줄에 굵게가 둘 이상" in why
 
 
-def test_a_patch_is_judged_at_its_destination(tmp_path: Path) -> None:
+def test_a_patch_is_judged_at_its_destination() -> None:
     """`*** Move to:` decides where the result lands, so it decides the check.
 
     Reading only the source header let a patch rename `notes.txt` into a `.md`
@@ -140,54 +140,48 @@ def test_a_patch_is_judged_at_its_destination(tmp_path: Path) -> None:
     came from rather than where it was going.
     """
 
-    (tmp_path / "notes.txt").write_text("old\n", encoding="utf-8")
     patch = (
         "*** Begin Patch\n*** Update File: notes.txt\n*** Move to: docs/x.md\n@@\n"
-        "-old\n+**규칙.** 나쁜 라벨\n*** End Patch"
+        "-old\n+여기 **이것**과 **저것**이 있다.\n*** End Patch"
     )
-    answer = verdict(
-        {"tool_name": "apply_patch", "cwd": str(tmp_path), "tool_input": {"input": patch}}
-    )
-    assert answer, "목적지가 .md 인데 통과했다"
+    assert verdict({"tool_name": "apply_patch", "tool_input": {"input": patch}})
 
 
-def test_a_patch_keeps_the_context_that_says_where_a_block_begins(
+def test_a_new_file_in_a_patch_is_a_whole_document() -> None:
+    """`Add File` carries everything the file will hold, so it is judged whole."""
+
+    patch = (
+        "*** Begin Patch\n*** Add File: docs/n.md\n@@\n"
+        "+# 제목\n+\n+**규칙.** 라벨을 굵게\n*** End Patch"
+    )
+    answer = verdict({"tool_name": "apply_patch", "tool_input": {"input": patch}})
+    assert answer and "문단 라벨" in answer["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_what_a_fragment_could_push_over_the_limit_is_left_to_lint(
     tmp_path: Path,
 ) -> None:
-    """Taking only the added lines threw away what made the label check right.
+    """The hook stopped predicting what an edit would leave behind.
 
-    The same false positive already fixed for `Write` came back through the
-    patch path: the first added line looked like it opened a block because the
-    line it continues was never in view.
+    Three rounds of review found faces of that prediction — a second hunk,
+    `replace_all`, a four-backtick fence — each fix reimplementing more of
+    `git apply` inside a style hook. `lint.loud_emphasis` reads the file
+    afterwards instead, where there is nothing to guess about. The hook letting
+    a fragment through is only defensible because that check exists, so this
+    test holds both halves at once.
     """
 
-    (tmp_path / "docs").mkdir()
-    (tmp_path / "docs" / "x.md").write_text("# t\n\n앞줄이 이어지고\n", encoding="utf-8")
-    patch = (
-        "*** Begin Patch\n*** Update File: docs/x.md\n@@\n"
-        " 앞줄이 이어지고\n"
-        "+**죽지도 않고 아무 일도 안 한다.** 트레이스백조차 없다.\n"
-        "*** End Patch"
-    )
-    answer = verdict(
-        {"tool_name": "apply_patch", "cwd": str(tmp_path), "tool_input": {"input": patch}}
-    )
-    assert answer is None, "이어진 줄의 강조를 문단 라벨로 읽었다"
+    import lint
 
+    noisy = "# 제목\n\n" + "\n\n".join(f"{n} 번째 **강조**." for n in range(9)) + "\n"
+    assert blocked(noisy, tool="Edit") is None, "조각으로는 비율을 안 본다"
 
-def test_an_edit_is_judged_on_the_document_it_leaves(tmp_path: Path) -> None:
-    (tmp_path / "docs").mkdir()
-    (tmp_path / "docs" / "e.md").write_text("# t\n\n평문 줄\n", encoding="utf-8")
-    answer = verdict({
-        "tool_name": "Edit",
-        "cwd": str(tmp_path),
-        "tool_input": {
-            "file_path": "docs/e.md",
-            "old_string": "평문 줄",
-            "new_string": "**규칙.** 라벨",
-        },
-    })
-    assert answer and "문단 라벨" in answer["hookSpecificOutput"]["permissionDecisionReason"]
+    (tmp_path / "loud.md").write_text(noisy, encoding="utf-8")
+    (tmp_path / "quiet.md").write_text(CLEAN, encoding="utf-8")
+    found = lint.loud_emphasis(tmp_path)
+
+    assert [where for _kind, where in found if "loud.md" in where], "lint 가 못 잡았다"
+    assert not [where for _kind, where in found if "quiet.md" in where]
 
 
 def test_a_fence_marker_inside_another_fence_does_not_close_it() -> None:
