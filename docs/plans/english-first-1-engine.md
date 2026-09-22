@@ -1,13 +1,13 @@
 # 1단계 — 번역 엔진과 입력 경로
 
-**목표.** 사람이 한국어로 쓰면 에이전트가 영어로 받는다. 사용자 화면은 아직
+목표. 사람이 한국어로 쓰면 에이전트가 영어로 받는다. 사용자 화면은 아직
 아무것도 안 바뀐다 — 화면을 바꾸는 것은 2단계의 미러가 생긴 뒤다.
 
 ## 만들 것
 
 ### `tool/translate.py`
 
-Gemini REST 를 `urllib` 로 직접 친다. **새 의존성 0개** — `requirements-chat.txt`
+Gemini REST 를 `urllib` 로 직접 친다. 새 의존성 0개다 — `requirements-chat.txt`
 는 `fastapi`·`uvicorn`·`PyYAML` 뿐이고 여기 더할 이유가 없다.
 
 ```

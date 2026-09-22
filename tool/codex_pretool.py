@@ -10,6 +10,7 @@ def verdict(payload: dict) -> dict | None:
     from apply import declared
     import edit_as_diff
     import korean_progress
+    import markdown_emphasis
 
     given = payload.get("tool_input") or {}
     tool = payload.get("tool_name")
@@ -35,7 +36,9 @@ def verdict(payload: dict) -> dict | None:
             "Edit", "apply_patch"
         ).replace("Write", "apply_patch")
         return answer
-    return korean_progress.verdict(payload)
+    # Codex 는 PreToolUse 훅 하나만 걸리므로 여기서 이어 붙인다. Claude 쪽은
+    # `apply.py` 가 페이지의 `enforce.pretooluse` 에서 각각 따로 만든다.
+    return markdown_emphasis.verdict(payload) or korean_progress.verdict(payload)
 
 
 if __name__ == "__main__":

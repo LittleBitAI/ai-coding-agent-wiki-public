@@ -28,6 +28,7 @@ python tool/intersect.py raw/census-*.jsonl
 | 페이지 | 등급 |
 | --- | --- |
 | [비동기 결과는 곧바로 받는다](craft/pick-up-async-results.md) | `landmine` |
+| [강조는 희소해야 강조다](craft/emphasis-is-scarce.md) | `landmine` |
 | [시킨 것을 끝까지 한다](craft/do-the-whole-instruction.md) | `contract` |
 | [되돌릴 수 없는 git 은 차단한다](craft/destructive-git-guards.md) | `contract` |
 | [훅은 세션을 멈추지 않는다](craft/hooks-fail-open.md) | `landmine` |

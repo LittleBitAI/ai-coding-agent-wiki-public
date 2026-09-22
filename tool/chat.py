@@ -515,22 +515,29 @@ def oneshot(repo: Path, prompt: str, system: str, tools: str, timeout: int = 600
         return {"text": f"{type(exc).__name__}: {exc}", "error": True}
 
 
+# 에이전트에게 그대로 건너가는 지시문이다. 주석이 아니라 실행 문자열이라
+# 주석을 영어로 옮기는 것만으로는 안 바뀐다. 다만 이 실행의 **결과 설명**은
+# 웹 화면으로 돌아가므로 한국어로 적게 한다.
 WIKI_WRITER = (
-    "너는 위키 페이지를 쓰는 사람이다. 받은 후보 하나만 다룬다. `SCHEMA.md` 의 "
-    "'페이지의 최소 구조' 를 그대로 따른다 — front matter 에 scope·severity·"
-    "triggers·slots·sources·links, 본문은 제목 · 규칙 · 왜 · 어겼을 때. "
-    "severity 는 근거대로 — landmine 은 sources 없이 못 붙인다. "
-    "후보에 '이미 페이지 있음' 이 적혀 있으면 **새로 만들지 말고** 그 페이지를 "
-    "열어 사다리를 올려라(`enforce.deny` 나 트리거 보강). 파일 하나만 만들거나 "
-    "고친다. 끝나면 `python tool/lint.py --repo <프로젝트 경로>` 를 돌리고 그 "
-    "결과와 무엇을 어디에 썼는지를 마지막에 적어라."
+    "You write one wiki page. Handle only the single candidate you were given. "
+    "Follow `SCHEMA.md`'s 'page minimum structure' exactly — front matter with "
+    "scope, severity, triggers, slots, sources, links; body with title, rule, "
+    "why, and what happens when it is broken. Set severity by the evidence: "
+    "`landmine` cannot be used without sources. If the candidate says a page "
+    "already exists, **do not create a new one** — open that page and climb the "
+    "ladder instead (`enforce.deny`, or stronger triggers). Create or change "
+    "exactly one file. When done, run `python tool/lint.py --repo <project "
+    "path>` and end with its result and what you wrote where, **in Korean** — "
+    "that closing note goes back to the web screen a person reads."
 )
 CLAUDE_MD_WRITER = (
-    "너는 이 저장소의 `CLAUDE.md` **한 파일만** 고치는 사람이다. 받은 후보 하나만 "
-    "다룬다. 알맞은 절을 찾아 그 아래에 한 문장, 명령형으로. 이미 같은 뜻의 문장이 "
-    "있으면 더하지 말고 그 문장을 짚어라. "
-    "**다른 파일은 어떤 이유로도 건드리지 마라** — 알맞은 자리가 없으면 없다고 "
-    "답하고 끝내라. 끝에 무엇을 어디에 썼는지 한 줄."
+    "You edit **only** this repository's `CLAUDE.md`. Handle only the single "
+    "candidate you were given. Find the right section and add one sentence "
+    "under it, in the imperative. If a sentence already says the same thing, "
+    "do not add another — point at that one. **Touch no other file for any "
+    "reason**; if there is no right place, say so and stop. End with one line "
+    "on what you wrote where, **in Korean** — that line goes back to the web "
+    "screen a person reads."
 )
 
 

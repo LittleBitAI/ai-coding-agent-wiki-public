@@ -1,41 +1,43 @@
-실행기의 WIKI_ROOT·SLACK_CHANNEL 환경 변수로 아래 자리표시자를 채운다. 대상 프로젝트는 현재 작업 폴더다. 값이 없으면 보내지 말고 종료한다.
+Fill the placeholders below from the runner's WIKI_ROOT and SLACK_CHANNEL environment variables. The target project is the current working directory. If a value is missing, send nothing and exit.
 
-평일 아침 진척도 브리핑을 Slack 에 올린다.
+Post the weekday morning progress briefing to Slack.
 
-## 1. 사실을 받는다 — 지어내지 말고 이 출력을 쓴다
+**Write the Slack post itself in Korean.** These instructions are English because you read them; the post is read by the team.
+
+## 1. Take the facts — use this output, do not invent them
 
 ```
 python "<WIKI_ROOT>/tool/slack_brief.py" --project .
 ```
 
-브랜치 · 머지된 것과 그 permalink · 최근 결정 · 계획 페이지의 낡음이 나온다.
-커밋을 다시 세지 마라. 이 출력이 그 답이다.
+It gives the branch, what was merged with its permalinks, recent decisions, and
+whether the plan page is stale. Do not recount the commits. This is that answer.
 
-## 2. 다음에 무엇을 하는지는 계획 페이지가 든다
+## 2. What comes next is held by the plan page
 
-`.wiki/plan-active.md` 를 읽는다. **표를 다시 계산하지 말고 읽어라.** 거기
-"열린 것" 표의 맨 위 한둘이 다음이다.
+Read `.wiki/plan-active.md`. **Read the table, do not recompute it.** The top
+one or two rows of its open table are what comes next.
 
-## 3. 합쳐서 올린다
+## 3. Put it together and post it
 
-- 채널: `<SLACK_CHANNEL>`
-- 도구: `slack_send_message`
-- 1번 출력을 그대로 쓰고, 맨 아래에 `*다음*` 두 줄을 더한다.
+- Channel: `<SLACK_CHANNEL>`
+- Tool: `slack_send_message`
+- Use step 1's output as is, and add two `*다음*` lines at the bottom.
 
-## 4. 같은 본문을 채널에도 넣는다
+## 4. Put the same body into the channel record
 
-Slack 에 올린 본문을 그대로 파일 하나에 쓰고(`.tmp/brief.md` 같은 임시 경로), 이 명령으로 `#progress` 채널 기록에 넣는다. 서버가 안 떠 있어도 된다.
+Write the body you posted to Slack into one file (a temporary path such as `.tmp/brief.md`), and put it into the `#progress` channel record with this command. The server does not have to be running.
 
 ```
 python "<WIKI_ROOT>/tool/chat_post.py" --project . --channel progress --source standup --file <그 파일>
 ```
 
-## 규칙
+## Rules
 
-- **1번 출력의 링크를 지우지 마라.** 원본을 대조할 자리이고, 그게 이 브리핑의
-  값어치 전부다.
-- 계획 페이지가 낡았다고 나오면 **그것을 맨 위에** 쓴다. 낡은 표를 근거로 낸
-  다음 계획은 틀린 계획이다.
-- 파일은 아무것도 고치지 않는다. 브리핑만 올린다.
-- 머지가 0건이면 0건이라고 쓴다. 채울 것을 찾지 마라.
-- 열다섯 줄 안쪽.
+- **Do not strip the links out of step 1's output.** They are where the
+  original can be checked against, and that is this briefing's whole value.
+- If the plan page reports as stale, say so **at the very top**. A next step
+  argued from a stale table is the wrong next step.
+- Change no files. Only post the briefing.
+- If nothing was merged, say nothing was merged. Do not go looking for filler.
+- Fifteen lines or fewer.
