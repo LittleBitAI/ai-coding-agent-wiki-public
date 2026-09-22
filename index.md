@@ -35,6 +35,7 @@ python tool/intersect.py raw/census-*.jsonl
 | [주석은 이유를 들고 이력은 안 든다](craft/comments-carry-why.md) | `contract` |
 | [오류 이름은 증상이 난 자리를 가리킨다](craft/error-names-the-symptom-site.md) | `landmine` |
 | [나가는 것은 출구 하나에서 막는다](craft/gate-the-exit-not-the-callers.md) | `landmine` |
+| [재는 자리는 값이 마지막으로 바뀐 뒤다](craft/measure-after-the-last-change.md) | `landmine` |
 | [화면은 목적을 따르고 손질은 순서를 따른다](craft/screen-follows-the-purpose.md) | `contract` |
 
 census 는 작동하는 규칙을 못

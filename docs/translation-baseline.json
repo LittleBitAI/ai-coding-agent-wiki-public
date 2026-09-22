@@ -5,6 +5,11 @@
       "output": "craft/emphasis-is-scarce.md",
       "kind": "new",
       "why": "처음부터 영어로 썼다. 대조할 한국어 원문이 없다."
+    },
+    {
+      "output": "craft/measure-after-the-last-change.md",
+      "kind": "new",
+      "why": "2단계에서 영어로 옮긴다. 이 PR 에서 한국어로 새로 썼으므로 대조할 이전 판이 없다."
     }
   ]
 }
