@@ -88,12 +88,39 @@ def test_a_cell_opened_in_a_subfolder_still_belongs_to_the_repo(tmp_path):
     """Cells get opened in `web/` all the time. `==` reports no session at all."""
 
     repo = (tmp_path / "repo").resolve()
+    (repo / "web" / "src").mkdir(parents=True)
 
     assert S.under(repo, repo)
     assert S.under(repo / "web" / "src", repo)
     assert not S.under(repo.parent, repo)
     assert not S.under((tmp_path / "other").resolve(), repo)
     assert not S.under(None, repo)
+
+
+def test_a_clone_inside_a_checkout_is_a_different_checkout(tmp_path):
+    """Containment is not identity. A vendored clone is its own repository.
+
+    A cell opened in `outer/vendor/inner` was counted as `outer`'s, so a
+    mirror pointed at `outer` showed a conversation about `inner` — the same
+    misattribution this whole change exists to stop, one directory deeper.
+    """
+
+    outer = (tmp_path / "outer").resolve()
+    inner = outer / "vendor" / "inner"
+    (inner / "src").mkdir(parents=True)
+    (outer / ".git").mkdir()
+    (inner / ".git").mkdir()
+
+    assert not S.under(inner, outer)            # the clone itself
+    assert not S.under(inner / "src", outer)    # and anything inside it
+    assert S.under(inner, inner)
+    assert S.under(inner / "src", inner)
+    # A worktree's `.git` is a file, not a directory, and is just as much a
+    # boundary — asking `is_dir()` here would have walked straight past it.
+    parked = outer / "parked"
+    parked.mkdir()
+    (parked / ".git").write_text("gitdir: ../.git/worktrees/parked\n", encoding="utf-8")
+    assert not S.under(parked, outer)
 
 
 def test_two_worktrees_sharing_a_leaf_name_do_not_share_a_log(tmp_path):
@@ -183,6 +210,34 @@ def test_two_checkouts_that_flatten_to_one_directory_are_kept_apart(tmp_path):
         assert {row["path"] for row in S.checkouts("claude")} == {
             str(hyphen.resolve()), str(nested.resolve()),
         }
+
+
+def test_the_newest_log_answers_without_reading_the_whole_directory(tmp_path):
+    """`claude_session` runs once a second for as long as the mirror is open.
+
+    Sorting the directory by ownership read all 81 heads in the largest one
+    here to learn what the first read already said — 24ms of every second.
+    """
+
+    root = tmp_path / "projects"
+    project = tmp_path / "repo"
+    project.mkdir()
+    shared = S.folder(project, root)
+    for n in range(6):
+        log = claude_log(shared, f"{n}.jsonl", project)
+        os.utime(log, (0, 1_000 + n))
+    wanted = shared / "5.jsonl"
+
+    opened = []
+    real = S.claude_cwd
+
+    def counted(path):
+        opened.append(path)
+        return real(path)
+
+    with patch.object(S, "SESSIONS", root), patch.object(S, "claude_cwd", counted):
+        assert S.claude_session(project) == wanted
+    assert opened == [wanted]   # the newest one, and nothing else
 
 
 def test_a_candidate_proves_itself_with_any_log_not_only_the_newest(tmp_path):

@@ -280,10 +280,24 @@ def claude_cwd(path: Path) -> Path | None:
 
 
 def claude_session(project: Path) -> Path | None:
-    """The newest log that belongs to this checkout, not the newest in the folder."""
+    """The newest log that belongs to this checkout, not the newest in the folder.
 
-    found = logs(project)
-    return found[-1] if found else None
+    Newest first and stop at the first one that belongs, rather than sorting
+    the whole directory by ownership. The mirror asks this once a second for
+    as long as it is open, and the newest file is the answer almost every
+    time; reading all 81 heads in the largest directory here cost 24ms of
+    every second to learn what the first read already said.
+    """
+
+    directory = folder(project)
+    if not directory.is_dir():
+        return None
+    here = project.resolve()
+    for path in sorted(directory.glob("*.jsonl"),
+                       key=lambda p: p.stat().st_mtime, reverse=True):
+        if under(claude_cwd(path), here):
+            return path
+    return None
 
 
 # --------------------------------------------------------------------------
@@ -350,9 +364,35 @@ def under(cwd: Path | None, project: Path) -> bool:
     Not `==`. A cell is routinely opened in a subdirectory — `web/`, a package
     folder — and an exact match silently reports "no session" for a repo whose
     mirror is sitting right there.
+
+    Not containment either. A clone inside a checkout is a different checkout:
+    a vendored dependency, a worktree parked in a subdirectory. `C:\\outer` and
+    `C:\\outer\\vendor\\inner` are two repositories, and counting the inner
+    cell's session as the outer one's shows a mirror pointed at `outer` a
+    conversation about `inner`.
+
+    So the walk stops at the first repository boundary. A worktree's `.git` is
+    a file rather than a directory, which is why this asks whether the name
+    exists at all.
+
+    ponytail: a boundary can only be seen while the directory is there. A
+    checkout that has been deleted leaves nothing behind saying it was one,
+    and `checkouts` folds such a path onto the living checkout above it.
+    Telling those apart needs something the host does not record.
     """
 
-    return cwd is not None and (cwd == project or project in cwd.parents)
+    if cwd is None:
+        return False
+    if cwd == project:
+        return True
+    if project not in cwd.parents:
+        return False
+    step = cwd
+    while step != project:
+        if (step / ".git").exists():
+            return False
+        step = step.parent
+    return True
 
 
 def codex_session(project: Path) -> Path | None:
