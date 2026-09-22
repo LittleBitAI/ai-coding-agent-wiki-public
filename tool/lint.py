@@ -42,6 +42,11 @@ def check(
         findings += wiring_drift(wiki)
     findings += fragile_io(wiki)
     findings += loud_emphasis(wiki)
+    # `--repo` 로 준 저장소도 본다. `repo_lint` 가 같은 검사를 들지만 그것은
+    # 대상 저장소에서 따로 도는 것이라, 허브에서 한 번에 훑을 때 안 보면
+    # "여기서는 전부 봤다" 가 거짓이 된다.
+    for repo in repos:
+        findings += loud_emphasis(repo)
     findings += missing_hook_guards(wiki, loaded)
 
     # --- 1. 끊어진 링크
@@ -246,7 +251,10 @@ def loud_emphasis(wiki: Path = WIKI) -> list[tuple[str, str]]:
             continue
         try:
             text = path.read_text(encoding="utf-8")
-        except Exception:
+        except Exception as error:
+            # 못 읽은 파일을 건너뛰면 "전부 봤다" 가 거짓이 된다. 이 저장소는
+            # UTF-8 로 적는 것이 규칙이므로, 못 읽은 것 자체가 발견이다.
+            found.append(("강조 과다", f"`{name}`: 읽지 못했다 ({type(error).__name__})"))
             continue
         for line in markdown_emphasis.findings(text):
             found.append(("강조 과다", f"`{name}`: {line.lstrip('- ')}"))

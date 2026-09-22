@@ -184,17 +184,69 @@ def test_what_a_fragment_could_push_over_the_limit_is_left_to_lint(
     assert not [where for _kind, where in found if "quiet.md" in where]
 
 
-def test_a_fence_marker_inside_another_fence_does_not_close_it() -> None:
-    """One boolean for both spellings let a `~~~` written inside a backtick
-    block end it, and every asterisk after that counted as prose."""
+def test_the_check_reaches_a_target_repository(tmp_path: Path) -> None:
+    """허브에만 걸어 두면 설치된 저장소에서는 아무도 안 본다.
 
-    fence = chr(96) * 3
-    text = (
-        "# title\n\n" + fence + "text\n~~~\n"
-        + "\n".join(["**code**"] * 4 + ["plain"] * 4)
-        + "\n" + fence + "\n"
+    훅이 조각을 통과시키는 것은 그 뒤에 파일을 읽는 검사가 있기 때문인데,
+    그 검사가 허브에서만 돌면 대상 저장소에서는 강제가 통째로 비어 있다.
+    `repo_lint` 가 `sync` 의 Stop 에서 도는 자리라 거기 있어야 한다.
+    """
+
+    import lint
+    import repo_lint
+
+    (tmp_path / ".wiki").mkdir()
+    (tmp_path / "x.md").write_text(
+        "# 제목\n\n" + "\n\n".join(f"{n} 번째 **강조**." for n in range(9)) + "\n",
+        encoding="utf-8",
     )
-    assert findings(text) == []
+
+    assert [k for k, _ in repo_lint.check(tmp_path) if k == "강조 과다"]
+    assert [k for k, _ in lint.check(lint.WIKI, None, [tmp_path])[2] if k == "강조 과다"]
+
+
+def test_a_markdown_file_that_cannot_be_read_is_a_finding(tmp_path: Path) -> None:
+    """건너뛰면 "전부 봤다" 가 거짓인 채로 게이트가 초록이 된다."""
+
+    import lint
+
+    (tmp_path / "bad.md").write_bytes(b"\xff\xfe**x**")
+    found = lint.loud_emphasis(tmp_path)
+
+    assert [where for _kind, where in found if "읽지 못했다" in where]
+
+
+def test_only_a_real_closing_fence_closes_a_fence() -> None:
+    """Three rounds each added one missing clause and each time the next input
+    shape was still wrong: the marker character, then its length, then the info
+    string. These are the whole CommonMark rule, held at once.
+    """
+
+    tick = chr(96)
+    inside = "\n".join(["**code**"] * 4 + ["plain"] * 4)
+    for name, text in {
+        "info string on the closing line": (
+            f"# t\n{tick * 3}text\n{tick * 3}python\n{inside}\n{tick * 3}\n"
+        ),
+        "a tilde run inside a backtick block": (
+            f"# t\n\n{tick * 3}text\n~~~\n{inside}\n{tick * 3}\n"
+        ),
+        "a shorter run inside a longer one": (
+            f"# t\n\n{tick * 4}\n{tick * 3}\n{inside}\n{tick * 4}\n"
+        ),
+        "a tilde fence": f"# t\n\n~~~\n{inside}\n~~~\n",
+        "a fence indented three spaces": (
+            f"# t\n\n   {tick * 3}\n{inside}\n   {tick * 3}\n"
+        ),
+    }.items():
+        assert findings(text) == [], name
+
+
+def test_prose_outside_a_fence_is_still_counted() -> None:
+    """The fence rule must not become a way to stop counting anything."""
+
+    loud = "# t\n\n" + "\n\n".join(f"{n} 번째 **강조**." for n in range(9)) + "\n"
+    assert findings(loud), "펜스 밖이 안 세어졌다"
 
 
 def test_files_that_are_not_markdown_pass() -> None:

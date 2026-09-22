@@ -26,6 +26,10 @@ WATCHED = {"Write", "Edit", "MultiEdit", "apply_patch"}
 PATCH_FILE = re.compile(r"^\*\*\* (?:Add|Update) File: (.+)$", re.M)
 MOVE_TO = re.compile(r"^\*\*\* Move to: (.+)$", re.M)
 
+# A fenced code block per CommonMark: up to three spaces of indent, then three
+# or more backticks or tildes, then an info string.
+FENCE = re.compile(r"^ {0,3}(?P<run>`{3,}|~{3,})(?P<info>.*)$")
+
 BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
 
 # A paragraph label: the line opens with a short bolded run ending in a period
@@ -68,9 +72,7 @@ def prose(text: str) -> list[tuple[str, bool]]:
     """
 
     out: list[tuple[str, bool]] = []
-    # Which marker opened the fence, not merely that one is open. A single
-    # boolean let a `~~~` written inside a backtick block close it, and every
-    # asterisk after that counted as prose.
+    # The run that opened the current block, or `""` outside one.
     fence = ""
     blank = True
     lines = text.splitlines()
@@ -84,18 +86,27 @@ def prose(text: str) -> list[tuple[str, bool]]:
         # Both fence spellings. Only backticks were recognised at first, so a
         # tilde-fenced code sample counted as prose and its asterisks pushed a
         # correct document over the limit.
-        bare = line.lstrip()
-        run = next((c * len(bare) for c in "`~"
-                    if bare.startswith(c * 3)), "")
-        run = run[:len(bare) - len(bare.lstrip(bare[0]))] if run else ""
-        if run and (not fence or (run[0] == fence[0] and len(run) >= len(fence))):
-            # Markdown closes a fence only with the same character, at least as
-            # long as the one that opened it. Three backticks inside a
-            # four-backtick block are content, and reading them as a close made
-            # every asterisk after that count as prose.
-            fence = "" if fence else run
-            blank = True
-            continue
+        # The whole CommonMark fence rule at once, not one condition per
+        # review round. Three rounds each added a single missing clause — the
+        # marker character, then its length, then the info string — and each
+        # time the next input shape was still wrong. What ends that is writing
+        # the rule rather than the cases.
+        mark = FENCE.match(line)
+        if mark:
+            run, info = mark.group("run"), mark.group("info")
+            if fence:
+                # A close is the same character, at least as long, and carries
+                # no info string. Anything else on that line is content.
+                if run[0] == fence[0] and len(run) >= len(fence) and not info.strip():
+                    fence = ""
+                    blank = True
+                    continue
+            # A backtick fence's info string may not contain a backtick, so
+            # `` `a` and `b` `` on its own line opens nothing.
+            elif not (run[0] == "`" and "`" in info):
+                fence = run
+                blank = True
+                continue
         if fence:
             continue
         if not line.strip():
