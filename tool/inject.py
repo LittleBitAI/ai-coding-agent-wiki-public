@@ -449,6 +449,18 @@ def main() -> int:
         return 0
 
     blocks = []
+    # First, and not last. Carried even when no page matched — the utterance
+    # is agent input on every turn, and tying it to a trigger would drop it on
+    # exactly the turns no rule covers.
+    #
+    # Position is the other half of that. A host persists an injection past
+    # about 12 KB and hands the session a 2 KB preview instead; the rules
+    # alone reach 12,205 characters on an ordinary turn, so anything after
+    # them is cut. Measured on 2026-09-22 in a web chat session: the rules
+    # arrived, this block did not, and nothing said so. It is a few hundred
+    # characters and it is what the person came to check, so it goes first.
+    if english:
+        blocks.append(english)
     if parts:
         blocks.append(
             "Below is what the wiki loaded for this utterance. A rule marks a "
@@ -458,11 +470,6 @@ def main() -> int:
             + "\n\n"
             + "\n\n---\n\n".join(parts)
         )
-    # Carried even when no page matched. The utterance is agent input on every
-    # turn, and tying it to a trigger would drop it on exactly the turns that
-    # no rule covers.
-    if english:
-        blocks.append(english)
     body = "\n\n---\n\n".join(blocks)
     # This one line lands on the person's screen as written. The rule inverted
     # and this stayed Korean, because the reader here is the person.

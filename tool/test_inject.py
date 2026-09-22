@@ -41,7 +41,33 @@ triggers: ["{word}"]
 """
 
 
-def build(decisions: int, rule_budget: int | None, repo_budget: int | None) -> str:
+def seed_cache(path: Path, korean: str, english: str) -> None:
+    """Put one translation in a throwaway cache, so the hook needs no network.
+
+    The cache is consulted before the key is, so a seeded row makes the real
+    `translate` path produce a rendering with no request. That is the only way
+    to measure what the hook assembles *with* a rendering without either
+    calling Gemini or faking the function the hook does not import from here.
+    """
+
+    import sqlite3
+
+    import translate
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _keep, _fixed, version = translate.glossary()
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE IF NOT EXISTS shots (k TEXT PRIMARY KEY, v TEXT)")
+    db.execute(
+        "INSERT OR REPLACE INTO shots (k, v) VALUES (?, ?)",
+        (translate._key(translate.KO_EN, version, korean), english),
+    )
+    db.commit()
+    db.close()
+
+
+def build(decisions: int, rule_budget: int | None, repo_budget: int | None,
+          rendered: str | None = None) -> str:
     """Stand up a throwaway wiki and repository, run the hook once, return what
     it injected."""
 
@@ -64,6 +90,9 @@ def build(decisions: int, rule_budget: int | None, repo_budget: int | None) -> s
         (out / f"2026-01-{n + 1:02d}-{n}.md").write_text(
             DECISION.format(word=WORD, n=n, why="왜" * 60), encoding="utf-8"
         )
+
+    if rendered:
+        seed_cache(root / "translate-cache.sqlite3", f"{WORD} 를 쓴다", rendered)
 
     done = subprocess.run(
         [sys.executable, str(HERE / "inject.py"), "--adapter", "x",
@@ -306,6 +335,26 @@ def test_the_budget_and_the_record_measure_the_translated_length():
         translate.translate = was
 
     assert len(parts[0]) > 100, "렌더링이 번역된 본문을 안 썼다"
+
+
+def test_the_rendering_comes_before_the_rules():
+    """A host persists a large injection and hands the session a preview.
+
+    The rules alone reach 12,205 characters on an ordinary turn, past the
+    roughly 12 KB where that happens, so whatever sits after them is cut.
+    Measured on 2026-09-22 in a web chat session on both hosts: the rules
+    arrived, the rendering did not, and nothing reported it. Position is the
+    fix — this block is a few hundred characters and it is the one the person
+    reads to check what was understood.
+    """
+
+    context = build(decisions=1, rule_budget=None, repo_budget=None,
+                    rendered="writes the budget test word")
+
+    assert "wiki:english-rendering" in context, context[:200]
+    assert context.index("wiki:english-rendering") < context.index("Below is what the wiki"), (
+        "the rendering has to precede the rules, or a preview drops it"
+    )
 
 
 def test_the_rendering_goes_out_even_when_no_rule_matched():
