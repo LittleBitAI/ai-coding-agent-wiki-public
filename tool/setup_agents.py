@@ -234,6 +234,11 @@ def install_global(choice, check, projects, trust):
     if missing:
         raise ValueError(f"{sys.executable} 이 {', '.join(missing)} 를 못 읽습니다. "
                          "requirements-hooks.txt 를 설치한 Python으로 다시 실행하세요.")
+    # Before anything is written. A mistyped path would otherwise be created
+    # and handed twelve deny rules that bind whatever lands there later.
+    for project in projects:
+        if not (project / ".wiki/adapter.toml").is_file():
+            raise ValueError(f"위키가 붙은 checkout이 아닙니다 (.wiki/adapter.toml 없음): {project}")
     agents = tuple(SETTINGS) if choice == "both" else (choice,)
     broken = []
     for agent in agents:

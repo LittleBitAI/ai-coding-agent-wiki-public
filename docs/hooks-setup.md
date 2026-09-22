@@ -97,11 +97,13 @@ python tool/setup_agents.py --global --trust-codex --project "../example-project
 ```
 
 The pages' deny rules are not written into the user-level `permissions.deny`
-— there they would bind every repository on the machine. Each checkout named
-with `--project` gets them in its own `permissions.deny`, where the host
-enforces them even if a hook fails. Everywhere else attached, a worktree
-included, `tool/deny.py` judges them behind the dispatcher; that one passes
-when the hook fails or times out.
+— there they would bind every repository on the machine. Name every attached
+repository's main clone with `--project`: it gets them in its own
+`permissions.deny`, where the host enforces them even if a hook fails. The
+health check (`tool/repo_lint.py`, run by the Stop hook) reports an attached
+clone that has not been named yet. Worktrees are the one place left to
+`tool/deny.py` behind the dispatcher, which passes when the hook fails or
+times out — the price of a worktree needing no install at all.
 
 `--project` (repeatable) removes that checkout's old per-project hooks, which
 would otherwise keep the job — the dispatcher steps aside for them.

@@ -136,9 +136,25 @@ def test_check_fails_when_a_named_project_gets_nothing():
     if not shutil.which("claude"):
         return
     with tempfile.TemporaryDirectory() as raw:
+        # An adapter but no repository: attached on paper, nothing to inject.
+        (Path(raw) / ".wiki").mkdir()
+        (Path(raw) / ".wiki/adapter.toml").write_text('agents=["claude"]\n', encoding="utf-8")
         done = subprocess.run(
             [sys.executable, str(HERE / "setup_agents.py"), "--global", "--check",
              "--agent", "claude", "--project", raw],
             capture_output=True, text=True, encoding="utf-8", timeout=120,
         )
         assert done.returncode == 2 and "주입하지 않았다" in done.stderr, done.stdout + done.stderr
+
+
+def test_a_mistyped_project_is_refused_before_anything_is_written():
+    with tempfile.TemporaryDirectory() as raw:
+        typo = Path(raw) / "typo"
+        done = subprocess.run(
+            [sys.executable, str(HERE / "setup_agents.py"), "--global",
+             "--agent", "claude", "--project", str(typo)],
+            capture_output=True, text=True, encoding="utf-8", timeout=120,
+        )
+        assert done.returncode == 2 and "adapter.toml" in done.stderr, done.stdout + done.stderr
+        assert not typo.exists(), "없는 경로를 만들어 차단 규칙을 남기지 않는다"
+        assert not any(Path(os.environ["WIKI_USER_HOME"]).glob(".claude/settings.json")), "사용자 설정도 안 건드린다"
