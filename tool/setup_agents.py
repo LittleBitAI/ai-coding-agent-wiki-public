@@ -1,7 +1,7 @@
 """Install a checkout's rules through `apply.py`.
 
-Downloads nothing and changes no host's trust setting — both are the person's
-decision, made in the CLI's own interface. Everything printed is read by
+Downloads nothing and changes no host's trust setting unless the person asks
+with `--trust-codex`, and then only for this wiki's own dispatcher. Everything printed is read by
 whoever is running the install, so those strings are Korean.
 """
 
@@ -180,19 +180,175 @@ def install(project, choice, check, allow_dirty=False):
           "이 명령은 실제 자동 이벤트·선택형 질문 UI를 검증하지 않습니다. 새 세션에서 별도로 확인하세요.")
 
 
+def codex_hooks(home, trust):
+    """This wiki's hooks as one Codex home sees them, trusted first if asked.
+
+    Codex runs a hook only while `hooks.state` holds the hash of exactly that
+    entry, and any change to the entry — a timeout, a path — drops it back to
+    "modified". Trust is still the person's call: only `--trust-codex` writes
+    it, only for commands that run this checkout's `hook.py`, and through
+    Codex's own config writer rather than by editing its file.
+    """
+    from apply import installed
+    from chat_local import CodexServer
+
+    # Exactly what this install wrote, event and command both. Anything that
+    # merely names or resembles the dispatcher is somebody else's code, and
+    # trusting it would vouch for that code.
+    mine = {(event[0].lower() + event[1:], command)
+            for event, command in installed("codex", sys.executable)}
+    with CodexServer(env={"CODEX_HOME": str(home)}, cwd=WIKI) as server:
+        listed = lambda: [h for d in server.request("hooks/list", {"cwds": [str(WIKI)]})["data"]  # noqa: E731
+                          for h in d["hooks"] if (h["eventName"], h["command"]) in mine]
+        hooks = listed()
+        pending = {h["key"]: {"trusted_hash": h["currentHash"]} for h in hooks if h["trustStatus"] != "trusted"}
+        if trust and pending:
+            server.request("config/batchWrite", {"edits": [
+                {"keyPath": "hooks.state", "value": pending, "mergeStrategy": "upsert"}]})
+            hooks = listed()
+    return hooks
+
+
+def probe(project):
+    """Run the SessionStart hook the way a host would, from `project`."""
+    done = subprocess.run(
+        [sys.executable, str(WIKI / "tool/hook.py"), "claude", "session_state.py"],
+        input=json.dumps({"cwd": str(project)}), capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=60,
+    )
+    return "additionalContext" in done.stdout
+
+
+def install_global(choice, check, projects, trust):
+    """Attach the wiki once, at each host's user level.
+
+    Every checkout on the machine — a worktree Orca opens after an update
+    included — reads these files, and `hook.py` works out the project per
+    call. The commands carry nothing that changes with the project, so the
+    entries, and with them Codex's trust hashes, stay put.
+    """
+    if sys.version_info < (3, 11):
+        raise ValueError("Python 3.11 이상이 필요합니다. 새 Python으로 이 명령을 다시 실행하세요.")
+    for path in (WIKI, Path(sys.executable)):
+        if any(char in str(path) for char in ('"', '$', '`', '\n', '\r')):
+            raise ValueError(f"셸 인용이 지원하지 않는 문자가 경로에 있습니다: {path}")
+    os.environ["WIKI_ROOT"] = str(WIKI)
+    from apply import configure, installed, keep_denies, read_json, restricted, unusable, unwire, user_files
+
+    missing = unusable(sys.executable)
+    if missing:
+        raise ValueError(f"{sys.executable} 이 {', '.join(missing)} 를 못 읽습니다. "
+                         "requirements-hooks.txt 를 설치한 Python으로 다시 실행하세요.")
+    # Everything that can refuse, refuses before the first write. A mistyped
+    # path would otherwise be created and handed twelve deny rules, and a
+    # missing second CLI would leave the first host installed alone.
+    from sessions import checkout
+
+    for project in projects:
+        top = checkout(project)[0]
+        if not top or os.path.normcase(top) != os.path.normcase(project) or not (project / ".wiki/adapter.toml").is_file():
+            raise ValueError(f"위키가 붙은 git checkout 의 루트가 아닙니다 (.wiki/adapter.toml 필요): {project}")
+    agents = tuple(SETTINGS) if choice == "both" else (choice,)
+    for agent in agents:
+        binary = shutil.which(agent)
+        if not binary:
+            raise ValueError(f"{agent} CLI를 PATH에서 찾지 못했습니다.")
+        print(run([binary, "--version"], WIKI).strip())
+        run([*hook_shell(agent), "exit 0"], WIKI)
+    # Every file is read and every change worked out before the first write:
+    # a broken JSON in the last file must not leave the first one rewritten.
+    plan = []
+    refusals = []
+    for agent in agents:
+        for path in user_files(agent):
+            settings = read_json(path)
+            plan.append((path, settings, configure(settings, None, None, sys.executable, agent)))
+            refusals += [f"{path}: {r}" for r in restricted(settings)]
+        for project in projects:
+            path = project / SETTINGS[agent]
+            if not path.exists() and agent != "claude":
+                continue
+            settings = read_json(path)
+            # The named checkout keeps its deny rules where the host enforces
+            # them, so a failed hook does not let `git reset --hard` through.
+            changes = unwire(settings) + (keep_denies(settings) if agent == "claude" else [])
+            plan.append((path, settings, changes))
+    # Claude honours `disableAllHooks` from any layer, and nothing here can
+    # tell from the files alone that the host will skip what they wire.
+    if "claude" in agents:
+        for path in [*user_files("claude"), *(p / ".claude" / name for p in projects
+                                              for name in ("settings.json", "settings.local.json"))]:
+            if read_json(path).get("disableAllHooks"):
+                refusals.append(f"{path}: disableAllHooks 가 켜져 있다")
+    if refusals:
+        raise ValueError("설치로 고칠 수 없는 설정이 있습니다. 직접 검토하세요:\n- " + "\n- ".join(refusals))
+
+    broken = []
+    for path, settings, changes in plan:
+        if check:
+            broken += [f"{path}: {change}" for change in changes]
+        elif changes:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
+                            encoding="utf-8", newline="\n")
+            print(f"썼다: {path} ({len(changes)}건)")
+        else:
+            print(f"그대로: {path}")
+    for agent in agents:
+        if agent == "codex":
+            for path in user_files("codex"):
+                hooks = codex_hooks(path.parent, trust and not check)
+                untrusted = [h["key"] for h in hooks if h["trustStatus"] != "trusted"]
+                # What Codex actually loaded, against what the file holds. Zero
+                # untrusted out of zero loaded is Codex not reading the file —
+                # hooks switched off, or a home it does not start from.
+                expected = installed("codex", sys.executable)
+                wired = sum((event, h.get("command", "")) in expected
+                            for event, gs in read_json(path).get("hooks", {}).items()
+                            for g in gs for h in g.get("hooks", []))
+                print(f"Codex {path.parent}: 위키 훅 {len(hooks)}/{wired}개 읽힘, 미신뢰 {len(untrusted)}개")
+                if len(hooks) < wired:
+                    broken.append(f"{path.parent}: Codex가 위키 훅 {wired}개 중 {len(hooks)}개만 읽는다. "
+                                  "그 홈의 config.toml [features] hooks 를 확인하세요")
+                if untrusted:
+                    broken.append(f"{path.parent}: Codex 신뢰 대기 {len(untrusted)}개. "
+                                  "`--trust-codex` 로 신뢰하거나 Codex /hooks 에서 검토하세요")
+    # A named project has to come out injected. The current folder is only
+    # looked at: it may be a checkout that never attached the wiki.
+    for project in projects or [Path.cwd()]:
+        injected = probe(project)
+        print(f"SessionStart 시험 — {project}: {'주입됨' if injected else '주입 없음'}")
+        if projects and not injected:
+            broken.append(f"{project}: SessionStart 가 아무것도 주입하지 않았다 "
+                          "(.wiki/adapter.toml 이 없거나 훅이 실패했다)")
+    if broken:
+        raise ValueError("전역 배선이 어긋났습니다:\n- " + "\n- ".join(broken))
+    print("전역 배선 검사 완료. CLI를 업데이트한 뒤에는 `--global --check` 만 다시 돌리세요.")
+
+
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--project", type=Path, default=Path.cwd(), help="대상 checkout (기본: 현재 폴더)")
+    parser.add_argument("--project", type=Path, action="append",
+                        help="대상 checkout (기본: 현재 폴더). --global 에서는 옛 프로젝트 훅을 걷을 곳, 여러 번 줄 수 있다")
     parser.add_argument("--agent", choices=("claude", "codex", "both"), default="both")
     parser.add_argument("--check", action="store_true", help="설정 쓰기 없이 선택한 호스트의 배선만 검사")
+    parser.add_argument("--global", dest="everywhere", action="store_true",
+                        help="사용자 단위 설정에 한 번 건다. 모든 checkout과 작업트리가 읽는다")
+    parser.add_argument("--trust-codex", action="store_true",
+                        help="--global 과 함께. 이 위키의 hook.py 를 부르는 Codex 훅만 신뢰로 기록한다")
     parser.add_argument("--allow-dirty-wiki", action="store_true", help="미커밋 위키 개발 검증 전용. SHA 일치는 여전히 필수")
     args = parser.parse_args()
+    projects = [p.expanduser().resolve() for p in args.project or []]
     try:
-        install(args.project.expanduser().resolve(), args.agent, args.check, args.allow_dirty_wiki)
+        if args.everywhere:
+            install_global(args.agent, args.check, projects, args.trust_codex)
+            return 0
+        install((projects or [Path.cwd().resolve()])[0], args.agent, args.check, args.allow_dirty_wiki)
         return 0
-    except (OSError, ValueError, TypeError, AttributeError, KeyError, subprocess.TimeoutExpired) as error:
+    except (OSError, ValueError, TypeError, AttributeError, KeyError, RuntimeError,
+            subprocess.TimeoutExpired) as error:
         print(f"설치 실패: {error}", file=sys.stderr)
         return 2
 

@@ -79,6 +79,12 @@ python tool/setup_agents.py --project "D:/팀 작업/checkout" --agent both
 python tool/setup_agents.py --project "D:/팀 작업/checkout" --agent both --check
 ```
 
+On a machine that opens worktrees or updates its CLIs often, install at the
+user level instead: `python tool/setup_agents.py --global --trust-codex`.
+Every checkout, worktrees included, then reads the same hooks, and
+`--global --check` after an update tells you whether they still run. See
+[docs/hooks-setup.md](docs/hooks-setup.md).
+
 The target holds `.wiki/wiki-revision` (the 40-character commit SHA of the
 wiki to use) and `.wiki/adapter.toml`. Set `agents = ["claude", "codex"]` and
 the `[slots]` values `review_dir`, `gate_cmd`, `live_cmd`, `server_stop` and

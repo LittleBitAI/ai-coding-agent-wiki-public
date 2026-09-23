@@ -6,6 +6,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import type { Channel, Options } from '@/lib/api'
+import { useState } from 'react'
 
 type Props = {
   channel: Channel
@@ -22,6 +23,7 @@ type Props = {
 // an empty string on the way to the server. Pressing the selected item again
 // deselects it and yields `null`, which counts as "default" too.
 const NONE = '__default__'
+const CUSTOM = '__custom__'
 const out = (v: string | null) => (!v || v === NONE ? '' : v)
 const inn = (v: string) => v || NONE
 
@@ -44,9 +46,16 @@ export function Toolbar({
       label: p.id,
       note: p.wired ? '위키 붙음' : undefined,
     })) ?? []
-  const models: Item[] =
-    options?.models.map((m) => ({ value: inn(m.id), label: m.label, note: m.note })) ??
-    []
+  // The list only holds aliases, which already follow the newest model. A
+  // name that is not on it — a new family, a pinned version — is typed in,
+  // and shown as an item of its own once chosen.
+  const [typing, setTyping] = useState(false)
+  const listed = options?.models.some((m) => m.id === channel.model) ?? true
+  const models: Item[] = [
+    ...(options?.models.map((m) => ({ value: inn(m.id), label: m.label, note: m.note })) ?? []),
+    ...(!listed ? [{ value: channel.model, label: channel.model, note: '직접 입력' }] : []),
+    ...(options ? [{ value: CUSTOM, label: '직접 입력…' }] : []),
+  ]
   const efforts: Item[] =
     (options?.models.find((m) => m.id === channel.model)?.efforts ?? options?.efforts)?.map((e) => ({ value: inn(e.id), label: e.label, note: e.note })) ??
     []
@@ -69,11 +78,28 @@ export function Toolbar({
         value={inn(channel.model)}
         disabled={busy || !options}
         onPick={(v) => {
+          if (v === CUSTOM) return setTyping(true)
           const model = out(v)
           const supported = options?.models.find((m) => m.id === model)?.efforts ?? options?.efforts
           pick({ model, effort: supported?.some((e) => e.id === channel.effort) ? channel.effort : '' })
         }}
       />
+      {typing && (
+        <input
+          autoFocus
+          aria-label="모델 이름"
+          placeholder="claude-opus-5-5"
+          className="w-40 rounded-md border border-border bg-card px-2 py-1 font-mono text-[12px]"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setTyping(false)
+            if (e.key !== 'Enter') return
+            const model = e.currentTarget.value.trim()
+            setTyping(false)
+            if (model) pick({ model, effort: '' })
+          }}
+          onBlur={() => setTyping(false)}
+        />
+      )}
       <Picker
         label="추론 강도"
         width="w-36"

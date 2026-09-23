@@ -245,6 +245,12 @@ def configure(cid: str, body: Config) -> dict:
         except Exception as exc:
             raise HTTPException(503, f"Codex 모델 목록 확인 실패: {exc}") from exc
     selected = next((m for m in models if m["id"] == body.model), None)
+    if selected is None and not body.model.startswith("codex") and chat_channels.CLAUDE_MODEL.fullmatch(body.model):
+        # Typed in by hand. The list only holds aliases, which already follow
+        # the latest model; a name that is not on it — a new family, a pinned
+        # version — goes to `--model` as it is and the CLI says whether it
+        # knows it.
+        selected = {"id": body.model}
     if selected is None:
         raise HTTPException(400, "지원하지 않는 모델 선택")
     efforts = {e["id"] for e in selected.get("efforts", chat_channels.EFFORTS)}

@@ -205,7 +205,7 @@ def retitled(listing: str, rows: list[str], at: list[int]) -> str:
     return "\n".join(lines).replace("(저장소 루트)", "(repo root)")
 
 
-def report(repo: Path) -> str:
+def report(repo: Path, checkout: Path | None = None) -> str:
     """The session-start context. English, because it is agent input.
 
     Korean stays the authoritative copy in this repository — commit messages
@@ -243,7 +243,7 @@ def report(repo: Path) -> str:
         "Where this repository stands right now. The wiki puts this in once, "
         "at session start.",
         "",
-        f"## Branch\n\n{branch_line(repo, english=True)}",
+        f"## Branch\n\n{branch_line(checkout or repo, english=True)}",
     ]
     if body:
         lines.append("\n## In progress\n")
@@ -294,6 +294,9 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description="세션 시작에 현재 상태를 넣는다")
     parser.add_argument("--project", type=Path, required=True)
+    # A worktree of the project. Its branch is the one the session is on;
+    # the knowledge still comes from `--project`.
+    parser.add_argument("--checkout", type=Path, default=None)
     args = parser.parse_args()
 
     try:
@@ -304,7 +307,7 @@ def main() -> int:
     repo = args.project.expanduser()
     if not (repo / ".git").exists():
         return 0
-    text = report(repo)
+    text = report(repo, args.checkout)
     if text.count("\n") < 4:
         return 0  # one branch line on its own is not worth injecting
 
