@@ -96,6 +96,37 @@ def shrink(body: str, path: Path, severity: str, hard: bool) -> str:
     return head + (f"\n\n{rule}" if rule else "") + f"\n\nFull page: `{label(path)}.md`"
 
 
+def rule_index(rules: list) -> str:
+    """One sentence per loaded rule, meant to sit near the top of the injection.
+
+    A host that receives more than about 12 KB stores the injection in a file
+    and gives the session only the first 2 KB of it. With a repository's
+    28,000-character `plan-active` in the mix, that happens on most turns.
+    Measured on 2026-09-23 in ai-nara-shop: two turns sent 42 KB and 35 KB,
+    and the session's preview ended partway through the first rule. Every
+    rule after that one was never shown to the session. The full pages still
+    go out below this index. The index only makes sure each rule's opening
+    sentence is inside the part the host keeps.
+
+    A page with no `Rule.` paragraph, which is repository knowledge, is left
+    out of the index.
+    """
+
+    lines = []
+    for _s, body, path in rules:
+        para = re.search(r"^(?:Rule|규칙)\.\s+(.+?)(?:\n\s*\n|\Z)", body, re.M | re.S)
+        if para:
+            first = re.split(r"(?<=\.)\s", " ".join(para.group(1).split()), maxsplit=1)[0]
+            lines.append(f"- `{label(path)}` — {first}")
+    if not lines:
+        return ""
+    return (
+        "<!-- wiki:rule-index -->\n"
+        "Rules loaded this turn, one sentence each. The full pages follow below.\n"
+        + "\n".join(lines)
+    )
+
+
 def fit(parts: list[str], rules: list, limit: int | None) -> tuple[list[str], int]:
     """Trim to the budget. Over it, still nothing is thrown away.
 
@@ -456,17 +487,23 @@ def main() -> int:
     if not parts and not english:
         return 0
 
+    # The rule index goes first. It is a few hundred characters, and the
+    # rendering in front of it could reach 4,000 (`MAX_RENDERED`) and push
+    # every rule sentence out of the 2 KB preview. See `rule_index`.
     blocks = []
-    # First, and not last. Carried even when no page matched — the utterance
-    # is agent input on every turn, and tying it to a trigger would drop it on
-    # exactly the turns no rule covers.
+    index = rule_index(rules)
+    if index:
+        blocks.append(index)
+    # Before the pages, not after them. The rendering is carried even when no
+    # page matched: the utterance is agent input on every turn, and tying it
+    # to a trigger would drop it on exactly the turns no rule covers.
     #
     # Position is the other half of that. A host persists an injection past
     # about 12 KB and hands the session a 2 KB preview instead; the rules
     # alone reach 12,205 characters on an ordinary turn, so anything after
     # them is cut. Measured on 2026-09-22 in a web chat session: the rules
-    # arrived, this block did not, and nothing said so. It is a few hundred
-    # characters and it is what the person came to check, so it goes first.
+    # arrived, this block did not, and nothing said so. Behind the short
+    # index it still starts inside the preview.
     if english:
         blocks.append(english)
     if parts:
