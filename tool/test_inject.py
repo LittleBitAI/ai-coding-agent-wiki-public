@@ -383,7 +383,12 @@ def test_every_rule_sentence_lands_inside_the_2kb_preview():
 
     assert "wiki:rule-index" in head, head
     assert "`craft/big` — " + "버" * 120 in head, head
-    assert context.index("wiki:english-rendering") < context.index("wiki:rule-index")
+    # A long utterance renders to more than the preview by itself. The index
+    # has to come before it, or no rule sentence survives the cut.
+    context = build(decisions=0, rule_budget=None, repo_budget=None,
+                    rendered="long rendering " * 200)
+    assert "`craft/big` — " in context[:2000], context[:2000]
+    assert context.index("wiki:english-rendering") < context.index("Below is what the wiki")
 
     page = "# T\n\nRule. First sentence here. Second one\nwraps here.\n\nWhy. x\n"
     assert inject.rule_index([("landmine", page, Path("operator/t.md"))]).endswith(
