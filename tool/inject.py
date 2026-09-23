@@ -409,10 +409,18 @@ def main() -> int:
 
     # Triggers are matched on the Korean the person typed, then the bodies are
     # translated, then everything downstream measures the English that will
-    # actually go out. One deadline covers this and the utterance rendering
-    # below, so the hook's budget bounds the pair rather than each separately.
+    # actually go out. One deadline covers this and the utterance rendering,
+    # so the hook's budget bounds the pair rather than each separately.
+    #
+    # The utterance is translated before the pages. It is a few hundred
+    # characters; a repository page can be 28,000 — ai-nara-shop's
+    # `plan-active` on 2026-09-23 held the request past the whole deadline,
+    # and the rendering behind it got zero seconds and was dropped. The block
+    # the person checks goes first; the pages take what is left.
     deadline = time.monotonic() + BUDGET
-    matched = localised(match_pages(prompt, pages(args.adapter, args.project)), deadline)
+    matched = match_pages(prompt, pages(args.adapter, args.project))
+    english = rendering(prompt, deadline)
+    matched = localised(matched, deadline)
     rules, decisions, rule_parts, repo_parts, trimmed = render_parts(
         matched, budget(args.adapter, RULE_BUDGET, args.project),
         budget(args.adapter, REPO_BUDGET, args.project),
@@ -445,8 +453,6 @@ def main() -> int:
         # failure became a second failure.
         print(f"trajectory skipped: {failed}", file=sys.stderr)
 
-    # After `trajectory.record`, so the trajectory keeps the Korean original.
-    english = rendering(prompt, deadline)
     if not parts and not english:
         return 0
 
