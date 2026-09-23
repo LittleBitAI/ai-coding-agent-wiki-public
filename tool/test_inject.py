@@ -376,6 +376,52 @@ def test_the_rendering_goes_out_even_when_no_rule_matched():
     assert _rendering("규칙을 지켜라", "EN").endswith("EN")
 
 
+def test_a_page_that_eats_the_deadline_does_not_starve_the_rendering():
+    """The utterance is translated before the pages, not after.
+
+    Measured on 2026-09-23 in ai-nara-shop: `plan-active`, 28,000 characters,
+    held the page request past the whole 8-second deadline, and the rendering
+    behind it got nothing. The fake below plays that page: whichever call
+    comes second finds the budget already spent.
+    """
+
+    import io
+
+    import inject
+    import translate
+
+    root = Path(tempfile.mkdtemp())
+    (root / ".wiki").mkdir()
+    (root / ".wiki" / "big.md").write_text(
+        f'---\nseverity: contract\ntriggers: ["{WORD}"]\n---\n\n규칙. 긴 계획\n',
+        encoding="utf-8",
+    )
+
+    spent = []
+
+    def fake(texts, direction=None, deadline=None):
+        out = texts if spent else ["EN:" + t for t in texts]
+        spent.append(texts)
+        return list(out)
+
+    was = translate.translate, sys.stdin, sys.stdout, sys.argv
+    translate.translate = fake
+    sys.stdin = io.TextIOWrapper(io.BytesIO(json.dumps(
+        {"prompt": f"{WORD} 를 쓴다"}, ensure_ascii=False).encode("utf-8")))
+    sys.stdout = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+    sys.argv = ["inject.py", "--project", str(root)]
+    try:
+        inject.main()
+        sys.stdout.seek(0)
+        payload = json.loads(sys.stdout.read())
+    finally:
+        translate.translate, sys.stdin, sys.stdout, sys.argv = was
+
+    assert "wiki:english-rendering" in payload["hookSpecificOutput"]["additionalContext"], (
+        "the page translation ran first and left the rendering no time"
+    )
+
+
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     for name, fn in sorted(globals().items()):
