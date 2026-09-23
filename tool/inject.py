@@ -96,6 +96,37 @@ def shrink(body: str, path: Path, severity: str, hard: bool) -> str:
     return head + (f"\n\n{rule}" if rule else "") + f"\n\nFull page: `{label(path)}.md`"
 
 
+def rule_index(rules: list) -> str:
+    """One sentence per loaded rule, meant to sit near the top of the injection.
+
+    A host that receives more than about 12 KB stores the injection in a file
+    and gives the session only the first 2 KB of it. With a repository's
+    28,000-character `plan-active` in the mix, that happens on most turns.
+    Measured on 2026-09-23 in ai-nara-shop: two turns sent 42 KB and 35 KB,
+    and the session's preview ended partway through the first rule. Every
+    rule after that one was never shown to the session. The full pages still
+    go out below this index. The index only makes sure each rule's opening
+    sentence is inside the part the host keeps.
+
+    A page with no `Rule.` paragraph, which is repository knowledge, is left
+    out of the index.
+    """
+
+    lines = []
+    for _s, body, path in rules:
+        para = re.search(r"^(?:Rule|규칙)\.\s+(.+?)(?:\n\s*\n|\Z)", body, re.M | re.S)
+        if para:
+            first = re.split(r"(?<=\.)\s", " ".join(para.group(1).split()), maxsplit=1)[0]
+            lines.append(f"- `{label(path)}` — {first}")
+    if not lines:
+        return ""
+    return (
+        "<!-- wiki:rule-index -->\n"
+        "Rules loaded this turn, one sentence each. The full pages follow below.\n"
+        + "\n".join(lines)
+    )
+
+
 def fit(parts: list[str], rules: list, limit: int | None) -> tuple[list[str], int]:
     """Trim to the budget. Over it, still nothing is thrown away.
 
@@ -469,6 +500,10 @@ def main() -> int:
     # characters and it is what the person came to check, so it goes first.
     if english:
         blocks.append(english)
+    # After the rendering and before the pages. See `rule_index` for why.
+    index = rule_index(rules)
+    if index:
+        blocks.append(index)
     if parts:
         blocks.append(
             "Below is what the wiki loaded for this utterance. A rule marks a "

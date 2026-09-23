@@ -140,7 +140,8 @@ def rule_half(text: str) -> str:
     """
 
     head = text.split(MARK)[0]
-    first = head.find("<!-- wiki:")
+    # Past the rule index, which sits before the header and its path.
+    first = head.find("<!-- wiki:", head.find("Below is what the wiki"))
     body = head[first:] if first >= 0 else head
     return body.strip().rstrip("-").strip()
 
@@ -363,6 +364,32 @@ def test_the_rendering_comes_before_the_rules():
     assert context.index("wiki:english-rendering") < context.index("Below is what the wiki"), (
         "the rendering has to precede the rules, or a preview drops it"
     )
+
+
+def test_every_rule_sentence_lands_inside_the_2kb_preview():
+    """A host that receives more than about 12 KB keeps only the first 2 KB.
+
+    Measured on 2026-09-23 in ai-nara-shop: 42 KB went in, and the preview
+    ended partway through the first rule. The index puts each rule's opening
+    sentence ahead of the full pages. Twenty decisions stand in for the bulk
+    of a repository's pages.
+    """
+
+    import inject
+
+    context = build(decisions=20, rule_budget=None, repo_budget=None,
+                    rendered="writes the budget test word")
+    head = context[:2000]
+
+    assert "wiki:rule-index" in head, head
+    assert "`craft/big` — " + "버" * 120 in head, head
+    assert context.index("wiki:english-rendering") < context.index("wiki:rule-index")
+
+    page = "# T\n\nRule. First sentence here. Second one\nwraps here.\n\nWhy. x\n"
+    assert inject.rule_index([("landmine", page, Path("operator/t.md"))]).endswith(
+        "- `operator/t` — First sentence here."
+    )
+    assert inject.rule_index([("contract", "# plan\n\nno rule\n", Path(".wiki/p.md"))]) == ""
 
 
 def test_the_rendering_goes_out_even_when_no_rule_matched():

@@ -1,7 +1,7 @@
 ---
 scope: operator
 severity: landmine
-triggers: ["한국어", "한글", "영어로 (적|쓰|나오)", "진행\\s*상황", "존댓말", "우리말", "영어"]
+triggers: ["[\\s\\S]"]
 slots: []
 enforce:
   pretooluse: english_progress.py
@@ -60,6 +60,16 @@ and on these pages until the phase that rewrites them gets there.
 - A call with no description passes
 - Comments are out of the hook's reach, which is why they are written down
   here as a rule rather than left to a check
+
+## Why this rides on every utterance
+
+The trigger used to be words such as `한국어` or `영어`. The rule then reached
+only the turns that talked about language. On 2026-09-23 an ai-nara-shop
+session analysing v9, v19 and v24 had no such words in its two utterances.
+It answered in Korean all the way through, and its tool descriptions were in
+English because the hook checks only those. A reply is written on every turn,
+so the rule is sent on every turn too, the same as
+[[ask-with-arrow-key-options]].
 
 ## The order this arrived in
 
