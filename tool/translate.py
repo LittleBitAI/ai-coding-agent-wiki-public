@@ -55,10 +55,12 @@ ENDPOINT = (
     f"/{MODEL}:generateContent"
 )
 
-# Fallback ceiling for one request. Callers inside a hook pass a deadline
-# instead; this only applies to direct use, and it sits under the shortest
-# hook budget so a direct call can never be what blows that budget.
-TIMEOUT = 6.0
+# Ceiling for one request when the caller passes no deadline. Every hook caller
+# passes its own, so this only reaches the screens — the chat overlay and the
+# mirror — which render whole answers. It was 6s, under the hook budget, and a
+# 6.6k-character progress answer measured 7.7s: every long answer timed out
+# and the overlay showed the English as if nothing were wrong.
+TIMEOUT = 60.0
 
 # Part of the cache key. Bump it whenever SYSTEM or the request shape changes.
 # Without it the cache keeps serving text translated under a different contract,
