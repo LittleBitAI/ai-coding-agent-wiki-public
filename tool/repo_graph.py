@@ -22,7 +22,14 @@ NS = "repo"
 # instructions and in documents alike. Not counting the second one inflates
 # the orphan count.
 MD_LINK = re.compile(r"\[[^\]]*\]\(([^)\s#]+\.md)[^)]*\)")
-BARE_PATH = re.compile(r"`([A-Za-z0-9_][A-Za-z0-9_./-]*\.md)`")
+# A line reference, `README.md:24`, points at the document as much as the bare
+# path does; the plans cite findings that way.
+BARE_PATH = re.compile(r"`([A-Za-z0-9_][A-Za-z0-9_./-]*\.md)(?::\d+(?:-\d+)?)?`")
+
+# Where a reader walks in. Nothing points at the front door, so counting it as
+# an orphan reports every repository's README forever and teaches the reader
+# to skip the number.
+ENTRY = {"README.md"}
 
 
 def targets(text: str) -> set[str]:
@@ -97,7 +104,7 @@ def build(repo: Path) -> dict | None:
 
     inbound = {edge["b"] for edge in edges}
     read = {edge["b"] for edge in edges if edge["kind"] == "reads"}
-    orphans = sorted(known - inbound)
+    orphans = sorted(known - inbound - ENTRY)
     records = decisions_of(repo)
 
     return {

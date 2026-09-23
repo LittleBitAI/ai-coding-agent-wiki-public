@@ -123,6 +123,18 @@ def test_with_no_listing_nothing_is_built():
     assert repo_graph.build(root) is None
 
 
+def test_a_line_reference_counts():
+    data = repo_graph.build(repo({
+        "docs/a.md": "`docs/b.md:24` 와 `docs/c.md:3-9`", "docs/b.md": "", "docs/c.md": "",
+    }))
+    assert data["orphans"] == ["docs/a.md"]
+
+
+def test_the_root_readme_is_the_way_in_not_an_orphan():
+    data = repo_graph.build(repo({"README.md": "", "docs/README.md": ""}))
+    assert data["orphans"] == ["docs/README.md"], "루트 README 만 입구다"
+
+
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     for name, fn in sorted(globals().items()):
