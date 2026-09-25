@@ -133,22 +133,33 @@ keep-alive 의 `Stop` 훅이 상태 파일이 없으면 `search.spawn()` 으로 
 멈출 곳. 보정 뒤 나라의 상한 2 순절감이 0 이하면 여기서 멈추고 `AskUserQuestion` 으로 다시 묻는다.
 선택지는 "상한을 바꿔 구현", "안 한다" 이고 각각 보정 뒤 수치를 싣는다.
 
-### 7b. 모양
+### 7b. 모양 — 셀의 상태는 훅이 알린다
 
-한 사이클은 이렇다.
+데몬은 셀의 상태를 짐작하지 않는다. Orca 의 출력 시각이나 transcript 끝에서 "지금 한가한가",
+"어느 세션인가", "핑 턴이었는가" 를 읽어 내는 설계는 리뷰 1회차에서 세 곳이 뚫렸다 — `/clear` 뒤 같은
+셀의 다른 세션, 조용히 도는 긴 도구 실행, 도구 결과와 하네스 발화도 `user` 로 적히는 transcript.
+셀에서 일어나는 일은 그 셀의 훅이 이미 전부 본다. 그래서 훅이 알리고 데몬은 받아 적는다.
 
-1. Claude 세션이 한 턴을 마친다 → `Stop` 훅 `keepalive.py` 가 데몬에 `POST /idle` 을 보낸다.
-   세션 id, 자기 셀의 `ORCA_TERMINAL_HANDLE`, 저장소, 상한, 방금 끝난 턴이 핑이었는가
-2. 데몬이 그 세션의 타이머를 "지금 + 55분" 으로 맞춘다. 사람 턴이었으면 계수를 0 으로, 핑 턴이었으면 둔다
-3. 55분 뒤 타이머가 울리면 데몬이 `orca terminal list --json` 으로 그 셀을 확인하고, 조건이 맞으면
-   `orca terminal send --terminal <handle> --text <핑> --enter` 로 핑을 넣는다. 계수 +1
-4. 핑 턴이 끝나면 1로 돌아간다. 계수가 상한에 닿으면 그 세션의 타이머를 지운다
+| 훅 이벤트 | 보내는 것 | 데몬이 하는 일 |
+| --- | --- | --- |
+| `SessionStart` (모든 `source` — `startup`·`resume`·`clear`·`compact`) | `/own {handle, session}` | 그 셀의 주인을 이 세션으로 바꾸고, 같은 셀의 다른 세션 타이머를 지운다 |
+| `UserPromptSubmit`, 발화가 핑 문구와 같다 | `/ping-turn {session}` | 상태를 "핑 도는 중" 으로. 계수는 둔다 |
+| `UserPromptSubmit`, 발화가 `sessions.INJECTED` 로 시작한다 | `/busy {session, reset: false}` | 타이머를 지운다. 사람이 온 것은 아니니 계수는 둔다 |
+| `UserPromptSubmit`, 그 밖 | `/busy {session, reset: true}` | 타이머를 지우고 계수를 0 으로 |
+| `Stop` | `/idle {session, handle, project, limit}` | 계수가 상한보다 작고 그 셀의 주인이 이 세션이면 타이머를 "지금 + 55분" 으로 |
+| `SessionEnd` | `/gone {session}` | 그 세션을 지운다 |
 
-핑을 넣는 조건. 셋 다 맞을 때만 보낸다. 하나라도 어긋나면 보내지 않고 타이머를 지운다.
+`StopFailure` 로 끝난 턴은 아무것도 보내지 않는다 — 타이머가 안 걸리는 쪽으로 틀린다.
 
-- 셀이 목록에 있고 `connected`·`writable` 이다
-- 셀의 `lastOutputAt` 이 50분보다 오래됐다 — 사람이 그 셀에서 무언가 하고 있으면 끼어들지 않는다
-- 셀의 `worktreePath` 가 `/idle` 이 알려 준 저장소와 같다 — 셀이 다른 일로 넘어갔으면 보내지 않는다
+타이머가 울리면 넣기 전에 다시 본다. 하나라도 어긋나면 보내지 않고 그 세션을 지운다.
+
+- 그 세션이 아직 그 셀의 주인이고, 마지막으로 받은 이벤트가 `Stop` 이다
+- Orca 에서 그 셀이 `connected`·`writable` 이고 `worktreePath` 가 `/idle` 의 저장소와 같다
+- 화면 마지막 줄이 비어 있는 Claude 입력 줄이다 — 사람이 쓰다 만 글이 있거나 셸로 떨어졌으면 보내지
+  않는다. `orca terminal read` 로 읽는다. Orca 안 Claude Code 의 빈 입력 줄 모양은 착수 때 실물로 확인해
+  한 곳에 적는다. 확인하지 못하면 keep-alive 를 내지 않는다
+
+보내면 계수 +1, 상태는 "핑 보냄". 10분 안에 `/ping-turn` 이 오지 않으면 그 세션을 지운다.
 
 핑 문구는 고정한다: `keep-alive — reply "ok" and nothing else.`
 
@@ -156,37 +167,42 @@ keep-alive 의 `Stop` 훅이 상태 파일이 없으면 `search.spawn()` 으로 
 
 | 파일 | 무엇 |
 | --- | --- |
-| `tool/keepalive.py` | 새 `Stop` 훅. 아래 조건을 모두 만족할 때만 데몬에 `/idle` 을 보낸다. `--host claude` · 환경에 `ORCA_TERMINAL_HANDLE` · 대상 저장소 `adapter.toml` 의 `keep_alive` 가 1 이상. 핑 턴인지는 transcript 끝의 마지막 사람 발화가 핑 문구와 같은지로 본다. 상태 파일이 없으면 `search.spawn()` 만 하고 끝낸다. `craft/hooks-fail-open` — 무엇이 실패해도 0 을 돌려주고 stderr 에 예외 이름만 |
-| `tool/searchd.py` | `POST /idle` (토큰 필요), 세션별 타이머 `{handle, project, due, count, limit}`, 30초마다 도는 타이머 스레드. `orca` 호출은 함수 하나로 모아 테스트에서 바꿔 끼운다 |
-| `tool/search.py` | `idle(...)` 클라이언트 함수. `ask` 와 같은 증명·시간 상한을 쓴다 |
-| `tool/inject.py` | 발화가 핑 문구와 정확히 같으면 아무것도 싣지 않고 trajectory 에도 적지 않고 0 을 돌려준다 |
-| `tool/apply.py` | `Stop` 에 `keepalive.py` 를 건다. `lint`·`repo_lint` 의 배선 검사가 같이 본다 |
+| `tool/keepalive.py` | 새 훅 스크립트 하나가 `SessionStart`·`Stop`·`SessionEnd` 를 받는다(`--event` 인자). 조건 셋이 모두 맞을 때만 데몬에 알린다: `--host claude` · 환경에 `ORCA_TERMINAL_HANDLE` · 대상 저장소 `adapter.toml` 의 `keep_alive` 가 1 이상. `craft/hooks-fail-open` — 무엇이 실패해도 0 을 돌려주고 stderr 에 예외 이름만 |
+| `tool/inject.py` | `UserPromptSubmit` 쪽. 핑 문구와 정확히 같은 발화는 아무것도 싣지 않고 trajectory 에도 적지 않고 `/ping-turn` 만 보낸다. 그 밖의 발화는 위 표의 `/busy` 를 보낸다. 셋 다 같은 조건일 때만 |
+| `tool/searchd.py` | `/own`·`/ping-turn`·`/busy`·`/idle`·`/gone` (모두 토큰 필요). 세션별 `{handle, project, state, due, count, limit, expires}`, 셀별 주인. 30초마다 도는 타이머 스레드. `orca` 호출(목록·읽기·보내기)은 함수 하나로 모아 테스트에서 바꿔 끼운다 |
+| `tool/search.py` | 위 알림들의 클라이언트 함수 하나. `ask` 와 같은 증명과 시간 상한(150ms)을 쓴다 |
+| `tool/apply.py` | `SessionStart`·`Stop`·`SessionEnd` 에 `keepalive.py` 를 건다. `lint`·`repo_lint` 의 배선 검사가 같이 본다 |
 | `ai-nara-shop/.wiki/adapter.toml` | `keep_alive = 2`. 대상 저장소 파일이라 그 저장소에서 따로 커밋한다 |
 
 ### 7d. 수명 — `craft/client-lifecycle-in-one-scope` 의 네 질문
 
 | 질문 | 답 |
 | --- | --- |
-| 생성 | 타이머는 `/idle` 이 만든다. 데몬이 없으면 `Stop` 훅이 띄우고 그 턴은 건너뛴다 |
-| 공유 | 세션 id 가 키다. 한 셀의 handle 은 그 셀의 훅이 알려 준 것만 쓴다 |
-| 닫기 | 상한 도달, 셀 조건 불일치, 데몬 종료 때 사라진다. 데몬의 유휴 종료(3시간)는 타이머가 하나라도 남아 있는 동안 미뤄지고, 마지막 타이머가 지워진 때부터 다시 잰다 |
-| 소유 | 사용자. 타이머는 메모리에만 있다. 데몬이 죽으면 잃고, 다음 `Stop` 이 다시 건다 — 그 사이의 복귀는 핑 없이 다시 쓴다. 틀리면 토큰을 더 쓰는 쪽이다 |
+| 생성 | 타이머는 `/idle` 이 만든다. 데몬이 없으면 알리는 훅이 `search.spawn()` 으로 띄우고, 상태 파일이 생기기를 3초까지 기다린 뒤 그 알림을 보낸다. 그래도 없으면 그 알림은 버린다. `SessionStart` 도 알리므로 보통은 첫 `Stop` 전에 데몬이 떠 있다. 훅 하나가 쓰는 시간은 5초로 묶는다 |
+| 공유 | 세션 id 가 키다. 셀의 handle 은 그 셀의 훅이 알려 준 것만 쓰고, 한 셀에는 주인이 하나다 |
+| 닫기 | 상한 도달, 보내기 전 확인 불일치, `/busy`, 다른 세션의 `/own`, `/gone`, 핑 뒤 10분 무응답 때 지운다. 세션마다 만료 시각이 따로 있다 — 마지막 `Stop` + 55분 × 상한 + 10분. 어떤 이벤트도 더 오지 않아도 그때 지운다. 데몬의 유휴 종료(3시간)는 가장 늦은 만료 시각까지만 미뤄진다 |
+| 소유 | 사용자. 타이머는 메모리에만 있다. 데몬이 죽으면 잃고, 다음 `Stop` 이 다시 건다 — 그 사이의 복귀는 핑 없이 다시 쓴다. `SessionEnd` 없이 세션이 죽어 셀이 셸로 떨어졌으면 화면 확인이 보내기를 막는다. 틀리면 토큰을 더 쓰는 쪽이다 |
 
 ### 7e. 같이 도는 훅이 핑 턴에 하는 일
 
-- `inject.py` — 위 표대로 아무것도 안 한다
+- `inject.py` — 위 표대로 싣지도 적지도 않고 `/ping-turn` 만 보낸다
 - `declared_continuation.py` — 답이 `ok` 한 단어면 약속 문형이 없어 걸리지 않는다. 테스트로 박는다
 - `sync.py` — 핑 턴에도 돈다. 하는 일이 저장소 상태 확인이라 그대로 둔다
 - 핑 턴이 쓰는 값은 문맥 읽기 0.1C 와 짧은 출력이다. 훅 주입은 0 이다
 
 ### 7f. 테스트 — `tool/test_keepalive.py`
 
-- `Stop` 훅: Codex 호스트, `ORCA_TERMINAL_HANDLE` 없음, `keep_alive` 없는 저장소 — 셋 다 `/idle` 을 안 보낸다
-- `Stop` 훅: 마지막 사람 발화가 핑이면 계수를 두고, 사람 발화면 0 으로 보낸다
-- 데몬 타이머(가짜 시계와 가짜 `orca`): 55분에 한 번 보낸다, 상한 2 뒤에는 안 보낸다,
-  `lastOutputAt` 이 최근이면 안 보낸다, 셀이 사라지거나 다른 저장소면 안 보내고 타이머를 지운다
-- 데몬 유휴 종료가 타이머가 남은 동안 미뤄진다
-- `inject.py`: 핑 문구 발화 → 출력 없음, trajectory 행 없음
+- 훅: Codex 호스트, `ORCA_TERMINAL_HANDLE` 없음, `keep_alive` 없는 저장소 — 셋 다 아무것도 안 보낸다
+- 훅: 데몬이 없을 때 띄우고 기다린 뒤 보낸다. 3초 안에 안 뜨면 버리고 0 을 돌려준다
+- `inject.py`: 핑 문구 → 출력 없음, trajectory 행 없음, `/ping-turn`. `<task-notification>` 으로 시작하는
+  발화 → `/busy` 에 `reset: false`. 사람 발화 → `reset: true`
+- 데몬(가짜 시계와 가짜 `orca`):
+  - 55분에 한 번 보내고, 상한 2 뒤에는 안 보낸다
+  - 핑 뒤 `/busy` 가 `reset: false` 로 와도 계수가 0 이 되지 않는다 — 상한을 넘지 않는다
+  - 같은 셀에 다른 세션의 `/own` 이 오면 옛 세션 타이머가 사라진다 (`/clear` 의 모양)
+  - 마지막 이벤트가 `Stop` 이 아니면, 셀이 사라졌거나 다른 저장소면, 화면 마지막 줄에 글이 있거나 셸이면 안 보내고 지운다
+  - 핑 뒤 10분 무응답이면 지운다. 이벤트가 끊겨도 만료 시각에 지운다
+  - 유휴 종료가 가장 늦은 만료 시각까지만 미뤄진다
 - `declared_continuation.py`: 답이 `ok` 인 핑 턴 → 통과
 
 ### 7g. 완료 기준
@@ -202,7 +218,9 @@ keep-alive 의 `Stop` 훅이 상태 파일이 없으면 `search.spawn()` 으로 
 긴 세션은 매 턴 문맥 전체를 캐시에서 읽는다. 문맥이 90만이면 한 턴에 읽기 9만(0.1배)이다. 문턱을
 낮추면 그 읽기가 줄고, 대신 compact 가 잦아진다.
 
-셈. Claude transcript 의 `assistant` 행을 세션별로 시각 순으로 흘린다. 행마다 문맥
+셈. Claude transcript 의 `assistant` 행을 세션별로 시각 순으로 흘린다. 한 API 응답이 내용 블록마다
+행을 따로 적고 같은 `usage` 를 되풀이하므로, `message.id` 로 묶어 응답 하나를 한 번만 센다. 이 저장소의
+한 transcript 에서 `assistant` 행 2,799개가 응답 2,139개였다(같은 id 묶음 530개). 응답마다 문맥
 c = `input_tokens` + `cache_read_input_tokens` + `cache_creation_input_tokens`.
 
 - 문턱 W 를 모의한다. 모의 문맥 s = c − 오프셋. s 가 W 를 넘으면 그 자리에서 compact 가 났다고 치고
@@ -266,7 +284,8 @@ PR ⑥·⑦ 각각 끝에 돌린다.
    - 7a 보정 전·후 유휴 복귀 표
    - 8a 문턱 표
    - 8c 트리거가 걸리는 발화 수와 표본. 하네스 주입 발화에 걸린 것이 있으면 트리거를 고친다
-4. `latency` 20회. 핑 문구 발화의 시간과 보통 발화의 p95. 보통 발화는 `main` 과 번갈아 재서 잡음 안이어야 한다
+4. `latency` 20회. `inject.py` 가 이제 데몬에 알리므로 `keep_alive` 를 둔 저장소 사본과 `ORCA_TERMINAL_HANDLE`
+   을 준 채로 잰다. 핑 문구 발화와 보통 발화의 p95. 보통 발화는 `main` 과 번갈아 재서 잡음 안이어야 한다
 5. 실물 — 7g 와 8b. 이 저장소 훅이 걸린 세션에서 한다
 6. [개요](token-diet.md)의 단계 표 상태 칸에 수치를 적는다
 
