@@ -8,7 +8,6 @@ strings stay Korean.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 import threading
@@ -33,29 +32,18 @@ READ_TOOLS = "Bash,Read,Glob,Grep"
 
 HUB = Path(__file__).resolve().parents[1]
 
-# How a channel finds evidence before it reads. Both hosts get the command; a
-# Claude channel also gets `scout`, the first pass on the cheap model.
+# How a channel finds evidence before it reads, on both hosts.
+#
+# No first pass on a cheaper model. A Haiku `scout` subagent was built and
+# measured on 2026-09-25 over ten real questions: where it was called, input
+# tokens rose 2.4x and cost 27% — it loads its own context, and the main model
+# re-reads what it cites anyway. Where the main model searched itself, input
+# fell 14%. Plan bundle 2, step 6.
 SEARCH_NOTE = """## Search command
 {command} "<query>" [--k 8]
 It returns matching sections with `path:line` and the pages linked to each.
 The hub's pages are English and many repository documents are Korean, so
 search with terms in both languages."""
-
-SCOUT_NOTE = """## First search goes to `scout`
-Hand the question to the `scout` subagent first and take back its paths and
-summary, then confirm what you cite with `Read`. The operator has allowed
-`scout` delegation in this chat: a rule elsewhere that forbids unrequested
-subagents does not cover it here. Delegate nothing else."""
-
-SCOUT_PROMPT = """You find evidence in a repository for someone else to verify.
-Your first tool call is always this search command, through Bash, with terms
-in English and in Korean:
-{command} "<query>" [--k 8]
-Use Grep or Glob only for what the search did not find.
-Read around a returned line only as far as needed to confirm it says what you
-report. Return each relevant source as `path:line` with one line on what it
-says, then a summary of three to five lines. Report only what the sources say.
-Do not modify files."""
 
 BOOT_TIMEOUT = 120.0   # the first turn is slow: hooks, and loading
 TURN_TIMEOUT = 600.0
@@ -118,32 +106,17 @@ class ChatSession:
         command = (f'"{Path(sys.executable).as_posix()}" "{(HUB / "tool/search.py").as_posix()}" '
                    f'--project "{self.repo.resolve().as_posix()}"')
         system = self.system
-        tools = self.tools
-        scout = self.search and not self.is_codex
         if self.search:
             system += "\n\n" + SEARCH_NOTE.format(command=command)
-        if scout:
-            # Defining the agent is not enough: without `Agent` among the
-            # tools nothing can call it.
-            system += "\n\n" + SCOUT_NOTE
-            tools += ",Agent"
         cmd = [
             "claude", "-p",
             "--input-format", "stream-json",
             "--output-format", "stream-json",
             "--include-partial-messages",
             "--verbose",
-            "--tools", tools,
-            "--allowedTools", tools,
+            "--tools", self.tools,
+            "--allowedTools", self.tools,
         ]
-        if scout:
-            cmd += ["--agents", json.dumps({"scout": {
-                "description": "First pass for evidence in this repository. Give it the "
-                               "question; it returns paths with line numbers and a short summary.",
-                "prompt": SCOUT_PROMPT.format(command=command),
-                "tools": ["Bash", "Read", "Grep", "Glob"],
-                "model": "haiku",
-            }}, ensure_ascii=False)]
         if self.isolated:
             # `--bare` would skip the subscription login too. The sign-in is
             # kept; only the settings, hooks and tools are isolated.
@@ -175,13 +148,8 @@ class ChatSession:
             self.model_name = self.model.removeprefix("codex:")
         self._stderr = deque(maxlen=20)
         cmd = [*cli_command(cmd[0]), *cmd[1:]]
-        # A subagent launches asynchronously by default: the turn ended with
-        # "I'll report once it's back" as its answer, and `scout`'s result
-        # arrived after `say` had already stopped reading (2026-09-25). With
-        # background tasks disabled the launcher runs it in the foreground.
-        env = {**os.environ, "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"} if scout else None
         self._proc = subprocess.Popen(
-            cmd, cwd=str(self.repo), env=env,
+            cmd, cwd=str(self.repo),
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, encoding="utf-8",
             errors="replace", bufsize=1,

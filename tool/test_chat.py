@@ -360,18 +360,17 @@ def test_the_mirror_never_tails_a_checkout_that_is_gone(tmp_path):
         assert pick(gone) is None
 
 
-def test_a_claude_channel_defines_scout_and_can_call_it(tmp_path):
-    """Defined is not called: `Agent` has to be among the tools too. Codex gets
-    the search command alone, and a session that is not a channel neither."""
+def test_a_channel_is_told_the_search_command_on_both_hosts(tmp_path):
+    """A session that is not a channel is not, and nobody gets a subagent —
+    the Haiku scout was measured and dropped (plan bundle 2, step 6)."""
 
-    commands, envs = [], []
+    commands = []
 
     class Dead:
         stdout = stderr = iter(())
 
     def spawn(command, **kwargs):
         commands.append(command)
-        envs.append(kwargs.get("env"))
         return Dead()
 
     with patch.object(chat_session.subprocess, "Popen", spawn), \
@@ -380,17 +379,11 @@ def test_a_claude_channel_defines_scout_and_can_call_it(tmp_path):
         ChatSession(tmp_path, system="Answer.", model="codex:m", search=True)._spawn()
         ChatSession(tmp_path, system="Answer.")._spawn()
     claude, codex, plain = commands
-    agents = json.loads(claude[claude.index("--agents") + 1])
-    assert agents["scout"]["model"] == "haiku"
-    assert "search.py" in agents["scout"]["prompt"]
-    assert claude[claude.index("--tools") + 1].split(",")[-1] == "Agent"
-    assert claude[claude.index("--allowedTools") + 1] == claude[claude.index("--tools") + 1]
     system = claude[claude.index("--append-system-prompt") + 1]
-    assert "search.py" in system and "operator has allowed" in system
+    assert "search.py" in system and f'--project "{tmp_path.resolve().as_posix()}"' in system
     instructions = next(c for c in codex if c.startswith("developer_instructions="))
-    assert "search.py" in instructions and "scout" not in instructions
-    assert "--agents" not in codex
-    assert "--agents" not in plain and "Agent" not in plain[plain.index("--tools") + 1]
+    assert "search.py" in instructions
     assert "search.py" not in " ".join(plain)
-    assert envs[0]["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == "1", "scout would run async"
-    assert envs[1] is None and envs[2] is None
+    for command in (claude, plain):
+        assert "--agents" not in command
+        assert command[command.index("--tools") + 1] == chat_session.READ_TOOLS
