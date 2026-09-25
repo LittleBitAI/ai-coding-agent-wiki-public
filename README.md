@@ -149,8 +149,11 @@ python tool/lint.py --check                              # every expected agent
 
 `CLAUDE.md` is not touched. It holds project-scope knowledge this wiki does
 not own, and adding sentences to an always-loaded file is the very problem
-this wiki was built for. Skills are `operator` scope, so hanging them once in
-`~/.claude/skills/` is enough.
+this wiki was built for. Skills are `operator` scope, so they are linked once
+per machine: `setup_agents.py --global` links each `skills/*` into
+`~/.claude/skills/` and into `~/.agents/skills/`, where Codex reads them from
+every home, Orca's included. A link already there is left alone, and a
+same-named skill pointing elsewhere is reported and never replaced.
 
 ### Connecting to Codex
 

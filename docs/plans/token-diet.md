@@ -55,10 +55,10 @@
 
 | # | 단계 | 무엇 | 상태 |
 | --- | --- | --- | --- |
-| 1 | 측정 도구 | trajectory 재생으로 세션 누적 주입량·반복률·리콜 비교, 훅 지연 p95 | 미착수 |
-| 2 | 세션 내 중복 제거 | 두 번째부터 규칙 문단+경로 (`shrink`) | 미착수 |
-| 3 | compact 후 재주입 | compact 표지로 중복 상태 리셋 | 미착수 |
-| 4 | 스킬로 옮기기 | `after-merge-cleanup`→`after-merge`, `codex-review-loop`→`review-loop` | 미착수 |
+| 1 | 측정 도구 | trajectory 재생으로 세션 누적 주입량·반복률·리콜 비교, 훅 지연 p95 | 완료 — `replay`·`latency`·`label`. 출발점 반복률 457회 재현. 200턴 라벨은 아직 안 돌렸다 |
+| 2 | 세션 내 중복 제거 | 두 번째부터 규칙 문단+경로 (`shrink`) | 완료 — 한도 넘는 턴은 규칙 문단만, 색인은 한도 넘는 턴에만(사용자 선택). 이 저장소 세션 누적 2,714KB→1,124KB(59%), 나라 42%. 리콜 불변식 녹색. 60% 게이트 1점 미달 |
+| 3 | compact 후 재주입 | compact 표지로 중복 상태 리셋 | 완료 — transcript 의 compact 기록으로 리셋. compact 뒤 SessionStart 실물 확인은 남음 |
+| 4 | 스킬로 옮기기 | `after-merge-cleanup`→`after-merge`, `codex-review-loop`→`review-loop` | 완료 — 전문 2,591→1,020B, 5,560→1,581B. 두 호스트 스킬 목록에 뜬다 |
 | 5 | 검색 데몬과 훅 보조 | 청크 하이브리드 색인, 정규식 밖 상위 1~2장을 한 줄로 | 미착수 |
 | 6 | 위키 챗 검색 | `search` 도구, 그래프 1-hop, Haiku 1차 탐색 | 미착수 |
 | 7 | keep-alive 자동 핑 | 유휴 55분에 핑, 상한 있음 | 미착수 |
