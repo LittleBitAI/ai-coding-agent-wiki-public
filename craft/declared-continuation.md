@@ -1,6 +1,7 @@
 ---
 scope: craft
 severity: landmine
+repeat: rule
 triggers: ["이어서 (하|진행)", "계속 (하|진행)", "이어서 하고 있는가", "진행중인가", "돌고 있는가", "하겠습니다", "Stop 훅", "stop hook"]
 slots: []
 sources: []
@@ -12,7 +13,9 @@ links: [do-the-whole-instruction, hooks-fail-open, pick-up-async-results]
 
 Rule. A turn that says it will do something right now, in this response, does
 not end without a tool call. If user input is genuinely needed, ask in one
-line what is needed and end there. Do not leave the promise and stop.
+line what is needed and end there. Do not leave the promise and stop. A turn
+that ends to wait writes down what it waits on, how long that takes, and what
+happens when it lands.
 
 What goes wrong. **Work believed to be running is worse than work not run.**
 The user ends up making that judgement, and the automation is worth nothing.

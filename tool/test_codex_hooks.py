@@ -190,3 +190,26 @@ def test_git_bash_is_found_from_every_copy_of_git_exe(tmp_path, monkeypatch):
         copy.write_text("", encoding="utf-8")
         monkeypatch.setattr(shutil, "which", lambda _name, _at=copy: str(_at))
         assert hook_shell("claude")[0] == str(root / "bin" / "bash.exe"), where
+
+
+def test_skills_are_linked_into_both_hosts_and_a_foreign_one_is_left(tmp_path):
+    """Codex had no link at all while `~/.claude/skills` did — nothing made them."""
+    from setup_agents import WIKI, link_skills
+
+    homes = {"claude": tmp_path / "claude", "codex": tmp_path / "agents"}
+    foreign = tmp_path / "elsewhere" / "after-merge"
+    foreign.mkdir(parents=True)
+    homes["codex"].mkdir()
+    if os.name == "nt":
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(homes["codex"] / "after-merge"),
+                        str(foreign)], capture_output=True, check=True)
+    else:
+        (homes["codex"] / "after-merge").symlink_to(foreign, target_is_directory=True)
+
+    assert link_skills(("claude", "codex"), check=True, homes=homes), "missing links are a finding"
+    assert link_skills(("claude", "codex"), check=False, homes=homes) == []
+    assert link_skills(("claude", "codex"), check=True, homes=homes) == [], "a second run finds nothing"
+    for name in ("after-merge", "review-loop"):
+        assert (homes["claude"] / name / "SKILL.md").is_file()
+    assert os.path.realpath(homes["codex"] / "review-loop") == os.path.realpath(WIKI / "skills/review-loop")
+    assert os.path.realpath(homes["codex"] / "after-merge") == os.path.realpath(foreign), "not ours to replace"

@@ -17,6 +17,40 @@ import sys
 WIKI = Path(__file__).resolve().parents[1]
 SETTINGS = {"claude": ".claude/settings.json", "codex": ".codex/hooks.json"}
 
+# Where each host looks for user skills. Codex's is not under `CODEX_HOME`:
+# Orca runs it with a home of its own, and `skills/list` on Codex 0.156 read
+# `~/.agents/skills` from every one of them (2026-09-25).
+SKILL_HOMES = {"claude": Path.home() / ".claude/skills", "codex": Path.home() / ".agents/skills"}
+
+
+def link_skills(agents, check, homes=None):
+    """Link each `skills/*` into every host's skill folder. Returns what is wrong.
+
+    A link already pointing here is left alone. A same-named entry pointing
+    elsewhere is somebody's own skill — it is reported and never touched.
+    Windows gets a directory junction, which needs no administrator rights.
+    """
+    homes = homes or SKILL_HOMES
+    broken = []
+    for agent in agents:
+        home = homes[agent]
+        for skill in sorted(p for p in (WIKI / "skills").iterdir() if (p / "SKILL.md").is_file()):
+            link = home / skill.name
+            if os.path.lexists(link):
+                if os.path.realpath(link) != os.path.realpath(skill):
+                    print(f"건드리지 않음: {link} 가 다른 곳을 가리킨다 ({os.path.realpath(link)})")
+                continue
+            if check:
+                broken.append(f"{link}: 스킬 링크가 없다")
+                continue
+            home.mkdir(parents=True, exist_ok=True)
+            if os.name == "nt":
+                run(["cmd", "/c", "mklink", "/J", str(link), str(skill)], WIKI)
+            else:
+                link.symlink_to(skill, target_is_directory=True)
+            print(f"링크했다: {link} → {skill}")
+    return broken
+
 
 
 def run(command, cwd):
@@ -294,6 +328,7 @@ def install_global(choice, check, projects, trust):
             print(f"썼다: {path} ({len(changes)}건)")
         else:
             print(f"그대로: {path}")
+    broken += link_skills(agents, check)
     for agent in agents:
         if agent == "codex":
             for path in user_files("codex"):

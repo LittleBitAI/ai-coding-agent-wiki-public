@@ -55,6 +55,30 @@ Whether a project can be trusted is the user's judgement, confirmed through
 the CLI's trust settings and `/hooks`. The installer does not decide trust or
 hook approval on your behalf.
 
+## 2a. Let a page repeat as its rule paragraph
+
+A `.wiki/` page goes out in full on every turn it matches. A page that matches
+often — `project.md` on every utterance — can instead go out in full once per
+session and as its rule paragraph after that. Declare it in the front matter:
+
+```yaml
+severity: contract
+repeat: rule
+triggers: ['\S']
+```
+
+Declare it only when every clause that must hold on every turn sits inside
+the rule paragraph — from `규칙.` (or `Rule.`) to the first blank line. Whatever
+comes after that paragraph stops arriving from the second turn on. An
+instruction such as "read the active plan first" that sits above the
+paragraph has to move into it first. `repo_lint` checks that a declaring page
+has the paragraph and that it is at most 1,200 characters.
+
+The full text goes out again after a compact, after `/clear` or a resume,
+when the page changes, and whenever a turn's injection was too large for the
+host to show whole — `docs/plans/token-diet-1-hook.md` has the details. A page
+that does not declare it is not affected.
+
 ## 3. Install and reinstall
 
 Run these from the shared wiki folder. The paths are examples; point them at

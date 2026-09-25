@@ -1,6 +1,7 @@
 ---
 scope: craft
 severity: landmine
+repeat: rule
 triggers: ["마크다운", "markdown", "애스터리스크", "강조", "굵게", "\\*\\*", "문서를? (쓰|만들|생성)", "\\.md 문서"]
 slots: []
 enforce:
@@ -15,6 +16,9 @@ links: [comments-carry-why, screen-follows-the-purpose]
 Rule. One or two bolds per Markdown document, used only where the text reads
 wrong without them. Never on a paragraph label, a command, a path, an
 identifier or a status name — labels stay plain, the rest take backticks.
+Never two in one paragraph, and never a bold run across a line break. What to
+reach for instead — headings, tables, backticks, a rewritten sentence — is in
+the `write-markdown` skill.
 
 When it is broken. Emphasis turns into noise. Bold claims that a phrase
 outranks the ones around it, and on every paragraph that claim is false
