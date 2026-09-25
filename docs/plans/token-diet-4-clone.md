@@ -79,7 +79,7 @@ loop 5단계(착수 전)가 계획한 것과의 겹침.
 | 2 페이지 | 원본 페이지마다 규칙 문단을 확인하고 `repeat: rule` 선언. 규칙 문단 1,200자 검사는 원본 `lint` 에 | 사본 선언을 복사하지 않는다 |
 | 3 compact 리셋 | `inject.py` 의 `recall`, `COMPACTED` | 같다 |
 | 4 스킬 | 두 페이지 본문만 줄인다 | 스킬은 이미 있다 |
-| 5 데몬 | `tool/search/` 패키지 — `__init__.py`(`ask`·`notify`·`spawn`·`PING`)와 `daemon.py`(색인·`Keeper`) | 훅 보조(`suggest`)는 복제하지 않는다. 데몬은 keep-alive 와 챗 검색에만 쓴다. 버전 해시는 패키지 파일 전부 |
+| 5 데몬 | `tool/search/` 패키지 — `__init__.py`(`ask`·`notify`·`spawn`·`PING`)와 `daemon.py`(색인·`Keeper`) | 훅 보조(`suggest`)는 복제하지 않는다. 데몬은 keep-alive 와 챗 검색에만 쓴다. 버전 해시는 패키지 파일 전부. 포트와 상태 파일은 사본(8790, `~/.cache/ai-coding-agent-wiki/searchd.json`)과 다르게 둔다 — 같으면 한 기계의 두 데몬이 서로를 버전 불일치로 끈다 |
 | 6 챗 검색 | `tool/main/query.py` 에 검색 호출 | 원본의 챗은 서버 경로라 사본의 `chat_session` 과 다르다. loop 계획과 겹치므로 착수 전에 묻는다 |
 | 7 keep-alive | 진입점 `tool/keepalive.py`, `hook.py` 의 `--host`·`--checkout`, `apply.py` 배선 | 같다. 리뷰 1~3회차에서 고친 두 경로(`/busy` 재시도, 잠금 안의 확인과 보내기)를 처음부터 넣는다 |
 | 8 compact | `operator/compact-before-idle`, `setup_agents.py --compact-window` | 설정 값은 이미 이 PC 에 들어가 있다. 도구와 페이지만 |
