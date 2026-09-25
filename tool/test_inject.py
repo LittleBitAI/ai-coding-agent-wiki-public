@@ -748,6 +748,70 @@ def test_the_invariant_goes_red_when_a_clause_is_missing():
     )
 
 
+# ---- The similarity supplement ---------------------------------------------
+
+OTHER = """---
+scope: craft
+severity: contract
+triggers: ["다른낱말"]
+---
+
+# Other page
+
+Rule. A page the regex did not choose. Its second sentence stays behind.
+
+Why. The body never rides as a suggestion.
+"""
+
+
+def suggesting(root: Path, answer, session: str) -> str:
+    """One turn with the supplement on and the daemon's answer faked."""
+
+    import inject
+    import search
+
+    was = inject.SUGGEST_MIN, search.ask
+    inject.SUGGEST_MIN = 0.5
+    search.ask = lambda *a, **k: answer
+    try:
+        return turn(root, session=session)
+    finally:
+        inject.SUGGEST_MIN, search.ask = was
+
+
+def test_a_page_the_regex_missed_is_suggested_as_one_line():
+    root = stage()
+    (root / "wiki" / "craft" / "other.md").write_text(OTHER, encoding="utf-8")
+    wiki = root / "wiki"
+    answer = [{"path": str(wiki / "craft" / "plain.md"), "cos": 0.95},
+              {"path": str(wiki / "craft" / "other.md"), "cos": 0.8},
+              {"path": str(wiki / "craft" / "absent.md"), "cos": 0.7},
+              {"path": str(wiki / "operator" / "rep.md"), "cos": 0.3}]
+    context = suggesting(root, answer, "s-suggest")
+    assert "<!-- wiki:suggested -->" in context
+    assert "- `craft/other` — A page the regex did not choose. (`craft/other.md`)" in context
+    assert "Its second sentence" not in context and "never rides" not in context
+    assert context.count("craft/plain`") == 0, "the regex already chose it"
+    row = json.loads((root / "project" / ".wiki" / "trajectory.jsonl")
+                     .read_text(encoding="utf-8").splitlines()[-1])
+    assert row["suggested"] == ["craft/other"]
+    assert "craft/other" not in row["injected"], "a suggestion is not an injection"
+
+
+def test_no_answer_from_the_daemon_changes_nothing():
+    root = stage()
+    off = turn(root, session="plain-a")
+    assert suggesting(root, None, "plain-b") == off
+    assert suggesting(root, [], "plain-c") == off
+
+
+def test_a_score_under_the_floor_is_not_suggested():
+    root = stage()
+    (root / "wiki" / "craft" / "other.md").write_text(OTHER, encoding="utf-8")
+    answer = [{"path": str(root / "wiki" / "craft" / "other.md"), "cos": 0.4}]
+    assert "wiki:suggested" not in suggesting(root, answer, "s-low")
+
+
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     for name, fn in sorted(globals().items()):

@@ -88,6 +88,22 @@ COMPACTED = (b'"subtype":"compact_boundary"', b'"type":"compacted"')
 # is not dropped; its name stays.
 MAX_DECISIONS = 3
 
+# The similarity supplement — `searchd`. It adds a line for a page the regex
+# did not choose; it never removes or shortens one the regex did. `SUGGEST_MIN`
+# is the floor on `SUGGEST_BY`, set from the recall labels (plan bundle 2,
+# step 5); `None` means the supplement is off and the daemon is not asked.
+SUGGEST_BY = "cos"
+SUGGEST_MIN: float | None = None
+SUGGEST_K = 2
+# Past this the turn goes without. The daemon answers in about 10 ms.
+SEARCH_TIMEOUT = 0.15
+
+RENDERING = (
+    "<!-- wiki:english-rendering -->\n"
+    "English rendering of the user's message (Gemini). The Korean above is "
+    "authoritative — go back to it wherever this reads oddly.\n\n"
+)
+
 
 def budget(adapter: str | None, slot: str, project: str | Path | None = None) -> int | None:
     """This project's budget for that axis. `None` when unset — no ceiling."""
@@ -496,11 +512,7 @@ def rendering(prompt: str, deadline: float | None = None) -> str:
         # Unchanged means the translation failed. Labelling the Korean as an
         # English rendering would be a lie the reader cannot check.
         return ""
-    return (
-        "<!-- wiki:english-rendering -->\n"
-        "English rendering of the user's message (Gemini). The Korean above is "
-        "authoritative — go back to it wherever this reads oddly.\n\n" + english
-    )
+    return RENDERING + english
 
 
 def repeatable(available: list) -> set[str]:
@@ -582,8 +594,55 @@ def recall(wiki: Path | None, session: str, transcript, host: str | None) -> tup
         return set(), {}
 
 
+def suggest(prompt: str, english: str, project: str | None, available: list,
+            taken: set[str]) -> list[tuple[str, str]]:
+    """`(name, first sentence)` for up to `SUGGEST_K` pages the regex missed.
+
+    The query is the utterance and its English rendering: the hub's pages are
+    English, a repository's are Korean. A page already chosen by the regex, or
+    already seen in full this session, is not suggested again. Anything short
+    of an answer — no daemon, a timeout, a stranger on the port — is no
+    suggestion and nothing on screen (`craft/hooks-fail-open`).
+    """
+
+    if SUGGEST_MIN is None:
+        return []
+    import search
+
+    found = search.ask(f"{prompt}\n{english[len(RENDERING):]}", project, "hook",
+                       SEARCH_TIMEOUT, k=12)
+    if not found:
+        return []
+    by_name = {label(p): (b, p) for _m, b, p in available}
+    out = []
+    for hit in sorted(found, key=lambda h: h.get(SUGGEST_BY) or 0, reverse=True):
+        score = hit.get(SUGGEST_BY)
+        name = label(Path(str(hit.get("path"))))
+        if not isinstance(score, (int, float)) or score < SUGGEST_MIN:
+            break
+        if name in taken or name not in by_name:
+            continue
+        body, path = by_name[name]
+        out.append((name, first_sentence(body) or title_of(body, path)))
+        if len(out) == SUGGEST_K:
+            break
+    return out
+
+
+def hint(found: list[tuple[str, str]]) -> str:
+    """One line and a path per suggestion. Never the page itself."""
+
+    if not found:
+        return ""
+    return (
+        "<!-- wiki:suggested -->\n"
+        "Possibly relevant, by similarity rather than a trigger. Open the page if it applies.\n"
+        + "\n".join(f"- `{name}` — {line} (`{name}.md`)" for name, line in found)
+    )
+
+
 def compose(matched: list, limits: tuple, english: str, project: str | None,
-            seen: set, repeat: set, limit: int | None) -> tuple:
+            seen: set, repeat: set, limit: int | None, suggested: str = "") -> tuple:
     """`render_parts` and `assemble` together, fitted to the host's ceiling.
 
     Past the ceiling the host puts the whole injection in a file and shows the
@@ -613,23 +672,23 @@ def compose(matched: list, limits: tuple, english: str, project: str | None,
         return limit is not None and len(body.encode("utf-8")) <= limit
 
     out = render_parts(matched, *limits, seen, repeat)
-    body = assemble(out[0], out[2] + out[3], english, project, index=False)
+    body = assemble(out[0], out[2] + out[3], english, project, index=False, suggested=suggested)
     if fits(body):
         return (*out, body, False)
     squeezed = limit is not None
     if squeezed:
         out = render_parts(matched, *limits, seen, repeat, squeeze=True)
-        body = assemble(out[0], out[2] + out[3], english, project, index=False)
+        body = assemble(out[0], out[2] + out[3], english, project, index=False, suggested=suggested)
         if fits(body):
             return (*out, body, True)
-    return (*out, assemble(out[0], out[2] + out[3], english, project), squeezed)
+    return (*out, assemble(out[0], out[2] + out[3], english, project, suggested=suggested), squeezed)
 
 
 def assemble(rules: list, parts: list[str], english: str, project: str | None,
-             index: bool = True) -> str:
+             index: bool = True, suggested: str = "") -> str:
     """The whole `additionalContext`, or `""` when there is nothing to send."""
 
-    if not parts and not english:
+    if not parts and not english and not suggested:
         return ""
     # The rule index goes first. It is a few hundred characters, and the
     # rendering in front of it could reach 4,000 (`MAX_RENDERED`) and push
@@ -650,6 +709,9 @@ def assemble(rules: list, parts: list[str], english: str, project: str | None,
     # index it still starts inside the preview.
     if english:
         blocks.append(english)
+    # Two lines at most, so it goes where the 2 KB preview still reaches.
+    if suggested:
+        blocks.append(suggested)
     # The header and the source map stay on a turn where every rule was
     # already seen. They are a few hundred characters, and a branch that
     # drops them is a branch that can drop the repeated forms with them.
@@ -708,10 +770,14 @@ def main() -> int:
     seen, where = recall(wiki, session, payload.get("transcript_path"), args.host)
     limits = (budget(args.adapter, RULE_BUDGET, args.project),
               budget(args.adapter, REPO_BUDGET, args.project))
+    # After the regex and the rendering, never in their place: the names the
+    # regex chose are the same with or without the daemon.
+    suggested = suggest(prompt, english, args.project, available,
+                        {label(p) for _s, _b, p in matched} | {name for name, _t in seen})
     # Without a host the ceiling is unknown, so nothing is squeezed either.
     rules, decisions, rule_parts, repo_parts, trimmed, body, _squeezed = compose(
         matched, limits, english, args.project, seen, repeatable(available),
-        LIMIT.get(args.host or ""),
+        LIMIT.get(args.host or ""), hint(suggested),
     )
     parts = rule_parts + repo_parts
 
@@ -734,6 +800,8 @@ def main() -> int:
             note += f" · 한도로 규칙 문단만 {squeezed}장"
         if trimmed:
             note += f" · 줄임 {trimmed}장"
+        if suggested:
+            note += f" · 유사도 제안 {len(suggested)}장"
         if english:
             note += " · 영어본 첨부"
         json.dump(
@@ -768,6 +836,8 @@ def main() -> int:
         # decision blocks; this is the number a host ceiling is compared with.
         sent=len(body.encode("utf-8")),
         full=sent_whole(rules, rule_parts),
+        # Apart from `injected` and `full`: a suggestion is a line, not a page.
+        suggested=[name for name, _line in suggested],
         **where,
     )
     if failed:

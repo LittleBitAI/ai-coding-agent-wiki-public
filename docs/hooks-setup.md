@@ -20,6 +20,21 @@ installer refuses a path containing a quote, a dollar, a backtick or a
 newline. On Windows, Claude hooks need Git for Windows' Git Bash and Codex
 hooks need PowerShell.
 
+### The search daemon — optional
+
+`tool/searchd.py` is a small local daemon on `127.0.0.1:8790`. The hook starts
+it by itself and it stops after three idle hours; nothing needs to be run by
+hand. It adds, below the pages the triggers chose, at most two one-line hints
+for pages they missed, and it is what the wiki chat searches with. The
+triggers stay the authority — the daemon never removes or shortens a page they
+chose, and when it is absent or slow the hook injects exactly what it did
+without it.
+
+For the vector half, install `python -m pip install -r <wiki path>/requirements-search.txt`
+into the same Python. Without it the daemon ranks with BM25 alone. The model
+(about 120 MB) downloads on first start into `~/.cache/ai-coding-agent-wiki/`,
+next to the state file `searchd.json` and the vector cache.
+
 ## 2. Configure the project
 
 Create `.wiki/adapter.toml` in the target project and replace the example

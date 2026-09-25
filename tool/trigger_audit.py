@@ -10,6 +10,7 @@ choose thresholds, never what the hook injects.
     trigger_audit.py replay <trajectory>...   dedup against today, recall
     trigger_audit.py latency --project <repo> the hook's own time, p50 and p95
     trigger_audit.py label <trajectory>...    recall labels into raw/
+    trigger_audit.py suggest [labels]         the similarity threshold, from those labels
 """
 
 from __future__ import annotations
@@ -460,6 +461,8 @@ def latency(argv: list[str]) -> int:
     parser.add_argument("--with-translation", action="store_true",
                         help="번역을 켠 종단 수치. 발화마다 꼬리를 달아 캐시를 피한다")
     parser.add_argument("--host", default="claude")
+    parser.add_argument("--search", action="store_true",
+                        help="검색 데몬을 켜고 잰다. 없으면 훅이 데몬에 묻지 않는다 (PR ① 과 같은 경로)")
     args = parser.parse_args(argv)
     project = args.project.expanduser().resolve()
     here = Path(__file__).resolve().parent
@@ -477,13 +480,29 @@ def latency(argv: list[str]) -> int:
         transcript = root / "transcript.jsonl"
         transcript.write_text("", encoding="utf-8")
         env = dict(os.environ) | {"PYTHONIOENCODING": "utf-8"}
+        if args.search:
+            import inject
+            import search
+
+            if inject.SUGGEST_MIN is None:
+                print("`inject.SUGGEST_MIN` 이 없어 훅이 데몬에 묻지 않는다 — 데몬 있음은 잴 것이 없다")
+                return 1
+            env.pop("WIKI_SEARCH", None)
+            # Started and warm on this copy before the clock runs: the first
+            # request for a repository builds its index.
+            for _attempt in range(120):
+                if search.ask("warm", target, "hook", 5.0, wait=120) is not None:
+                    break
+                time.sleep(1)
+        else:
+            env["WIKI_SEARCH"] = "off"
         if not args.with_translation:
             # The switches `test_inject.py` already uses. The cache answers
             # before the key is consulted, so it is redirected too.
             env |= {"GEMINI_API_KEY": "", "TRANSLATE_ENV": str(root / "absent.env"),
                     "TRANSLATE_CACHE": str(root / "cache.sqlite3")}
         print(f"# 훅 지연 — {args.runs}회, 번역 {'켬' if args.with_translation else '끔'}, "
-              f"호스트 {args.host}\n")
+              f"호스트 {args.host}, 검색 데몬 {'있음' if args.search else '없음'}\n")
         print("| 발화 | p50 (ms) | p95 (ms) |\n| --- | ---: | ---: |")
         for name, text in UTTERANCES.items():
             times = []
@@ -720,7 +739,103 @@ def label_turns(argv: list[str]) -> int:
     return 0
 
 
-COMMANDS = {"replay": replay, "latency": latency, "label": label_turns}
+# ---- suggest ------------------------------------------------------------------
+
+
+def sweep(turns: list[dict], key: str, k: int) -> list[tuple[float, int, int, int]]:
+    """`(threshold, suggested, correct, truth)` at every score that occurs.
+
+    A turn suggests its top `k` eligible pages scoring at least the
+    threshold — what `inject.suggest` does. Truth is the labels' `extra`,
+    the pages the regex missed.
+    """
+
+    truth = sum(len(t["extra"]) for t in turns)
+    scores = sorted({h[key] for t in turns for h in t["eligible"][:k] if h[key] is not None})
+    out = []
+    for floor in scores:
+        suggested = correct = 0
+        for t in turns:
+            ranked = sorted((h for h in t["eligible"] if h[key] is not None),
+                            key=lambda h: -h[key])[:k]
+            picked = [h["name"] for h in ranked if h[key] >= floor]
+            suggested += len(picked)
+            correct += len(set(picked) & set(t["extra"]))
+        out.append((floor, suggested, correct, truth))
+    return out
+
+
+def suggest_eval(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description="리콜 라벨로 유사도 보조의 문턱을 정한다")
+    parser.add_argument("labels", nargs="?", type=Path,
+                        default=Path(__file__).resolve().parents[1] / "raw/recall-labels.jsonl")
+    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[2],
+                        help="라벨의 repo 이름을 찾을 상위 폴더")
+    parser.add_argument("--no-english", action="store_true", help="질의를 발화 원문만으로")
+    parser.add_argument("--precision", type=float, default=0.6)
+    args = parser.parse_args(argv)
+
+    import search
+    import searchd
+    import translate
+    from inject import HANGUL, MAX_RENDERED
+
+    rows = trajectory.read(args.labels)
+    disputed = [r for r in rows if r.get("disputed")]
+    turns = [r for r in rows if not r.get("disputed")]
+    if not args.no_english:
+        # The hook's own rule: a rendering only for Korean under the length
+        # limit, and a failed one is the original alone.
+        wanted = [i for i, t in enumerate(turns)
+                  if HANGUL.search(t["utterance"]) and len(t["utterance"]) <= MAX_RENDERED]
+        done = translate.translate([turns[i]["utterance"] for i in wanted], translate.KO_EN,
+                                   time.monotonic() + 600)
+        for i, english in zip(wanted, done):
+            if english != turns[i]["utterance"]:
+                turns[i]["english"] = english
+
+    embedder = searchd.Embedder(search.cache_dir())
+    embedder.start()
+    for repo in sorted({t["repo"] for t in turns}):
+        project = (args.root / repo).resolve()
+        available = pages(repo, project)
+        always = {label(p) for _s, _b, p in match_pages("·", available)}
+        judged = set(candidates(available, always))
+        pool = searchd.Pool(project, "hook", embedder)
+        pool.refresh()
+        while not pool.complete() and embedder.state != "off":
+            time.sleep(0.5)
+        for t in (t for t in turns if t["repo"] == repo):
+            query = t["utterance"] + ("\n" + t["english"] if t.get("english") else "")
+            taken = set(t["regex"]) | always
+            t["eligible"] = [h | {"name": label(Path(h["path"]))} for h in pool.search(query, 60)
+                             if label(Path(h["path"])) in judged - taken]
+
+    print(f"# 유사도 보조 문턱 — 라벨 {len(rows)}턴, disputed {len(disputed)}턴 제외, "
+          f"평가 {len(turns)}턴\n")
+    print(f"질의: 발화 원문{'' if args.no_english else ' + 영어본'} · 벡터: {embedder.state} · "
+          f"정답(정규식이 놓친 페이지) {sum(len(t['extra']) for t in turns)}개, "
+          f"그런 턴 {sum(bool(t['extra']) for t in turns)}턴\n")
+    print(f"기본 규칙: 정밀도 {args.precision:.0%} 이상 가운데 리콜이 가장 큰 문턱\n")
+    print("| 점수 | k | 문턱 | 제안 | 맞음 | 정밀도 | 리콜 |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+    for key in ("cos", "rrf"):
+        for k in (1, 2):
+            rows_ = sweep(turns, key, k)
+            ok = [r for r in rows_ if r[1] and r[2] / r[1] >= args.precision]
+            best = max(ok, key=lambda r: (r[2], r[0])) if ok else None
+            if best is None:
+                top = max(rows_, key=lambda r: r[2] / r[1] if r[1] else 0, default=None)
+                note = (f"최고 정밀도 {top[2] / top[1]:.0%} (문턱 {top[0]}, 제안 {top[1]})"
+                        if top and top[1] else "제안 없음")
+                print(f"| {key} | {k} | 없음 | — | — | {note} | — |")
+                continue
+            floor, suggested, correct, truth = best
+            print(f"| {key} | {k} | {floor} | {suggested} | {correct} | "
+                  f"{correct / suggested:.0%} | {correct / max(1, truth):.0%} |")
+    return 0
+
+
+COMMANDS = {"replay": replay, "latency": latency, "label": label_turns, "suggest": suggest_eval}
 
 
 if __name__ == "__main__":
