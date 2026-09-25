@@ -1,0 +1,161 @@
+# 2묶음 — 검색 데몬과 위키 챗 (5~6단계)
+
+전체 설계와 단계 표는 [개요](token-diet.md)에 있다. 문턱의 근거가 되는 라벨과 지연 측정은
+[1묶음](token-diet-1-hook.md)이 만든다.
+
+목표. 정규식이 놓친 규칙을 한 줄로 덧붙이고, 위키 챗이 파일을 통째로 읽는 대신 필요한
+조각만 찾는다. 훅은 느려지지 않고, 정규식 결과는 한 글자도 안 바뀐다.
+
+## 2026-09-25 구체화에서 정한 것
+
+| 질문 | 고른 것 |
+| --- | --- |
+| 데몬 수명 | 기계당 하나. 훅이 띄우고, 유휴 3시간이면 스스로 끝난다 |
+| 임베딩 런타임 | `onnxruntime` + `tokenizers`. `multilingual-e5-small` int8 ONNX |
+| 훅 후보 풀 | 규칙(`operator`·`craft`) + 대상 저장소 `.wiki/*.md`. 결정 기록은 뺀다 |
+| 질의문 | 발화 원문 + 훅이 만든 영어본. 번역이 실패한 턴은 원문만 |
+| 낡은 데몬 | 응답에 버전을 싣고, 다르면 훅이 교체한다 |
+| 접근 제한 | `127.0.0.1` + 토큰 파일 |
+| 챗 1차 탐색 | Claude 챗에만 `--agents` 로 Haiku. Codex 챗은 `search` 도구만 |
+| 챗 색인 | 저장소의 모든 `.md` |
+| 챗 평가 질문 | `raw/chat/` 기록에서 10개를 골라 여기 적고, 사람이 빼거나 바꾼다 |
+
+## PR 과 단계
+
+| PR | 단계 |
+| --- | --- |
+| ④ | 5 데몬 + 훅 보조 + `SCHEMA.md`·`index.md` 수정 |
+| ⑤ | 6 챗 검색 |
+
+## 5단계 — 검색 데몬과 훅 보조 (PR ④)
+
+### 파일
+
+| 파일 | 무엇 |
+| --- | --- |
+| `tool/searchd.py` | 데몬. 표준 `http.server`, 요청 세 가지: `POST /search`, `POST /quit`, `GET /health` |
+| `tool/search.py` | 클라이언트 함수 `ask(query, project, pool, timeout)` 와 챗용 CLI. 훅도 이것을 부른다 |
+| `requirements-search.txt` | `onnxruntime`, `tokenizers`, `numpy`. 없으면 데몬은 BM25 만으로 뜬다 |
+
+### 수명 — `craft/client-lifecycle-in-one-scope` 의 네 질문
+
+| 질문 | 답 |
+| --- | --- |
+| 생성 | 훅이 `/search` 에 답을 못 받으면 데몬을 분리 실행한다. Windows 는 `DETACHED_PROCESS`, 그 밖은 `start_new_session`. 이번 턴은 정규식만. 두 훅이 동시에 띄워도 포트 바인드가 잠금이다 — 둘째는 바인드에 실패하고 조용히 끝난다 |
+| 공유 | 기계당 한 프로세스, 포트 고정(8790 — 챗 8787, 미러 9090 옆). 요청이 저장소 경로를 싣고, 데몬은 저장소 경로별로 색인을 따로 들고 있다. 모델은 한 번만 올린다 |
+| 닫기 | 마지막 요청(과 7단계 타이머) 이후 3시간이면 스스로 끝난다. `/quit` 는 토큰이 맞을 때만. 끝날 때 상태 파일을 지운다 |
+| 소유 | 사용자. 상태 파일 `~/.cache/ai-coding-agent-wiki/searchd.json` 에 `port`·`token`·`pid`·`version`. 데몬이 죽고 파일만 남으면 다음 훅이 연결 실패로 알아채고 새로 띄운다 |
+
+버전은 `searchd.py` 파일의 해시다. `/search` 응답에 실리고, 훅이 자기 쪽 파일 해시와 다르면
+`/quit` 를 보내고 새로 띄운다. 그 턴은 정규식만이다. 위키를 `git pull` 로 올려도 다음 턴에 교체된다.
+
+토큰은 데몬이 기동할 때 만든 임의 값이다. 훅은 상태 파일에서 읽어 헤더로 보낸다. 포트를 다른
+프로세스가 쥐고 있으면 토큰이 맞지 않아 "보조 없음" 이 된다. 질의에 발화 원문이 들기 때문이다.
+
+### 색인
+
+- 청크. 페이지를 `##`·`###` 헤딩 단위로 자른다. 청크 앞에 문서 제목과 헤딩 경로를 붙여 색인한다 —
+  Contextual Retrieval 의 싼 형태, LLM 호출 없음
+- BM25. 토큰은 영어 소문자 단어 + 한글 문자 bi-gram 을 섞어 자른다. 허브 페이지는 이제 영어라,
+  개요가 적었던 한국어 bi-gram 만으로는 허브 페이지에 거의 안 걸린다. 영어본 질의가 그 짝이다
+- 벡터. e5 규약대로 청크는 `passage: `, 질의는 `query: ` 접두어. 평균 풀링 후 정규화
+- 두 순위를 RRF(k=60)로 합친다. 페이지 점수는 그 페이지 청크의 최고점
+- 벡터 캐시는 `~/.cache/ai-coding-agent-wiki/vectors.sqlite3`, 키는 `sha256(모델 id + 청크 본문)`.
+  기동 때와 요청 때 파일 수정 시각이 바뀐 페이지만 다시 자르고, 바뀐 청크만 다시 계산한다
+- 모델 파일. 첫 기동에 Hugging Face 에서 `urllib` 로 받는다(약 120MB). `huggingface_hub` 는 안 쓴다.
+  받는 동안은 BM25 만으로 답한다
+
+`pool` 은 두 가지다. `hook` 은 주입 대상 규칙과 `.wiki/*.md`, `chat` 은 저장소의 모든 `.md` 와 허브 규칙.
+
+### 훅 쪽 — `inject.py`
+
+순서는 지금 그대로 두고 끝에 한 단계를 붙인다.
+
+1. `match_pages` (정규식, 원문)
+2. `rendering` (영어본)
+3. `search.ask(원문 + 영어본, project, "hook", timeout=0.15)`
+4. 정규식이 고르지 않았고, 이 세션에 이미 전문으로 안 실린 페이지 중 문턱을 넘는 상위 2장까지를
+   색인 아래 따로 붙인다
+
+```
+Possibly relevant, by similarity rather than a trigger. Open the page if it applies.
+- `craft/measure-after-the-last-change` — <Rule. 첫 문장> (`craft/measure-after-the-last-change.md`)
+```
+
+- 전문은 싣지 않는다. 한 줄과 경로뿐이다
+- trajectory 행에 `suggested` 로 따로 적는다. `injected`·`full` 과 섞지 않는다
+- `craft/hooks-fail-open`. 연결 실패·시간 초과·토큰 불일치·버전 불일치·JSON 오류 전부 "보조 없음" 이고,
+  `systemMessage` 에도 적지 않는다. 데몬 기동 실패는 stderr 에 예외 이름만
+
+### 문턱 — 1단계 라벨로 정한다
+
+라벨의 "실렸어야 할 페이지" 에서 정규식이 고른 것을 뺀 나머지가 보조의 정답이다. `disputed` 턴은 뺀다.
+
+- 기본 규칙. 보조가 붙인 것 중 정답인 비율(정밀도)이 60% 이상인 문턱 가운데, 정답을 가장 많이
+  찾는(리콜) 문턱을 고른다. 상위 k 는 1 과 2 를 둘 다 재고 적는다
+- 정밀도 60% 를 어떤 문턱으로도 못 넘으면 보조를 켜지 않는다. 데몬은 챗용으로만 남는다
+- e5-small 의 리콜이 모자라 보이면 `bge-m3` 와 같은 표로 비교한다. 크기가 몇 배라 표가 이득을 보일 때만
+
+결과 요약(문턱, k, 정밀도, 리콜, 표본 수, disputed 수)은 이 문서 아래에 적고 커밋한다. 라벨 원본은 `raw/` 에 남는다.
+
+### SCHEMA.md·index.md
+
+- `SCHEMA.md` "What is not done" 의 임베딩 줄. 지금 작업트리에 "Under review" 문장이 들어가 있다.
+  PR ④ 에서 "로컬 모델을 정규식 보조로만 쓴다, 네 실패 지점은 이렇게 막았다" 로 확정한다
+- `index.md` 첫 문단의 "No embeddings, no vector database." 를 같은 뜻으로 고친다
+
+### 착수 전에 확인할 것
+
+- e5-small int8 질의 한 번의 CPU 시간과 데몬 상주 메모리. 표로 적는다
+- Windows 에서 localhost HTTP 왕복이 150ms 예산 안에서 얼마를 먹는가
+
+완료 기준. `latency` 로 데몬 있음 p95 증가 50ms 이하, 데몬 없음은 PR ① 기준과 같다. 정규식이 고른
+이름 집합은 `replay` 에서 PR ② 결과와 한 글자도 다르지 않다.
+
+## 6단계 — 위키 챗 검색 (PR ⑤)
+
+### 도구
+
+```
+python tool/search.py "<질의>" --project <repo> [--k 8]
+```
+
+- 챗의 기본 도구 `READ_TOOLS` 에 이미 `Bash` 가 있다. MCP 서버는 만들지 않는다
+- 출력. 청크 본문, `경로:줄`, 그 페이지의 `.wiki/graph.json` 1-hop 이웃의 제목과 첫 문단
+- 데몬이 없으면 이 CLI 가 띄우고 기다린다. 챗은 느려져도 된다 — 개요의 조건이다
+
+### `tool/prompts/chat-answer.md`
+
+절차 1·2 를 고친다. "색인과 계획으로 권위 문서를 찾는다 → 해당 절을 읽는다" 를
+"`search.py` 로 먼저 찾는다 → 근거 확인이 필요한 부분만 `Read` 에 `offset`·`limit` 을 줘서 읽는다" 로.
+출력 규칙(경로:줄 인용)은 그대로다.
+
+### Haiku 1차 탐색 — Claude 챗만
+
+- `chat_session._spawn` 이 Claude 챗을 띄울 때 `--agents` 로 `scout` 를 정의한다.
+  모델 `haiku`, 도구 `Bash,Read,Grep,Glob`, 할 일은 "search.py 로 찾고 근거 경로와 요약만 돌려준다"
+- 정의만으로는 불리지 않는다. `_spawn` 은 `--tools` 와 `--allowedTools` 를 둘 다 `READ_TOOLS`
+  (`Bash,Read,Glob,Grep`)로 넘기므로 `Agent` 도구가 없다. Claude 챗이 `scout` 를 쓸 때만 두 목록에
+  `Agent` 를 더한다. Codex 챗과 `oneshot` 경로는 그대로다
+- 본 모델의 시스템 프롬프트에 "첫 탐색은 `scout` 에 맡긴다" 를 넣는다
+- 확인. 실제 챗 한 번에서 stream-json 에 `scout` 호출이 찍히고 그 하위 호출의 모델이 Haiku 인지 본다.
+  정의가 있는 것과 불린 것은 다르다
+- 충돌 하나. 챗 세션에도 훅이 돌면 `operator/agent-delegation` 이 "요청 없이 서브에이전트 금지" 로
+  실린다. 챗 시스템 프롬프트가 "이 챗에서 `scout` 위임은 운영자가 허락한 것" 이라고 명시해 둘이
+  부딪치지 않게 한다. 작업 세션의 규칙은 그대로다
+- Codex 챗(`codex:` 모델)은 `scout` 없이 `search.py` 만
+
+### 평가 — 질문 10개
+
+`raw/chat/wiki.jsonl`·`progress.jsonl`·`diagnose.jsonl` 에서 실제 질문 10개를 골라 PR ⑤ 에서 이
+자리에 적는다. 채널별로 고르게, 답이 문서 여러 장에 걸친 질문을 절반 이상. 사람이 빼거나 바꾼 뒤
+잰다.
+
+| 잴 것 | 어디서 |
+| --- | --- |
+| 입력 토큰 (캐시 읽기·쓰기 포함) | stream-json 의 `usage` |
+| 근거 인용 수와 그 인용이 실제로 맞는가 | 답의 `경로:줄` 을 사람이 대조 |
+| 답까지 걸린 시간 | 챗 로그 |
+
+같은 질문을 전후로 한 번씩, 같은 모델과 effort 로 돌린다. 완료 기준은 입력 토큰이 줄고, 맞는
+인용 수가 줄지 않는 것이다.

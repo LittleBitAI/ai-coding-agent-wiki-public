@@ -211,7 +211,9 @@ goes to, are held by [`MAINTENANCE.md`](MAINTENANCE.md).
 - No embeddings and no vector database. The reader is already a good model,
   and standing another retrieval model in front of it is not elegant; it adds
   four more failure sites — a key, a network, a quota, and vectors that go
-  stale. A listing is enough.
+  stale. A listing is enough. Under review: a local model that answers each of
+  the four, as a supplement the regex triggers keep authority over —
+  [token-diet plan](docs/plans/token-diet.md).
 - A target repository's knowledge is not brought here. The `project` scope
   lives over there.
 - Nothing that needs judgement is mechanised. False positives stop the work.
