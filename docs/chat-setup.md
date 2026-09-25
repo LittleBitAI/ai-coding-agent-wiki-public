@@ -43,7 +43,13 @@ python tool/setup_chat.py install --agent claude
 python tool/setup_chat.py install --agent both
 ```
 
-명령은 `.venv`에 필요한 Python 패키지를 설치하고, `npm ci`와 화면 빌드를 실행한다.
+명령은 `.venv`에 필요한 Python 패키지(검색용 `requirements-search.txt` 포함)를 설치하고,
+검색 모델(약 120MB)을 `~/.cache/ai-coding-agent-wiki/models/e5`에 받은 뒤 `npm ci`와 화면 빌드를 실행한다.
+모델을 받지 못해도 설치는 계속되고, 검색은 키워드만으로 동작하다가 검색 서버가 다음에 켜질 때 다시 받는다.
+
+Windows에서 Python 쪽만 먼저 준비하려면 위키 폴더의 `install.cmd`를 실행한다. `.venv` 생성,
+패키지 설치, 모델 다운로드까지 하고, 화면 빌드와 로그인은 위 `install` 명령에 맡긴다.
+
 그다음 각 CLI의 로그인 상태를 확인한다. 이미 로그인했다면 유지하고, 아니라면
 공식 로그인 화면을 연다. 브라우저에서 **본인의 계정**을 확인하고 승인을 완료한다.
 로그인이 확인되지 않으면 설치 완료로 표시하지 않는다.

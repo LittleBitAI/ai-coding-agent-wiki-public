@@ -65,12 +65,18 @@ def install(agents, workspace):
         venv.EnvBuilder(with_pip=True).create(ROOT / ".venv")
     if not python.is_file():
         raise ValueError(".venv에 Python이 없습니다. 다른 PC의 가상환경을 복사하지 말고 이 PC에서 새로 만드세요.")
-    print("1/3: 앱 전용 Python 환경과 패키지를 준비합니다.", flush=True)
+    print("1/3: 앱 전용 Python 환경과 패키지, 검색 모델을 준비합니다.", flush=True)
     result = subprocess.run([str(python), "-c", "import sys; sys.exit(sys.version_info < (3, 11))"], cwd=ROOT)
     if result.returncode:
         raise ValueError("기존 .venv의 Python이 3.11 미만이거나 실행되지 않습니다. 새 Python으로 가상환경을 준비하세요.")
-    subprocess.run([str(python), "-m", "pip", "install", "-r", str(ROOT / "requirements-chat.txt")],
-                   cwd=ROOT, check=True)
+    # The search packages go into this .venv because the chat hands its own
+    # interpreter to the search command, which starts the daemon with it.
+    subprocess.run([str(python), "-m", "pip", "install", "-r", str(ROOT / "requirements-chat.txt"),
+                    "-r", str(ROOT / "requirements-search.txt")], cwd=ROOT, check=True)
+    # Optional: without the model the daemon ranks with BM25 and retries the
+    # download on its next start, so a blocked network does not stop the install.
+    if subprocess.run([str(python), str(ROOT / "tool/searchd.py"), "--fetch-model"], cwd=ROOT).returncode:
+        print("검색 모델을 받지 못했습니다. 키워드 검색으로 동작하며, 검색 서버가 다음에 켜질 때 다시 받습니다.")
     print("2/3: 화면 패키지를 설치하고 빌드합니다. 처음에는 몇 분 걸릴 수 있습니다.", flush=True)
     npm = cli_command("npm")
     subprocess.run([*npm, "ci"], cwd=ROOT / "web", check=True)

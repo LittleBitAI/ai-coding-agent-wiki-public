@@ -30,10 +30,15 @@ threshold was precise enough to switch it on
 ([plan](plans/token-diet-2-search.md)). The triggers stay the only authority
 over what the hook injects.
 
-For the vector half, install `python -m pip install -r <wiki path>/requirements-search.txt`
-into the same Python. Without it the daemon ranks with BM25 alone. The model
-(about 120 MB) downloads on first start into `~/.cache/ai-coding-agent-wiki/`,
-next to the state file `searchd.json` and the vector cache.
+The vector half needs `requirements-search.txt` in the Python that starts the
+daemon. That is normally the chat's `.venv`, since the chat hands its own
+interpreter to the search command. In a repository that sets `keep_alive`, a
+hook may start it first with the hooks' Python, so install it there as well.
+`tool/setup_chat.py install` and `install.cmd` both
+install it and download the model (about 120 MB) into
+`~/.cache/ai-coding-agent-wiki/models/e5`, next to the state file
+`searchd.json` and the vector cache. Without the packages the daemon ranks with
+BM25 alone; without the model it downloads it on its next start.
 
 ## 2. Configure the project
 
