@@ -11,6 +11,7 @@ from __future__ import annotations
 # time limit kills this.
 import hook_diagnostics  # noqa: F401
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -19,7 +20,7 @@ from pathlib import Path
 
 import trajectory
 import translate
-from wikilib import WIKI, front_matter
+from wikilib import WIKI, front_matter, rule_paragraph
 
 INJECTABLE = {"landmine", "contract"}
 SLOT = re.compile(r"\{([a-z][a-z0-9_]*)\}")
@@ -60,6 +61,29 @@ MAX_RENDERED = 4000
 RULE_BUDGET = "rule_budget"
 REPO_BUDGET = "repo_budget"
 
+# Each host's ceiling on `additionalContext`, in UTF-8 bytes. Past it the host
+# stores the injection in a file and hands the session a 2 KB preview, so a
+# page carried on that turn was not read. Bytes, because a byte-level BPE
+# never makes more tokens than bytes: under the ceiling in bytes is under it in
+# tokens. Characters give no such bound — one Hangul syllable can be several
+# tokens.
+#
+# Codex: the install sets `additionalContextLimit = 12000`, in tokens
+# (`tool/apply.py` gives the default as "2,500 tokens"), so 12,000 bytes is on
+# the safe side. Claude: no published unit, so it was read off the transcripts
+# on 2026-09-25 — 3,784 injections, the largest kept whole 9,896 characters
+# (19,466 bytes), the smallest sent to a file 10,015 characters. Claude counts
+# characters, and characters never exceed bytes, so 9,800 bytes is under it.
+# `trigger_audit replay` prints the same two numbers for the sessions it reads.
+#
+# A host missing here gets no deduplication. Set low, the error is sending
+# full text more often, which is the right direction to be wrong in.
+LIMIT = {"codex": 12000, "claude": 9800}
+
+# What a compact leaves in each host's transcript. Unescaped quotes on purpose:
+# the same words inside a message are JSON-escaped and do not match.
+COMPACTED = (b'"subtype":"compact_boundary"', b'"type":"compacted"')
+
 # How many decision records go in as full text in one turn. What is over that
 # is not dropped; its name stays.
 MAX_DECISIONS = 3
@@ -75,6 +99,17 @@ def budget(adapter: str | None, slot: str, project: str | Path | None = None) ->
         return None
 
 
+def first_sentence(body: str) -> str:
+    """The rule paragraph's opening sentence, without the `Rule.` word."""
+
+    words = " ".join(rule_paragraph(body).split()[1:])
+    return re.split(r"(?<=\.)\s", words, maxsplit=1)[0]
+
+
+def title_of(body: str, path: Path) -> str:
+    return next((x[2:].strip() for x in body.splitlines() if x.startswith("# ")), path.stem)
+
+
 def shrink(body: str, path: Path, severity: str, hard: bool) -> str:
     """Shorten the full text. Never remove it.
 
@@ -83,17 +118,48 @@ def shrink(body: str, path: Path, severity: str, hard: bool) -> str:
     still there — which is the whole difference from dropping it.
     """
 
-    title = next((x[2:].strip() for x in body.splitlines() if x.startswith("# ")), path.stem)
-    head = f"<!-- wiki:{label(path)} ({severity}, shortened) -->\n# {title}"
-    if hard:
-        return head + f"\n\nFull page: `{label(path)}.md`"
-    # Both spellings. Page bodies turn English in stage 2, and a shrink that
-    # only knows `규칙.` would leave the title with no rule under it exactly
-    # when the budget is tight -- the turn where the rule matters most.
-    rule = next(
-        (x for x in body.splitlines() if x.startswith(("규칙.", "Rule."))), ""
-    )
+    head = f"<!-- wiki:{label(path)} ({severity}, shortened) -->\n# {title_of(body, path)}"
+    rule = "" if hard else rule_paragraph(body)
     return head + (f"\n\n{rule}" if rule else "") + f"\n\nFull page: `{label(path)}.md`"
+
+
+def repeated(body: str, path: Path, severity: str, seen: bool = True) -> str:
+    """What a page declaring `repeat: rule` carries when not in full.
+
+    The title, the rule paragraph whole, and the path. The declaration says
+    every clause that must hold on every turn sits inside that paragraph. A
+    one-sentence form was weighed and dropped in the plan's first review
+    round — it lost exactly those clauses.
+
+    Two occasions. The session has already seen the page in full, or this
+    turn is too large for the host to show whole (`compose`). The tail says
+    which, because "loaded earlier" would be false on the second.
+    """
+
+    tail = (f"Loaded in full earlier this session: `{label(path)}.md`" if seen else
+            f"Full page, left out because this turn is over the host's ceiling: `{label(path)}.md`")
+    return (
+        f"<!-- wiki:{label(path)} ({severity}, {'repeated' if seen else 'rule only'}) -->\n"
+        f"# {title_of(body, path)}\n\n{rule_paragraph(body)}\n\n{tail}"
+    )
+
+
+def whole(severity: str, body: str, path: Path) -> str:
+    return f"<!-- wiki:{label(path)} ({severity}) -->\n{body}"
+
+
+def sent_whole(rules: list, parts: list[str]) -> list[list[str]]:
+    """`[name, tag]` of each page that went out in full — tagged after the
+    slots were filled and the text translated, so it is what actually left."""
+
+    return [[label(p), tag(b)] for (s, b, p), part in zip(rules, parts)
+            if part == whole(s, b, p)]
+
+
+def tag(text: str) -> str:
+    """A short fingerprint. Recorded in place of the text it stands for."""
+
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 
 
 def rule_index(rules: list) -> str:
@@ -109,15 +175,12 @@ def rule_index(rules: list) -> str:
     sentence is inside the part the host keeps.
 
     A page with no `Rule.` paragraph, which is repository knowledge, is left
-    out of the index.
+    out of the index. With a known ceiling it rides only on a turn still over
+    it — see `compose`.
     """
 
-    lines = []
-    for _s, body, path in rules:
-        para = re.search(r"^(?:Rule|규칙)\.\s+(.+?)(?:\n\s*\n|\Z)", body, re.M | re.S)
-        if para:
-            first = re.split(r"(?<=\.)\s", " ".join(para.group(1).split()), maxsplit=1)[0]
-            lines.append(f"- `{label(path)}` — {first}")
+    lines = [f"- `{label(path)}` — {first_sentence(body)}"
+             for _s, body, path in rules if rule_paragraph(body)]
     if not lines:
         return ""
     return (
@@ -130,7 +193,11 @@ def rule_index(rules: list) -> str:
 def fit(parts: list[str], rules: list, limit: int | None) -> tuple[list[str], int]:
     """Trim to the budget. Over it, still nothing is thrown away.
 
-    Lowest severity first, down to the one rule line, then to the title alone.
+    Lowest severity first, down to the rule paragraph, then to the title
+    alone — but only for a page that has no rule paragraph. The paragraph is
+    the floor, the same one `repeated` stands on: below it the clauses that
+    hold on every turn are gone. So the budget can be exceeded, and
+    `trigger_audit` already calls it a target rather than a ceiling.
     With no budget this does nothing, which is the default.
     """
 
@@ -143,6 +210,8 @@ def fit(parts: list[str], rules: list, limit: int | None) -> tuple[list[str], in
             if sum(len(p) for p in parts) <= limit:
                 return parts, trimmed
             severity, body, path = rules[i]
+            if hard and rule_paragraph(body):
+                continue
             small = shrink(body, path, severity, hard)
             if len(small) < len(parts[i]):
                 parts[i] = small
@@ -347,16 +416,31 @@ def match_pages(prompt: str, available: list) -> list:
     return matched
 
 
-def render_parts(matched: list, rule_limit: int | None, repo_limit: int | None) -> tuple:
+def render_parts(matched: list, rule_limit: int | None, repo_limit: int | None,
+                 seen: set = frozenset(), repeatable: set = frozenset(),
+                 squeeze: bool = False) -> tuple:
     """The two axes as actually sent. The audit counts the same thing — slots
-    filled, summaries, the name list — rather than a tidier version of it."""
+    filled, summaries, the name list — rather than a tidier version of it.
+
+    `seen` holds `(name, tag(body))` for pages this session already received
+    in full; `repeatable` the names that declare `repeat: rule`. A page in
+    both goes out as `repeated`. The key carries the body's tag, so a page
+    edited mid-session is not seen and its new text goes out once in full.
+    `squeeze` sends every declaring page as its rule paragraph — see `compose`.
+    """
     decisions = sorted(
         (m for m in matched if m[2].parent.name == "decisions"),
         key=lambda m: m[2].name, reverse=True,
     )
     rules = [m for m in matched if m[2].parent.name != "decisions"]
     rules.sort(key=lambda item: 0 if item[0] == "landmine" else 1)
-    parts = [f"<!-- wiki:{label(p)} ({s}) -->\n{b}" for s, b, p in rules]
+    parts = []
+    for s, b, p in rules:
+        known = (label(p), tag(b)) in seen
+        if label(p) in repeatable and (known or squeeze) and rule_paragraph(b):
+            parts.append(repeated(b, p, s, seen=known))
+        else:
+            parts.append(whole(s, b, p))
     parts, trimmed = fit(parts, rules, rule_limit)
     return rules, decisions, parts, knowledge(decisions, repo_limit), trimmed
 
@@ -419,6 +503,165 @@ def rendering(prompt: str, deadline: float | None = None) -> str:
     )
 
 
+def repeatable(available: list) -> set[str]:
+    """The pages that declared `repeat: rule`. Any other page goes out in full
+    on every turn — the default is the safe side."""
+
+    return {label(p) for meta, _b, p in available if meta.get("repeat") == "rule"}
+
+
+def remembered(rows: list[dict], limit: int) -> set[tuple[str, str]]:
+    """What this session has seen in full, read off its own rows.
+
+    A page counts as seen when it went out in full, on a turn whose `sent`
+    was within the host's ceiling, after the last compact. Past the ceiling
+    the host put the injection in a file and showed a 2 KB preview, so the
+    full text on that turn was never read. A row with no `sent` — written
+    before this existed — counts for nothing.
+    """
+
+    seen: set[tuple[str, str]] = set()
+    for row in rows:
+        if row.get("reset"):
+            seen = set()
+        sent = row.get("sent")
+        if isinstance(sent, int) and sent <= limit:
+            seen |= {tuple(x) for x in row.get("full") or [] if len(x) == 2}
+    return seen
+
+
+def compacted(previous: dict | None, transcript: Path, txp: str, size: int) -> bool:
+    """Did the transcript compact since this session's previous turn?
+
+    Only what was appended since then is read, so a transcript of tens of MB
+    costs what one turn added. A different path, a transcript that shrank or
+    a previous row with no offset all count as a compact: `/clear` and
+    `--resume` land here, and so does anything this cannot explain.
+
+    The previous row is this session's, not the file's last line. Two
+    sessions write one trajectory in turns, and another session's larger
+    offset would skip this one's compact — `trajectory.last_row` does not
+    tell sessions apart, so it is not used here.
+    """
+
+    if previous is None:
+        return False
+    start = previous.get("tx")
+    if previous.get("txp") != txp or not isinstance(start, int) or size < start:
+        return True
+    with transcript.open("rb") as handle:
+        handle.seek(start)
+        return any(marker in handle.read() for marker in COMPACTED)
+
+
+def recall(wiki: Path | None, session: str, transcript, host: str | None) -> tuple[set, dict]:
+    """`(seen, fields)` — what this session already holds, and what to record.
+
+    Anything missing or failing means nothing is seen and every page goes
+    out in full, as it did before this existed. Wrong in that direction
+    costs tokens. The other direction — counting as seen what was never read
+    — is the failure this wiki exists to prevent, `craft/hooks-fail-open`.
+    """
+
+    limit = LIMIT.get(host or "")
+    if wiki is None or not session or not transcript or limit is None:
+        return set(), {}
+    try:
+        path = Path(str(transcript))
+        size = path.stat().st_size
+        # The path's tag, not the path: it holds a user name and a project.
+        txp = tag(str(path))
+        mine = trajectory.session_rows(trajectory.path_for(wiki), session)
+        if compacted(mine[-1] if mine else None, path, txp, size):
+            return set(), {"tx": size, "txp": txp, "reset": True}
+        return remembered(mine, limit), {"tx": size, "txp": txp}
+    except Exception:  # noqa: BLE001
+        return set(), {}
+
+
+def compose(matched: list, limits: tuple, english: str, project: str | None,
+            seen: set, repeat: set, limit: int | None) -> tuple:
+    """`render_parts` and `assemble` together, fitted to the host's ceiling.
+
+    Past the ceiling the host puts the whole injection in a file and shows the
+    session a 2 KB preview, so a full page sent on that turn is not read — it
+    only pushes everything behind it out of view. On such a turn every page
+    that declared `repeat: rule` goes as its rule paragraph, seen or not: the
+    declaration says the binding clauses are all there, and the rest was not
+    going to be read. Pages that did not declare it still go in full.
+
+    Chosen by the user on 2026-09-25 over the plan's "full text first". Claude's
+    ceiling turned out to be about 10,000 characters and an ordinary turn in
+    this repository was 10,292 bytes, so under "full first" no page was ever
+    seen on Claude and deduplication saved 7% here, 0% in ai-nara-shop.
+
+    The rule index rides only on a turn that is still over the ceiling. It
+    exists for the 2 KB preview, and a turn under the ceiling has none — there
+    it was a second copy of every paragraph's first sentence, about 1 KB a
+    turn. Dropping it there took this repository's replay from 57% to 59%,
+    and more turns now fit with their full pages. The user chose that on
+    2026-09-25, over PR #20's "index on every turn".
+    With no known ceiling the index stays, as before.
+
+    Returns `render_parts`'s five, the body, and whether it was squeezed.
+    """
+
+    def fits(body: str) -> bool:
+        return limit is not None and len(body.encode("utf-8")) <= limit
+
+    out = render_parts(matched, *limits, seen, repeat)
+    body = assemble(out[0], out[2] + out[3], english, project, index=False)
+    if fits(body):
+        return (*out, body, False)
+    squeezed = limit is not None
+    if squeezed:
+        out = render_parts(matched, *limits, seen, repeat, squeeze=True)
+        body = assemble(out[0], out[2] + out[3], english, project, index=False)
+        if fits(body):
+            return (*out, body, True)
+    return (*out, assemble(out[0], out[2] + out[3], english, project), squeezed)
+
+
+def assemble(rules: list, parts: list[str], english: str, project: str | None,
+             index: bool = True) -> str:
+    """The whole `additionalContext`, or `""` when there is nothing to send."""
+
+    if not parts and not english:
+        return ""
+    # The rule index goes first. It is a few hundred characters, and the
+    # rendering in front of it could reach 4,000 (`MAX_RENDERED`) and push
+    # every rule sentence out of the 2 KB preview. See `rule_index`.
+    blocks = []
+    listing = rule_index(rules) if index else ""
+    if listing:
+        blocks.append(listing)
+    # Before the pages, not after them. The rendering is carried even when no
+    # page matched: the utterance is agent input on every turn, and tying it
+    # to a trigger would drop it on exactly the turns no rule covers.
+    #
+    # Position is the other half of that. A host persists an injection past
+    # about 12 KB and hands the session a 2 KB preview instead; the rules
+    # alone reach 12,205 characters on an ordinary turn, so anything after
+    # them is cut. Measured on 2026-09-22 in a web chat session: the rules
+    # arrived, this block did not, and nothing said so. Behind the short
+    # index it still starts inside the preview.
+    if english:
+        blocks.append(english)
+    # The header and the source map stay on a turn where every rule was
+    # already seen. They are a few hundred characters, and a branch that
+    # drops them is a branch that can drop the repeated forms with them.
+    if parts:
+        blocks.append(
+            "Below is what the wiki loaded for this utterance. A rule marks a "
+            "place where something actually went wrong before; knowledge is "
+            "something already decided.\n\n"
+            + source_map(rules, project)
+            + "\n\n"
+            + "\n\n---\n\n".join(parts)
+        )
+    return "\n\n---\n\n".join(blocks)
+
+
 def main() -> int:
     # The utterance coming in and the injection going out are both Korean. The
     # encoding is not left to the environment.
@@ -428,6 +671,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="발화에 맞는 위키 페이지를 넣는다")
     parser.add_argument("--adapter", default=None, help="adapters/<이름>.toml")
     parser.add_argument("--project", default=None, help="대상 저장소. `.wiki/` 를 읽는다")
+    parser.add_argument("--host", default=None, help="claude|codex. 없으면 세션 내 중복 제거를 안 한다")
     args = parser.parse_args()
 
     try:
@@ -449,12 +693,22 @@ def main() -> int:
     # and the rendering behind it got zero seconds and was dropped. The block
     # the person checks goes first; the pages take what is left.
     deadline = time.monotonic() + BUDGET
-    matched = match_pages(prompt, pages(args.adapter, args.project))
+    available = pages(args.adapter, args.project)
+    matched = match_pages(prompt, available)
     english = rendering(prompt, deadline)
     matched = localised(matched, deadline)
-    rules, decisions, rule_parts, repo_parts, trimmed = render_parts(
-        matched, budget(args.adapter, RULE_BUDGET, args.project),
-        budget(args.adapter, REPO_BUDGET, args.project),
+    # Unlike reading, writing has to work before `.wiki/` exists.
+    # `project_wiki` returns `None` when it does not, which would leave a
+    # freshly attached repository silently recording nothing at all.
+    wiki = Path(args.project).expanduser() / ".wiki" if args.project else None
+    session = str(payload.get("session_id") or "")
+    seen, where = recall(wiki, session, payload.get("transcript_path"), args.host)
+    limits = (budget(args.adapter, RULE_BUDGET, args.project),
+              budget(args.adapter, REPO_BUDGET, args.project))
+    # Without a host the ceiling is unknown, so nothing is squeezed either.
+    rules, decisions, rule_parts, repo_parts, trimmed, body, _squeezed = compose(
+        matched, limits, english, args.project, seen, repeatable(available),
+        LIMIT.get(args.host or ""),
     )
     parts = rule_parts + repo_parts
 
@@ -463,79 +717,61 @@ def main() -> int:
     # it — `tool/session_state.py`.
 
     loaded = [label(p) for _s, _b, p in rules + decisions]
+    if body:
+        # This one line lands on the person's screen as written. The rule
+        # inverted and this stayed Korean, because the reader here is the
+        # person. `operator/english-progress` holds that boundary.
+        note = f"위키 주입: {', '.join(loaded[:6])}" if loaded else "위키: 걸린 규칙 없음"
+        heads = [part.split("\n", 1)[0] for part in rule_parts]
+        again = sum(", repeated) -->" in head for head in heads)
+        squeezed = sum(", rule only) -->" in head for head in heads)
+        if again:
+            note += f" · 이미 실림 {again}장"
+        if squeezed:
+            note += f" · 한도로 규칙 문단만 {squeezed}장"
+        if trimmed:
+            note += f" · 줄임 {trimmed}장"
+        if english:
+            note += " · 영어본 첨부"
+        json.dump(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "UserPromptSubmit",
+                    "additionalContext": body,
+                },
+                "systemMessage": note,
+            },
+            sys.stdout,
+            ensure_ascii=False,
+        )
+        sys.stdout.flush()
 
+    # Recorded last, after the output is out. Recorded first, a turn that
+    # died building the body or writing stdout still left `full` behind, and
+    # the next turn counted pages that never arrived as seen. A record that
+    # fails leaves no `full`, so the next turn sends the pages in full again.
+    #
     # A turn that matched nothing is recorded too. What was not carried is as
     # much evidence about routing as what was, and reading only the utterances
     # that matched nothing is the one way to find a miss.
-    #
-    # Unlike reading, writing has to work before `.wiki/` exists.
-    # `project_wiki` returns `None` when it does not, which would leave a
-    # freshly attached repository silently recording nothing at all.
     failed = trajectory.record(
-        Path(args.project).expanduser() / ".wiki" if args.project else None,
+        wiki,
         prompt,
         loaded,
         sum(len(part) for part in parts),
-        str(payload.get("session_id") or ""),
+        session,
+        # The whole `additionalContext` in UTF-8 bytes — index, rendering,
+        # source map and separators included. `cost` counts only the rule and
+        # decision blocks; this is the number a host ceiling is compared with.
+        sent=len(body.encode("utf-8")),
+        full=sent_whole(rules, rule_parts),
+        **where,
     )
     if failed:
         # The name and nothing else. Non-ASCII in the message kills this very
         # stderr write under a cp949 console, which is how the report of a
         # failure became a second failure.
         print(f"trajectory skipped: {failed}", file=sys.stderr)
-
-    if not parts and not english:
-        return 0
-
-    # The rule index goes first. It is a few hundred characters, and the
-    # rendering in front of it could reach 4,000 (`MAX_RENDERED`) and push
-    # every rule sentence out of the 2 KB preview. See `rule_index`.
-    blocks = []
-    index = rule_index(rules)
-    if index:
-        blocks.append(index)
-    # Before the pages, not after them. The rendering is carried even when no
-    # page matched: the utterance is agent input on every turn, and tying it
-    # to a trigger would drop it on exactly the turns no rule covers.
-    #
-    # Position is the other half of that. A host persists an injection past
-    # about 12 KB and hands the session a 2 KB preview instead; the rules
-    # alone reach 12,205 characters on an ordinary turn, so anything after
-    # them is cut. Measured on 2026-09-22 in a web chat session: the rules
-    # arrived, this block did not, and nothing said so. Behind the short
-    # index it still starts inside the preview.
-    if english:
-        blocks.append(english)
-    if parts:
-        blocks.append(
-            "Below is what the wiki loaded for this utterance. A rule marks a "
-            "place where something actually went wrong before; knowledge is "
-            "something already decided.\n\n"
-            + source_map(rules, args.project)
-            + "\n\n"
-            + "\n\n---\n\n".join(parts)
-        )
-    body = "\n\n---\n\n".join(blocks)
-    # This one line lands on the person's screen as written. The rule inverted
-    # and this stayed Korean, because the reader here is the person.
-    # `operator/english-progress` holds that boundary.
-    note = f"위키 주입: {', '.join(loaded[:6])}" if loaded else "위키: 걸린 규칙 없음"
-    if trimmed:
-        note += f" · 줄임 {trimmed}장"
-    if english:
-        note += " · 영어본 첨부"
-
-    json.dump(
-        {
-            "hookSpecificOutput": {
-                "hookEventName": "UserPromptSubmit",
-                "additionalContext": body,
-            },
-            "systemMessage": note,
-        },
-        sys.stdout,
-        ensure_ascii=False,
-    )
     return 0
 
 

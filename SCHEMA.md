@@ -217,6 +217,9 @@ goes to, are held by [`MAINTENANCE.md`](MAINTENANCE.md).
 - A target repository's knowledge is not brought here. The `project` scope
   lives over there.
 - Nothing that needs judgement is mechanised. False positives stop the work.
+  The one exception is measurement labels: a model may draft them if a second,
+  different model reviews every one. They choose thresholds; they never add or
+  remove what the hook injects.
 - No page is written that will not be read. More pages means `apply` carries
   more, and that is precisely the problem this wiki was built for.
 
