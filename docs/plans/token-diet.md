@@ -76,6 +76,10 @@
 | [1묶음 — 측정과 훅 양](token-diet-1-hook.md) | 1~4 | ① 측정+라벨 ② 중복 제거+compact ③ 스킬 |
 | [2묶음 — 검색 데몬과 위키 챗](token-diet-2-search.md) | 5~6 | ④ 데몬+훅 보조 ⑤ 챗 검색 |
 | [3묶음 — 세션 운영](token-diet-3-session.md) | 7~9 | ⑥ keep-alive ⑦ compact 문턱·운영 페이지·게이트 |
+| [4묶음 — 원본에 복제하고 잰다 (제안)](token-diet-4-clone.md) | 1~9 을 wiki-agent 에 | 원본에서 ① 측정 ② 중복 제거 ③ 데몬·keep-alive·compact |
+
+1~3묶음은 이 사본에 있고, 이 PC 의 사용자 수준 훅은 원본(wiki-agent)을 부른다. 그래서 실제 세션에 켜진
+것은 자동 compact 400K 와 스킬뿐이다 — 4묶음이 그것을 다룬다.
 
 ## 2026-09-25 구체화가 이 문서를 고친 것
 
