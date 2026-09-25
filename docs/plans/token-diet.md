@@ -83,7 +83,7 @@
 
 | 원래 | 바뀐 것 | 왜 |
 | --- | --- | --- |
-| 이미 본 페이지는 `shrink(hard=False)` | 제목 + `Rule.` 문단 전문 + 경로. 매 턴 지킬 조항은 페이지가 `Rule.` 문단 안에 둔다 | `shrink` 는 `Rule.` 로 시작하는 한 줄만 잡아 문장이 잘린다. 색인 한 문장만 남기는 안은 리뷰 1회차에서 강제 조항을 잃는다고 판정됐다 |
+| 이미 본 페이지는 `shrink(hard=False)` | 제목 + 규칙 문단 전문 + 경로. 매 턴 지킬 조항을 문단 안에 둔 페이지만 `repeat: rule` 로 선언하고, 선언 없는 페이지는 매번 전문 | `shrink` 는 `Rule.` 로 시작하는 한 줄만 잡아 문장이 잘린다. 색인 한 문장만 남기는 안은 리뷰 1회차에서 강제 조항을 잃는다고 판정됐다 |
 | compact 는 `SessionStart` 표지 행, Codex 는 이벤트부터 확인 | 두 호스트 모두 transcript 의 compact 기록으로 감지. `session_state.py` 는 안 고친다 | Claude `compact_boundary`, Codex `compacted` 를 실물로 확인했다. 보고 재주입은 지금 동작이 이미 한다 |
 | 지뢰는 스킬로 옮기지 않는다 | `codex-review-loop`(지뢰)는 절차만 스킬로, 사고 설명은 페이지에 | 두 스킬이 이미 절차를 가져 페이지와 두 벌이다 |
 | Codex 가 스킬을 안 읽으면 전문을 페이지에 | 설치가 Codex 스킬 폴더에도 링크 | 지금 링크는 `~/.claude/skills` 에만 있다 |
