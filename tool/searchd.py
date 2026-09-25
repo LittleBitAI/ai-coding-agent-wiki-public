@@ -150,6 +150,23 @@ def injectable(text: str) -> bool:
     return str(meta.get("severity") or "") in INJECTABLE
 
 
+def fetch(root: Path) -> Path:
+    """Download whatever model file is missing under `root` and return its folder.
+
+    The daemon calls this on first start; `--fetch-model` lets an installer
+    call it ahead of time so the first search does not wait on 120 MB.
+    """
+
+    folder = root / "models/e5"
+    for name, remote in FILES.items():
+        if not (folder / name).exists():
+            folder.mkdir(parents=True, exist_ok=True)
+            part = folder / (name + ".part")
+            urllib.request.urlretrieve(f"https://huggingface.co/{MODEL}/resolve/main/{remote}", part)
+            part.replace(folder / name)
+    return folder
+
+
 class Embedder:
     """The model, loaded once, and a worker that fills the vector cache.
 
@@ -176,13 +193,7 @@ class Embedder:
             import onnxruntime as ort
             from tokenizers import Tokenizer
 
-            folder = self.root / "models/e5"
-            for name, remote in FILES.items():
-                if not (folder / name).exists():
-                    folder.mkdir(parents=True, exist_ok=True)
-                    part = folder / (name + ".part")
-                    urllib.request.urlretrieve(f"https://huggingface.co/{MODEL}/resolve/main/{remote}", part)
-                    part.replace(folder / name)
+            folder = fetch(self.root)
             self.np = np
             self.tokenizer = Tokenizer.from_file(str(folder / "tokenizer.json"))
             self.tokenizer.enable_truncation(512)
@@ -692,6 +703,9 @@ def serve(port: int, daemon: Daemon, tries: int = 1) -> Server | None:
 def main() -> int:
     # Detached, its streams are the null device — but pinned like every tool.
     sys.stdout.reconfigure(encoding="utf-8")
+    if sys.argv[1:] == ["--fetch-model"]:
+        print(fetch(cache_dir()))
+        return 0
     token = secrets.token_hex(16)
     embedder = Embedder(cache_dir())
     daemon = Daemon(token, embedder)
