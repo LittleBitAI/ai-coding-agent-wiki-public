@@ -144,7 +144,7 @@ def session(cid: str) -> ChatSession:
             cfg = config(cid)
             repo = repo_of(cid)
             chat = ChatSession(repo, system=chat_channels.ANSWER_PROMPT + "\n\n" + channel.preamble,
-                               model=cfg["model"], effort=cfg["effort"])
+                               model=cfg["model"], effort=cfg["effort"], search=True)
             # Restarting the server is not clearing the conversation either.
             # Only the same CLI, after an explicit reset, is resumed.
             for row in reversed(recall(cid, include_context=True)):

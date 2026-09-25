@@ -60,7 +60,7 @@
 | 3 | compact 후 재주입 | compact 표지로 중복 상태 리셋 | 완료 — transcript 의 compact 기록으로 리셋. compact 뒤 SessionStart 실물 확인은 남음 |
 | 4 | 스킬로 옮기기 | `after-merge-cleanup`→`after-merge`, `codex-review-loop`→`review-loop` | 완료 — 전문 2,591→1,020B, 5,560→1,581B. 두 호스트 스킬 목록에 뜬다 |
 | 5 | 검색 데몬과 훅 보조 | 청크 하이브리드 색인, 정규식 밖 상위 1~2장을 한 줄로 | 완료, 보조는 끔 — 데몬·색인·훅 경로와 문턱 도구. 200턴 라벨(disputed 13)로 잰 정밀도가 최고 7% 라 60% 문턱이 없다. 데몬은 챗용 |
-| 6 | 위키 챗 검색 | `search` 도구, 그래프 1-hop, Haiku 1차 탐색 | 미착수 |
+| 6 | 위키 챗 검색 | `search` 도구, 그래프 1-hop, Haiku 1차 탐색 | 완료 — `search.py` 이웃 출력, 챗 절차. Haiku `scout` 는 입력 토큰 2.4배라 뺐다. 10문항 쪽마다 4번: 입력 토큰 중앙값 합 −20%(7/10 문항), 맞는 인용 29.5→39.5, 비용은 그대로(+2%). 인용 내용은 사람 대조 전 |
 | 7 | keep-alive 자동 핑 | 유휴 55분에 핑, 상한 있음 | 미착수 |
 | 8 | 운영 규칙 페이지 | `/compact`·자동 compact 문턱·keep-alive 를 operator 페이지로 | 미착수 |
 | 9 | 게이트 | `pytest tool/`·`lint --check`·1단계 재생 전후 비교 | 미착수 |

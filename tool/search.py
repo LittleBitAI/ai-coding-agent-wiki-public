@@ -167,6 +167,64 @@ def exchange(conn: http.client.HTTPConnection, token: str, query: str, project, 
         conn.close()
 
 
+def node_of(path: Path, project: Path | None) -> str:
+    """A hit's id in the graphs: `scope/name` for a hub rule, the repository
+    path otherwise — what `graph.json` and `.wiki/graph.json` call it."""
+
+    hub = HERE.parent
+    if path.parent.parent == hub and path.parent.name in ("operator", "craft"):
+        return f"{path.parent.name}/{path.stem}"
+    for root in (project, hub):
+        try:
+            return path.relative_to(root).as_posix() if root else path.as_posix()
+        except ValueError:
+            continue
+    return path.as_posix()
+
+
+def graph(project: Path | None) -> tuple[dict[str, set[str]], dict[str, str]]:
+    """`(neighbours, gist)` from the hub's `graph.json` and the repository's
+    `.wiki/graph.json` — generated files, so either may be missing.
+
+    The gist is a title and a first paragraph: the hub node's headline and
+    rule line, the repository document's title and lead from `corpus.json`.
+    """
+
+    near: dict[str, set[str]] = {}
+    gist: dict[str, str] = {}
+
+    def load(path: Path) -> dict:
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+
+    hub = load(HERE.parent / "graph.json")
+    for node in hub.get("nodes") or []:
+        gist[node["id"]] = f"{node.get('headline', '')} — {node.get('rule', '')}".strip(" —")
+    edges = list(hub.get("links") or [])
+    if project:
+        edges += load(project / ".wiki/graph.json").get("edges") or []
+        for doc in load(project / ".wiki/corpus.json").get("docs") or []:
+            gist[doc["path"]] = f"{doc.get('title', '')} — {doc.get('lead', '')}".strip(" —")
+    for edge in edges:
+        near.setdefault(edge["a"], set()).add(edge["b"])
+        near.setdefault(edge["b"], set()).add(edge["a"])
+    return near, gist
+
+
+def local(query: str, project: str | None, pool: str, k: int) -> list[dict]:
+    """BM25 in this process, for when no daemon can be reached — a sandbox
+    that forbids the connection, say. No vectors: loading the model here
+    would cost more than the question."""
+
+    import searchd
+
+    index = searchd.Pool(Path(project) if project else None, pool, searchd.Embedder(None))
+    index.refresh()
+    return index.search(query, k)
+
+
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="위키와 저장소 문서를 검색한다")
@@ -180,21 +238,35 @@ def main() -> int:
     # The chat may be slow — the plan's condition. Start the daemon if it is
     # not there and wait for it, rather than answering with nothing.
     results = None
-    for _attempt in range(60):
+    for _attempt in range(20):
         results = ask(args.query, project, args.pool, timeout=5.0, k=args.k, wait=60.0)
         if results is not None:
             break
         time.sleep(1.0)
     if results is None:
-        print("검색 데몬이 응답하지 않는다", file=sys.stderr)
-        return 1
+        print("검색 데몬에 닿지 않아 이 프로세스에서 BM25 만으로 찾았다", file=sys.stderr)
+        results = local(args.query, project, args.pool, args.k)
+
+    root = Path(project) if project else None
+    near, gist = graph(root)
+    shown = {node_of(Path(hit["path"]), root) for hit in results}
     for hit in results:
-        where = Path(hit["path"])
+        path = Path(hit["path"])
+        node = node_of(path, root)
+        # Relative inside the repository; a hub page outside it keeps its
+        # absolute path, so `Read` can open what is printed.
         try:
-            where = where.relative_to(project) if project else where
+            where = path.relative_to(root).as_posix() if root else path.as_posix()
         except ValueError:
-            pass
-        print(f"## {where.as_posix()}:{hit['line']} — {hit['heading']}\n\n{hit['text'].strip()}\n")
+            where = path.as_posix()
+        print(f"## {where}:{hit['line']} — {hit['heading']}\n\n{hit['text'].strip()}\n")
+        linked = sorted(near.get(node, set()) - shown)
+        shown |= set(linked)
+        if linked:
+            print("Linked from or to this page:")
+            for other in linked:
+                print(f"- `{other}` — {gist.get(other, '')}".rstrip(" —"))
+            print()
     return 0
 
 

@@ -358,3 +358,32 @@ def test_the_mirror_never_tails_a_checkout_that_is_gone(tmp_path):
         pick = mirror.session_of("claude")
         assert pick(live) == live / "log.jsonl"
         assert pick(gone) is None
+
+
+def test_a_channel_is_told_the_search_command_on_both_hosts(tmp_path):
+    """A session that is not a channel is not, and nobody gets a subagent —
+    the Haiku scout was measured and dropped (plan bundle 2, step 6)."""
+
+    commands = []
+
+    class Dead:
+        stdout = stderr = iter(())
+
+    def spawn(command, **kwargs):
+        commands.append(command)
+        return Dead()
+
+    with patch.object(chat_session.subprocess, "Popen", spawn), \
+         patch.object(chat_session, "cli_command", side_effect=lambda name: [name]):
+        ChatSession(tmp_path, system="Answer.", search=True)._spawn()
+        ChatSession(tmp_path, system="Answer.", model="codex:m", search=True)._spawn()
+        ChatSession(tmp_path, system="Answer.")._spawn()
+    claude, codex, plain = commands
+    system = claude[claude.index("--append-system-prompt") + 1]
+    assert "search.py" in system and f'--project "{tmp_path.resolve().as_posix()}"' in system
+    instructions = next(c for c in codex if c.startswith("developer_instructions="))
+    assert "search.py" in instructions
+    assert "search.py" not in " ".join(plain)
+    for command in (claude, plain):
+        assert "--agents" not in command
+        assert command[command.index("--tools") + 1] == chat_session.READ_TOOLS

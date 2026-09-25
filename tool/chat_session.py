@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import threading
 import queue
 import tempfile
@@ -28,6 +29,21 @@ from chat_local import cli_command
 # `git reset --hard`, `sed -i`, secrets. To close it further, dig per-tool
 # endpoints instead of Bash.
 READ_TOOLS = "Bash,Read,Glob,Grep"
+
+HUB = Path(__file__).resolve().parents[1]
+
+# How a channel finds evidence before it reads, on both hosts.
+#
+# No first pass on a cheaper model. A Haiku `scout` subagent was built and
+# measured on 2026-09-25 over ten real questions: where it was called, input
+# tokens rose 2.4x and cost 27% — it loads its own context, and the main model
+# re-reads what it cites anyway. Where the main model searched itself, input
+# fell 14%. Plan bundle 2, step 6.
+SEARCH_NOTE = """## Search command
+{command} "<query>" [--k 8]
+It returns matching sections with `path:line` and the pages linked to each.
+The hub's pages are English and many repository documents are Korean, so
+search with terms in both languages."""
 
 BOOT_TIMEOUT = 120.0   # the first turn is slow: hooks, and loading
 TURN_TIMEOUT = 600.0
@@ -53,7 +69,7 @@ class ChatSession:
     def __init__(self, repo: Path, tools: str = READ_TOOLS,
                  system: str = "", model: str | None = None,
                  effort: str | None = None, resume: str | None = None,
-                 isolated: bool = False) -> None:
+                 isolated: bool = False, search: bool = False) -> None:
         self.repo = Path(repo)
         self.tools = tools
         # A channel's character goes in as a system prompt. The first version
@@ -67,6 +83,9 @@ class ChatSession:
         self.model = model or None
         self.effort = effort or None
         self.isolated = isolated
+        # The channel chats search before they read (plan bundle 2, step 6).
+        # `oneshot` and the explainer are not channels and stay as they were.
+        self.search = search
         self.session_id: str | None = resume
         self.model_name = ""
         self._resume: str | None = resume
@@ -83,6 +102,12 @@ class ChatSession:
     # -- Lifetime -----------------------------------------------------------
 
     def _spawn(self) -> None:
+        # Forward slashes: Claude's `Bash` is Git Bash on Windows.
+        command = (f'"{Path(sys.executable).as_posix()}" "{(HUB / "tool/search.py").as_posix()}" '
+                   f'--project "{self.repo.resolve().as_posix()}"')
+        system = self.system
+        if self.search:
+            system += "\n\n" + SEARCH_NOTE.format(command=command)
         cmd = [
             "claude", "-p",
             "--input-format", "stream-json",
@@ -97,8 +122,8 @@ class ChatSession:
             # kept; only the settings, hooks and tools are isolated.
             cmd += ["--setting-sources", "", "--settings", '{"disableAllHooks":true}',
                     "--strict-mcp-config", "--no-session-persistence"]
-        if self.system:
-            cmd += ["--system-prompt" if self.isolated else "--append-system-prompt", self.system]
+        if system:
+            cmd += ["--system-prompt" if self.isolated else "--append-system-prompt", system]
         if self.model:
             cmd += ["--model", self.model]
         if self.effort:
@@ -109,7 +134,7 @@ class ChatSession:
             cmd = ["codex", "exec", "--model", self.model.removeprefix("codex:"),
                    "--json", "--sandbox", "read-only",
                    "-c", 'approval_policy="never"', "--disable", "multi_agent",
-                   "-c", "developer_instructions=" + json.dumps(self.system, ensure_ascii=False)]
+                   "-c", "developer_instructions=" + json.dumps(system, ensure_ascii=False)]
             if self.effort:
                 cmd += ["-c", "model_reasoning_effort=" + json.dumps(self.effort)]
             if self.isolated:
