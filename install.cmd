@@ -20,7 +20,7 @@ set PYTHONIOENCODING=utf-8
 cd /d "%~dp0"
 
 set "PY=.venv\Scripts\python.exe"
-if exist "%PY%" goto :packages
+if exist "%PY%" goto :version
 
 set "BASE="
 py -3 -c "import sys; sys.exit(sys.version_info < (3, 11))" >nul 2>&1 && set "BASE=py -3"
@@ -33,7 +33,15 @@ echo 1/3: creating .venv with %BASE%
 %BASE% -m venv .venv
 if errorlevel 1 goto :halt
 
-:packages
+:version
+rem An existing .venv is checked too: one made from 3.10 installs fine here
+rem and is then refused by setup_chat.py, the step this script points to.
+"%PY%" -c "import sys; sys.exit(sys.version_info < (3, 11))"
+if errorlevel 1 (
+  echo .venv uses Python older than 3.11. Delete the .venv folder and run this again.
+  goto :halt
+)
+
 echo 2/3: installing packages
 "%PY%" -m pip install -r requirements-chat.txt -r requirements-search.txt
 if errorlevel 1 goto :halt
