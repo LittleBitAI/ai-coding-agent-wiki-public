@@ -758,12 +758,15 @@ def main() -> int:
         return 0
     session = str(payload.get("session_id") or "")
     # Keep-alive, before anything slow: the daemon's ping turn carries nothing
-    # and is recorded nowhere. Imported only where it can apply, so every
-    # other turn runs as before.
+    # and is recorded nowhere, and any other turn's `/busy` goes out on a
+    # thread while this translates. Imported only where it can apply, so
+    # every other turn runs as before.
+    busy = None
     if args.host == "claude" and os.environ.get("ORCA_TERMINAL_HANDLE"):
         import keepalive
 
-        if keepalive.on_prompt(prompt, args.host, args.project, session):
+        pinged, busy = keepalive.on_prompt(prompt, args.host, args.project, session)
+        if pinged:
             return 0
 
     # Triggers are matched on the Korean the person typed, then the bodies are
@@ -863,6 +866,9 @@ def main() -> int:
         # stderr write under a cp949 console, which is how the report of a
         # failure became a second failure.
         print(f"trajectory skipped: {failed}", file=sys.stderr)
+    if busy is not None:
+        # Bounded by its own retry; usually done long before the translation.
+        busy.join()
     return 0
 
 

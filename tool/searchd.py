@@ -404,7 +404,8 @@ def orca(*args: str) -> dict | None:
     if exe is None:
         return None
     try:
-        done = subprocess.run([exe, *args, "--json"], capture_output=True, timeout=20)
+        # Short: `send` runs under the keeper's lock, and notices wait on it.
+        done = subprocess.run([exe, *args, "--json"], capture_output=True, timeout=5)
         answer = json.loads(done.stdout.decode("utf-8", errors="replace"))
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
@@ -548,31 +549,40 @@ class Keeper:
                   .get("terminal") or {})
         return input_empty(list(screen.get("tail") or []))
 
+    def armed(self, session: str, seen: dict) -> bool:
+        """Still idle on the timer `tick` saw — no notice came in since."""
+
+        mine = self.sessions.get(session)
+        return (mine is not None and mine["state"] == "idle" and mine["due"] == seen["due"]
+                and self.owners.get(mine["handle"]) == session)
+
     def ping(self, session: str, seen: dict) -> None:
         """Look again before typing. Anything off, and the session is dropped.
 
-        Orca is asked outside the lock — it takes a second — so what it
-        answered is only used if no notice arrived meanwhile.
+        The look — `show` and `read`, about 0.25 s each — runs outside the
+        lock. The last check of the session and the send run inside it, back
+        to back, so a notice that arrives during the send waits for it rather
+        than slipping between the check and the keystrokes (review round 1).
+
+        What is left cannot be closed from here: Orca has no check-and-type.
+        A person who presses Enter between the screen read and the keystrokes
+        landing — about half a second — gets the ping in their turn. So does
+        a turn whose `/busy` was lost even after `keepalive.RETRY`.
         """
 
         with self.lock:
-            mine = self.sessions.get(session)
-            if not (mine is not None and mine["state"] == "idle" and mine["due"] == seen["due"]
-                    and self.owners.get(mine["handle"]) == session):
-                return  # a notice came in since `tick` looked
+            if not self.armed(session, seen):
+                return
         ok = self.ready(seen["handle"], seen["checkout"])
         with self.lock:
-            mine = self.sessions.get(session)
-            if mine is None or mine["due"] != seen["due"] or mine["state"] != "idle":
+            if not self.armed(session, seen):
                 return
-            if not ok:
+            if not ok or self.call("terminal", "send", "--terminal", seen["handle"],
+                                   "--text", PING, "--enter") is None:
                 self.drop(session)
                 return
+            mine = self.sessions[session]
             mine.update(state="sent", due=None, sent=self.clock(), count=mine["count"] + 1)
-        if self.call("terminal", "send", "--terminal", seen["handle"], "--text", PING, "--enter") is None:
-            with self.lock:
-                if self.sessions.get(session, {}).get("state") == "sent":
-                    self.drop(session)
 
 
 class Daemon:

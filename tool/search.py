@@ -117,21 +117,28 @@ NOTIFY_TIMEOUT = 0.15
 SPAWN_WAIT = 3.0
 
 
-def notify(path: str, body: dict, spawn_wait: float | None = None) -> bool:
+def notify(path: str, body: dict, spawn_wait: float | None = None, retry: float = 0.0) -> bool:
     """Tell the daemon what a cell is doing. `True` once it took the notice.
 
     Unlike a search, a notice left undelivered is not free: the timer it would
-    have set or cleared stays as it was. So a hook that had to start the
-    daemon waits up to `spawn_wait` for it and sends again; `0` sends once,
-    for a hook with no time to spare. Whatever still fails is dropped, and
-    the daemon then errs towards pinging less (`searchd.Keeper`).
+    have set or cleared stays as it was. Two ways to miss, two waits:
+
+    - No daemon was there, so this started one. Nothing was armed in a daemon
+      that was not running; wait up to `spawn_wait` for the new one and send
+      again, or drop it — the daemon then errs towards pinging less.
+    - A daemon was there and did not answer in time. It may hold a timer this
+      notice was meant to clear, so try again for up to `retry` seconds
+      (review round 1: a `/busy` lost this way let a ping into a turn).
     """
 
+    if os.environ.get("WIKI_SEARCH") == "off":
+        return False
     answer, started = call(path, body, NOTIFY_TIMEOUT)
     if answer is not None:
         return True
-    until = time.monotonic() + (SPAWN_WAIT if spawn_wait is None else spawn_wait)
-    while started and time.monotonic() < until:
+    wait = (SPAWN_WAIT if spawn_wait is None else spawn_wait) if started else retry
+    until = time.monotonic() + wait
+    while time.monotonic() < until:
         time.sleep(0.1)
         if call(path, body, NOTIFY_TIMEOUT, start=False)[0] is not None:
             return True

@@ -26,6 +26,7 @@ import argparse
 import json
 import os
 import sys
+import threading
 import tomllib
 from pathlib import Path
 
@@ -58,28 +59,38 @@ def target(host: str | None, project: str | Path | None) -> tuple[str, int] | No
     return (handle, cap) if cap else None
 
 
-def on_prompt(prompt: str, host: str | None, project: str | None, session: str) -> bool:
-    """`inject.py`'s half. `True` when this turn is the daemon's ping.
+# How long a notice is retried against a daemon that is there but slow. A
+# lost `/busy` leaves the timer armed while the turn runs.
+RETRY = 2.0
+
+
+def on_prompt(prompt: str, host: str | None, project: str | None,
+              session: str) -> tuple[bool, threading.Thread | None]:
+    """`inject.py`'s half: `(this turn is the daemon's ping, the /busy in flight)`.
 
     The ping turn carries nothing and is recorded nowhere; it only tells the
     daemon the ping arrived. Anything else clears the timer, and resets the
     count only when a person typed it — the harness's own utterances
     (`sessions.INJECTED`) are not somebody coming back.
 
-    `spawn_wait=0`: this runs on every utterance and must not wait for a
-    daemon. A notice lost here leaves the daemon as it was; `Stop` sets it
-    again at the end of the turn.
+    `/busy` goes on a thread, retried for `RETRY` seconds, while the hook
+    translates; `inject.py` joins it before it exits. On every utterance it
+    must not start a wait for a daemon that was not running — no timer can
+    be armed in one (`spawn_wait=0`).
     """
 
     cell = target(host, project)
     if cell is None or not session:
-        return False
+        return False, None
     body = {"session": session, "handle": cell[0]}
     if prompt.strip() == PING:
-        search.notify("/ping-turn", body, spawn_wait=0)
-        return True
-    search.notify("/busy", body | {"reset": not prompt.lstrip().startswith(INJECTED)}, spawn_wait=0)
-    return False
+        search.notify("/ping-turn", body, spawn_wait=0, retry=RETRY)
+        return True, None
+    busy = threading.Thread(target=search.notify, daemon=True, args=(
+        "/busy", body | {"reset": not prompt.lstrip().startswith(INJECTED)}),
+        kwargs={"spawn_wait": 0, "retry": RETRY})
+    busy.start()
+    return False, busy
 
 
 def main() -> int:
@@ -102,14 +113,14 @@ def main() -> int:
         return 0
     body = {"session": session, "handle": cell[0]}
     if event == "SessionStart":
-        search.notify("/own", body)
+        search.notify("/own", body, retry=RETRY)
     elif event == "Stop":
         # The checkout, not the project: Orca names a worktree by its own
         # path, and the project is the main clone.
         checkout = str(Path(args.checkout or args.project).resolve())
-        search.notify("/idle", body | {"checkout": checkout, "limit": cell[1]})
+        search.notify("/idle", body | {"checkout": checkout, "limit": cell[1]}, retry=RETRY)
     elif event == "SessionEnd":
-        search.notify("/gone", body)
+        search.notify("/gone", body, retry=RETRY)
     return 0
 
 

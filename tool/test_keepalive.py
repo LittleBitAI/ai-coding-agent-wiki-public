@@ -51,7 +51,7 @@ class Sent:
     def __init__(self, handle: str | None = HANDLE):
         self.calls: list[tuple[str, dict]] = []
         self.was = search.notify, os.environ.get("ORCA_TERMINAL_HANDLE")
-        search.notify = lambda path, body, spawn_wait=None: self.calls.append((path, body)) or True
+        search.notify = lambda path, body, **_waits: self.calls.append((path, body)) or True
         if handle:
             os.environ["ORCA_TERMINAL_HANDLE"] = handle
         else:
@@ -95,8 +95,8 @@ def test_the_hooks_send_nothing_unless_claude_in_an_orca_cell_of_a_repository_th
         try:
             for event in ("SessionStart", "Stop", "SessionEnd"):
                 assert hook(event, repo, host) == 0
-            assert not keepalive.on_prompt("사람 발화", host, str(repo), "s1")
-            assert not keepalive.on_prompt(keepalive.PING, host, str(repo), "s1")
+            assert keepalive.on_prompt("사람 발화", host, str(repo), "s1") == (False, None)
+            assert keepalive.on_prompt(keepalive.PING, host, str(repo), "s1") == (False, None)
         finally:
             sent.close()
         assert sent.calls == [], (name, sent.calls)
@@ -170,6 +170,32 @@ def test_a_notice_is_dropped_when_no_daemon_comes_up_and_the_hook_still_passes()
             else:
                 os.environ["ORCA_TERMINAL_HANDLE"] = was
     finally:
+        home.close()
+
+
+def test_a_notice_is_retried_against_a_daemon_that_was_there_but_slow():
+    """A `/busy` lost to one 150 ms timeout left the timer armed while the
+    turn ran, and the ping landed in it (review round 1)."""
+
+    home = Home()
+    answers = [(None, False), (None, False), ({}, False)]
+    was = search.call
+    search.call = lambda *a, **k: answers.pop(0) if answers else ({}, False)
+    try:
+        assert search.notify("/busy", {}, spawn_wait=0, retry=2.0)
+        assert answers == [], "not retried"
+        answers[:] = [(None, False)] * 100
+        assert not search.notify("/busy", {}, spawn_wait=0, retry=0.3), "the retry is bounded"
+        answers[:] = [(None, True)] + [({}, False)] * 5
+        assert not search.notify("/busy", {}, spawn_wait=0, retry=2.0), (
+            "a daemon this call had to start holds no timer — no wait on every utterance")
+        os.environ["WIKI_SEARCH"] = "off"
+        answers[:] = [(None, False)] * 100
+        began = time.perf_counter()
+        assert not search.notify("/busy", {}, retry=2.0)
+        assert time.perf_counter() - began < 0.1
+    finally:
+        search.call = was
         home.close()
 
 
@@ -402,6 +428,50 @@ def test_nothing_is_sent_and_the_session_goes_when_the_look_before_sending_fails
         sent, k = run(change)
         assert sent == [], name
         assert "s1" not in k.sessions, name
+
+
+def test_a_notice_cannot_come_between_the_last_check_and_the_send():
+    """Marked `sent` and then sent outside the lock, a `/busy` arriving in
+    between cleared the timer while the ping still went out (review round 1)."""
+
+    class Racing(Orca):
+        def __init__(self, keeper_ref, during):
+            super().__init__()
+            self.keeper_ref, self.during, self.late = keeper_ref, during, None
+
+        def __call__(self, *args):
+            if args[:2] == ("terminal", self.during):
+                if self.during == "read":
+                    person(self.keeper_ref[0])
+                else:
+                    self.late = threading.Thread(target=person, args=(self.keeper_ref[0],))
+                    self.late.start()
+                    self.late.join(0.2)
+                    assert self.late.is_alive(), "a notice got in while the ping was being sent"
+            return super().__call__(*args)
+
+    ref = []
+    orca = Racing(ref, "read")
+    k, clock = keeper(orca)
+    ref.append(k)
+    person(k)
+    stop(k)
+    clock.at(55)
+    k.tick()
+    assert orca.sent == [], "a person spoke while the screen was being read"
+    assert k.sessions["s1"]["state"] == "busy"
+
+    ref.clear()
+    orca = Racing(ref, "send")
+    k, clock = keeper(orca)
+    ref.append(k)
+    person(k)
+    stop(k)
+    clock.at(55)
+    k.tick()
+    orca.late.join()
+    assert orca.sent == [keepalive.PING]
+    assert k.sessions["s1"]["state"] == "busy", "the notice that waited was applied after the send"
 
 
 def test_no_reply_within_ten_minutes_and_expiry_both_drop_the_session():
