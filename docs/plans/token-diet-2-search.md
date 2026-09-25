@@ -112,6 +112,22 @@ Possibly relevant, by similarity rather than a trigger. Open the page if it appl
 완료 기준. `latency` 로 데몬 있음 p95 증가 50ms 이하, 데몬 없음은 PR ① 기준과 같다. 정규식이 고른
 이름 집합은 `replay` 에서 PR ② 결과와 한 글자도 다르지 않다.
 
+### 구현에서 확인하고 정한 것 — 2026-09-25
+
+| 무엇 | 결과 |
+| --- | --- |
+| 모델 파일 | `intfloat/multilingual-e5-small` 의 `onnx/model_qint8_avx512_vnni.onnx`(118MB) + `onnx/tokenizer.json`(17MB). 원 저장소의 int8 이다 |
+| 질의 한 번 | 약 40토큰 질의 p50 4.7ms, 최대 5.0ms (스레드 2). 청크 16개(약 400토큰씩) 한 묶음 1.6초. 모델 적재 0.9초 |
+| 상주 메모리 | 약 440MB — import 52MB, 토크나이저 250MB(어휘 25만), 세션 133MB. CPU 메모리 아레나를 끄면 청크 묶음을 돌려도 늘지 않는다 |
+| localhost 왕복 | 같은 프로세스 안 p50 0.6ms. 훅은 `translate` 가 이미 `urllib` 을 부르니 `http.client` import 는 새 비용이 아니다 |
+| 연결 거부 | Windows 에서 닫힌 localhost 포트에 붙으면 거부까지 2초가 걸린다. 그래서 상태 파일이 없으면 붙지 않고 바로 띄운다(Popen 5ms). 파일만 남은 경우는 150ms 한 번 |
+| 데몬 응답 | 색인이 선 뒤 `ask` 한 번 6~13ms. 저장소를 처음 묻는 턴은 색인을 세우느라 150ms 를 넘겨 그 턴은 정규식만이다 |
+| 훅 풀 | `.wiki/*.md` 도 주입 가능한 `severity` 가 있는 것만 넣는다. 설계는 `.wiki/*.md` 전부였으나, 라벨이 판정할 수 있는 페이지가 그것뿐이다 |
+| 버전 교체 | 실물로 확인. `searchd.py` 를 고치면 다음 `ask` 가 `/quit` 을 보내고 새로 띄워 1초 안에 바뀐다 |
+| 남의 포트 | `/health` 에 nonce 를 보내 토큰으로 만든 증명을 받은 뒤에만 질의를 보낸다. 설계의 "토큰이 맞지 않으면 보조 없음" 을, 발화를 보내기 전에 판정하도록 한 것이다 |
+| Windows 포트 잠금 | 파이썬 `HTTPServer` 는 `SO_REUSEADDR` 를 켜는데, Windows 에서는 그러면 같은 포트에 둘째가 바인드된다. Windows 에서는 끈다 |
+| 끄는 스위치 | `WIKI_SEARCH=off` 면 훅이 데몬에 묻지 않는다. 테스트(`conftest.py`)와 `latency` 의 데몬 없음이 쓴다 |
+
 ## 6단계 — 위키 챗 검색 (PR ⑤)
 
 ### 도구
