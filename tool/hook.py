@@ -31,7 +31,7 @@ sys.path.insert(0, str(HERE))
 from sessions import checkout  # noqa: E402
 
 # The scripts that read a target repository and need to be told which one.
-PROJECT = {"inject.py", "session_state.py", "sync.py"}
+PROJECT = {"inject.py", "session_state.py", "sync.py", "keepalive.py"}
 LEGACY = {"claude": ".claude/settings.json", "codex": ".codex/hooks.json"}
 
 
@@ -95,10 +95,11 @@ def main(argv: list[str]) -> int:
         return 0
     if script in PROJECT:
         extra += ["--project", str(project)]
-    if script == "session_state.py":
+    if script in ("session_state.py", "keepalive.py"):
         extra += ["--checkout", str(top)]
-    if script == "inject.py":
-        # Which ceiling applies — see `inject.LIMIT`.
+    if script in ("inject.py", "keepalive.py"):
+        # Which ceiling applies — see `inject.LIMIT` — and whether keep-alive
+        # may: both scripts judge it the same way (`keepalive.target`).
         extra += ["--host", host]
 
     # In this process rather than a second interpreter: the hooks run under
