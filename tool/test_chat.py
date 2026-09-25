@@ -358,3 +358,39 @@ def test_the_mirror_never_tails_a_checkout_that_is_gone(tmp_path):
         pick = mirror.session_of("claude")
         assert pick(live) == live / "log.jsonl"
         assert pick(gone) is None
+
+
+def test_a_claude_channel_defines_scout_and_can_call_it(tmp_path):
+    """Defined is not called: `Agent` has to be among the tools too. Codex gets
+    the search command alone, and a session that is not a channel neither."""
+
+    commands, envs = [], []
+
+    class Dead:
+        stdout = stderr = iter(())
+
+    def spawn(command, **kwargs):
+        commands.append(command)
+        envs.append(kwargs.get("env"))
+        return Dead()
+
+    with patch.object(chat_session.subprocess, "Popen", spawn), \
+         patch.object(chat_session, "cli_command", side_effect=lambda name: [name]):
+        ChatSession(tmp_path, system="Answer.", search=True)._spawn()
+        ChatSession(tmp_path, system="Answer.", model="codex:m", search=True)._spawn()
+        ChatSession(tmp_path, system="Answer.")._spawn()
+    claude, codex, plain = commands
+    agents = json.loads(claude[claude.index("--agents") + 1])
+    assert agents["scout"]["model"] == "haiku"
+    assert "search.py" in agents["scout"]["prompt"]
+    assert claude[claude.index("--tools") + 1].split(",")[-1] == "Agent"
+    assert claude[claude.index("--allowedTools") + 1] == claude[claude.index("--tools") + 1]
+    system = claude[claude.index("--append-system-prompt") + 1]
+    assert "search.py" in system and "operator has allowed" in system
+    instructions = next(c for c in codex if c.startswith("developer_instructions="))
+    assert "search.py" in instructions and "scout" not in instructions
+    assert "--agents" not in codex
+    assert "--agents" not in plain and "Agent" not in plain[plain.index("--tools") + 1]
+    assert "search.py" not in " ".join(plain)
+    assert envs[0]["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == "1", "scout would run async"
+    assert envs[1] is None and envs[2] is None

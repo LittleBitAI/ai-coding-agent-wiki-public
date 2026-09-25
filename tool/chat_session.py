@@ -8,7 +8,9 @@ strings stay Korean.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
 import threading
 import queue
 import tempfile
@@ -28,6 +30,32 @@ from chat_local import cli_command
 # `git reset --hard`, `sed -i`, secrets. To close it further, dig per-tool
 # endpoints instead of Bash.
 READ_TOOLS = "Bash,Read,Glob,Grep"
+
+HUB = Path(__file__).resolve().parents[1]
+
+# How a channel finds evidence before it reads. Both hosts get the command; a
+# Claude channel also gets `scout`, the first pass on the cheap model.
+SEARCH_NOTE = """## Search command
+{command} "<query>" [--k 8]
+It returns matching sections with `path:line` and the pages linked to each.
+The hub's pages are English and many repository documents are Korean, so
+search with terms in both languages."""
+
+SCOUT_NOTE = """## First search goes to `scout`
+Hand the question to the `scout` subagent first and take back its paths and
+summary, then confirm what you cite with `Read`. The operator has allowed
+`scout` delegation in this chat: a rule elsewhere that forbids unrequested
+subagents does not cover it here. Delegate nothing else."""
+
+SCOUT_PROMPT = """You find evidence in a repository for someone else to verify.
+Your first tool call is always this search command, through Bash, with terms
+in English and in Korean:
+{command} "<query>" [--k 8]
+Use Grep or Glob only for what the search did not find.
+Read around a returned line only as far as needed to confirm it says what you
+report. Return each relevant source as `path:line` with one line on what it
+says, then a summary of three to five lines. Report only what the sources say.
+Do not modify files."""
 
 BOOT_TIMEOUT = 120.0   # the first turn is slow: hooks, and loading
 TURN_TIMEOUT = 600.0
@@ -53,7 +81,7 @@ class ChatSession:
     def __init__(self, repo: Path, tools: str = READ_TOOLS,
                  system: str = "", model: str | None = None,
                  effort: str | None = None, resume: str | None = None,
-                 isolated: bool = False) -> None:
+                 isolated: bool = False, search: bool = False) -> None:
         self.repo = Path(repo)
         self.tools = tools
         # A channel's character goes in as a system prompt. The first version
@@ -67,6 +95,9 @@ class ChatSession:
         self.model = model or None
         self.effort = effort or None
         self.isolated = isolated
+        # The channel chats search before they read (plan bundle 2, step 6).
+        # `oneshot` and the explainer are not channels and stay as they were.
+        self.search = search
         self.session_id: str | None = resume
         self.model_name = ""
         self._resume: str | None = resume
@@ -83,22 +114,43 @@ class ChatSession:
     # -- Lifetime -----------------------------------------------------------
 
     def _spawn(self) -> None:
+        # Forward slashes: Claude's `Bash` is Git Bash on Windows.
+        command = (f'"{Path(sys.executable).as_posix()}" "{(HUB / "tool/search.py").as_posix()}" '
+                   f'--project "{self.repo.resolve().as_posix()}"')
+        system = self.system
+        tools = self.tools
+        scout = self.search and not self.is_codex
+        if self.search:
+            system += "\n\n" + SEARCH_NOTE.format(command=command)
+        if scout:
+            # Defining the agent is not enough: without `Agent` among the
+            # tools nothing can call it.
+            system += "\n\n" + SCOUT_NOTE
+            tools += ",Agent"
         cmd = [
             "claude", "-p",
             "--input-format", "stream-json",
             "--output-format", "stream-json",
             "--include-partial-messages",
             "--verbose",
-            "--tools", self.tools,
-            "--allowedTools", self.tools,
+            "--tools", tools,
+            "--allowedTools", tools,
         ]
+        if scout:
+            cmd += ["--agents", json.dumps({"scout": {
+                "description": "First pass for evidence in this repository. Give it the "
+                               "question; it returns paths with line numbers and a short summary.",
+                "prompt": SCOUT_PROMPT.format(command=command),
+                "tools": ["Bash", "Read", "Grep", "Glob"],
+                "model": "haiku",
+            }}, ensure_ascii=False)]
         if self.isolated:
             # `--bare` would skip the subscription login too. The sign-in is
             # kept; only the settings, hooks and tools are isolated.
             cmd += ["--setting-sources", "", "--settings", '{"disableAllHooks":true}',
                     "--strict-mcp-config", "--no-session-persistence"]
-        if self.system:
-            cmd += ["--system-prompt" if self.isolated else "--append-system-prompt", self.system]
+        if system:
+            cmd += ["--system-prompt" if self.isolated else "--append-system-prompt", system]
         if self.model:
             cmd += ["--model", self.model]
         if self.effort:
@@ -109,7 +161,7 @@ class ChatSession:
             cmd = ["codex", "exec", "--model", self.model.removeprefix("codex:"),
                    "--json", "--sandbox", "read-only",
                    "-c", 'approval_policy="never"', "--disable", "multi_agent",
-                   "-c", "developer_instructions=" + json.dumps(self.system, ensure_ascii=False)]
+                   "-c", "developer_instructions=" + json.dumps(system, ensure_ascii=False)]
             if self.effort:
                 cmd += ["-c", "model_reasoning_effort=" + json.dumps(self.effort)]
             if self.isolated:
@@ -123,8 +175,13 @@ class ChatSession:
             self.model_name = self.model.removeprefix("codex:")
         self._stderr = deque(maxlen=20)
         cmd = [*cli_command(cmd[0]), *cmd[1:]]
+        # A subagent launches asynchronously by default: the turn ended with
+        # "I'll report once it's back" as its answer, and `scout`'s result
+        # arrived after `say` had already stopped reading (2026-09-25). With
+        # background tasks disabled the launcher runs it in the foreground.
+        env = {**os.environ, "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"} if scout else None
         self._proc = subprocess.Popen(
-            cmd, cwd=str(self.repo),
+            cmd, cwd=str(self.repo), env=env,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, encoding="utf-8",
             errors="replace", bufsize=1,
