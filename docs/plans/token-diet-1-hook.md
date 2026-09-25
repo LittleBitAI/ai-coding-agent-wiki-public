@@ -269,8 +269,10 @@ transcript 감지로 대신하므로 필요 없다. 다만 compact 에서 실제
 - `규칙.` 철자의 저장소 페이지에 선언을 붙이고 번역을 끈 턴: 반복형에 `규칙.` 문단이 있다
 - transcript 의 새 부분에 `compact_boundary` 가 있으면 다시 전문이 나간다
 - `--project` 없음, transcript 없음, 깨진 trajectory 줄: 전부 싣는다
-- 리콜 불변식: 고정 표본 trajectory 를 `tool/` 테스트 자료로 두고, 턴마다 정규식이 고른 페이지의
-  `Rule.` 문단 전문이 주입에 글자 그대로 있는지 본다. 이름이 아니라 내용을 본다. 9단계 게이트의 pytest 쪽이다. 표본은 이 저장소의 발화에서 개인 내용
+- 리콜 불변식: 고정 표본 trajectory 를 `tool/` 테스트 자료로 두고, `replay` 와 같은 판정 함수를 쓴다.
+  정규식이 고른 페이지마다 — `repeat: rule` 을 선언하고 이미 본 것은 규칙 문단(`Rule.` 또는 `규칙.`)
+  전문, 그 밖은 본문 전문이 주입에 글자 그대로 있는가. 두 곳이 판정을 따로 쓰면 둘이 어긋난다(리뷰 4회차).
+  9단계 게이트의 pytest 쪽이다. 표본은 이 저장소의 발화에서 개인 내용
   없는 것만 골라 만든다
 
 완료 기준. 이 저장소의 `replay` 에서 세션 누적 주입량이 60% 이상 준다. ai-nara-shop 은 그 저장소의
@@ -291,13 +293,16 @@ transcript 감지로 대신하므로 필요 없다. 다만 compact 에서 실제
 
 | 페이지 | 남는 것 | 스킬로 가는 것 |
 | --- | --- | --- |
-| `operator/after-merge-cleanup` (`contract`, 2.7KB) | 제목, `Rule.` 문단, 슬롯 줄(`{server_stop}`·`{scratch_dirs}`), "스킬 `after-merge` 를 부른다" | 번호 절차 1~N |
-| `operator/codex-review-loop` (`landmine`, 5.7KB) | 제목, 첫 문단(누가 리뷰어인가), `Rule.` 문단, "What goes wrong", 슬롯 줄(`{review_dir}`·`{gate_cmd}`·`{live_cmd}`), "스킬 `review-loop` 를 부른다" | 절차와 명령 예시 |
+| `operator/after-merge-cleanup` (`contract`, 2.7KB) | 제목, `Rule.` 문단 — 그 안에 "스킬 `after-merge` 를 부른다" 와 슬롯 값(`{server_stop}`·`{scratch_dirs}`) | 번호 절차 1~N |
+| `operator/codex-review-loop` (`landmine`, 5.7KB) | 제목, `Rule.` 문단 — 그 안에 누가 리뷰어인가, "스킬 `review-loop` 를 부른다", 슬롯 값(`{review_dir}`·`{gate_cmd}`·`{live_cmd}`). 그 뒤 "What goes wrong" | 절차와 명령 예시 |
 
 - 슬롯 줄이 페이지에 남는 이유. 스킬은 저장소마다 같은 파일이라 `fill()` 이 닿지 않는다. 이
   저장소의 서버 종료 명령이나 리뷰 폴더는 주입된 페이지만 안다
 - 트리거와 `severity` 는 그대로다. 규칙이 실리는 턴은 같고 실리는 양만 준다
-- 2단계와 겹치면, 줄어든 전문이 세션에 한 번 실리고 그 뒤로는 색인 한 줄이다
+- 스킬 호출과 슬롯 값을 `Rule.` 문단 안에 두는 이유. 두 페이지가 `repeat: rule` 을 선언하면 두 번째부터는
+  규칙 문단만 나간다. 호출과 값이 문단 밖에 있으면 그때 빠진다(리뷰 4회차)
+- 2단계와 겹치면, 줄어든 전문이 세션에 한 번 실리고 그 뒤로는 규칙 문단(호출과 슬롯 값 포함)이다.
+  선언은 PR ② 의 감사 기준으로 PR ③ 에서 붙인다
 
 ### Codex 에서도 스킬이 보이게
 
