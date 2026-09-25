@@ -96,6 +96,41 @@ def test_an_edited_page_is_cut_again():
         searchd.WIKI = was
 
 
+def test_a_batch_that_fails_to_embed_does_not_stall_the_pool():
+    """Its keys stayed pending, were never queued again, and the pool never
+    completed — every chat request waited out its minute (review round 1)."""
+
+    import sqlite3
+
+    import numpy
+
+    root = wiki(Path(tempfile.mkdtemp()))
+    was = searchd.WIKI
+    searchd.WIKI = root
+    try:
+        embedder = searchd.Embedder(Path(tempfile.mkdtemp()))
+        embedder.np, embedder.state = numpy, "ready"
+
+        def broken(texts, prefix):
+            if prefix == "passage: ":
+                raise RuntimeError("no memory")
+            return numpy.ones((len(texts), searchd.DIM), dtype=numpy.float32)
+
+        embedder.encode = broken
+        pool = searchd.Pool(None, "hook", embedder)
+        pool.refresh()
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE TABLE v (k TEXT PRIMARY KEY, v BLOB)")
+        while not embedder.jobs.empty():
+            embedder.store([embedder.jobs.get()], db)
+        assert not embedder.pending
+        assert pool.complete()
+        assert pool.search("merged branch", 1)[0]["cos"] == 0.0
+        assert db.execute("SELECT COUNT(*) FROM v").fetchone()[0] == 0, "zeros were cached"
+    finally:
+        searchd.WIKI = was
+
+
 class Running:
     """A daemon on a free port with a state file in the test home."""
 
@@ -187,6 +222,43 @@ def test_a_dead_daemon_left_behind_is_replaced():
         assert search.ask("q", None, "hook", timeout=0.15) is None
         assert spawned == [1]
     finally:
+        search.state_path().unlink(missing_ok=True)
+        os.environ["WIKI_SEARCH"], search.spawn = was[0] or "off", was[1]
+
+
+def test_a_peer_trickling_its_answer_does_not_hold_the_hook():
+    """A socket timeout restarts on every byte. Held per read, a 0.15 s ask
+    took 12 s against this peer (review round 1)."""
+
+    import socket
+    import time
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+
+    def trickle():
+        conn, _ = listener.accept()
+        conn.recv(4096)
+        for byte in b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n" + b"x" * 100:
+            try:
+                conn.send(bytes([byte]))
+            except OSError:
+                return
+            time.sleep(0.05)
+
+    threading.Thread(target=trickle, daemon=True).start()
+    was = os.environ.pop("WIKI_SEARCH", None), search.spawn
+    search.spawn = lambda: None
+    search.state_path().parent.mkdir(parents=True, exist_ok=True)
+    search.state_path().write_text(json.dumps({"port": listener.getsockname()[1], "token": "t"}),
+                                   encoding="utf-8")
+    try:
+        started = time.perf_counter()
+        assert search.ask("q", None, "hook", timeout=0.15) is None
+        assert time.perf_counter() - started < 0.5
+    finally:
+        listener.close()
         search.state_path().unlink(missing_ok=True)
         os.environ["WIKI_SEARCH"], search.spawn = was[0] or "off", was[1]
 

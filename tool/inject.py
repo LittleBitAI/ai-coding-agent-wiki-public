@@ -100,6 +100,10 @@ MAX_DECISIONS = 3
 SUGGEST_BY = "cos"
 SUGGEST_MIN: float | None = None
 SUGGEST_K = 2
+# How many pages the daemon returns before the regex's own are filtered out.
+# `trigger_audit.py suggest` measures with the same number, or it would count
+# pages the hook never sees.
+SUGGEST_ASK = 12
 # Past this the turn goes without. The daemon answers in about 10 ms.
 SEARCH_TIMEOUT = 0.15
 
@@ -615,7 +619,7 @@ def suggest(prompt: str, english: str, project: str | None, available: list,
     import search
 
     found = search.ask(f"{prompt}\n{english[len(RENDERING):]}", project, "hook",
-                       SEARCH_TIMEOUT, k=12)
+                       SEARCH_TIMEOUT, k=SUGGEST_ASK)
     if not found:
         return []
     by_name = {label(p): (b, p) for _m, b, p in available}

@@ -58,6 +58,7 @@ MODEL = "intfloat/multilingual-e5-small"
 FILES = {"model.onnx": "onnx/model_qint8_avx512_vnni.onnx", "tokenizer.json": "onnx/tokenizer.json"}
 # In every vector's cache key, so another model or file never reads these.
 MODEL_ID = f"{MODEL}/{FILES['model.onnx']}"
+DIM = 384  # the width of multilingual-e5-small's vectors
 
 HEADING = re.compile(r"^(#{1,3})\s+(.+?)\s*#*\s*$")
 WORD = re.compile(r"[a-z0-9_]+|[가-힣]+")
@@ -201,16 +202,31 @@ class Embedder:
             batch = [self.jobs.get()]
             while len(batch) < 8 and not self.jobs.empty():
                 batch.append(self.jobs.get())
-            try:
-                done = self.encode([text for _key, text in batch], "passage: ")
-            except Exception as error:  # noqa: BLE001
-                print(f"embedding skipped: {type(error).__name__}", file=sys.stderr)
-                continue
-            for (key, _text), vector in zip(batch, done):
-                self.vectors[key] = vector
-                db.execute("INSERT OR REPLACE INTO v VALUES (?, ?)", (key, vector.tobytes()))
+            self.store(batch, db)
+
+    def store(self, batch: list[tuple[str, str]], db) -> None:
+        """Embed one batch and keep it. Every key leaves `pending` either way.
+
+        A batch that fails gets zero vectors in memory only — cosine 0, last
+        in the ranking, and not written to the cache, so the next start tries
+        again. Left in `pending`, as round 1 of the review found, those keys
+        were never queued again, the pool never completed, and every chat
+        request waited its full minute for vectors that could not come.
+        """
+
+        try:
+            done = self.encode([text for _key, text in batch], "passage: ")
+        except Exception as error:  # noqa: BLE001
+            print(f"embedding skipped: {type(error).__name__}", file=sys.stderr)
+            for key, _text in batch:
+                self.vectors[key] = self.np.zeros(DIM, dtype=self.np.float32)
                 self.pending.discard(key)
-            db.commit()
+            return
+        for (key, _text), vector in zip(batch, done):
+            self.vectors[key] = vector
+            db.execute("INSERT OR REPLACE INTO v VALUES (?, ?)", (key, vector.tobytes()))
+            self.pending.discard(key)
+        db.commit()
 
     def encode(self, texts: list[str], prefix: str):
         """e5's convention: `passage: ` and `query: `, mean pooling, unit length."""

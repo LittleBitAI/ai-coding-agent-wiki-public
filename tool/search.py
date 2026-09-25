@@ -21,6 +21,7 @@ import os
 import secrets
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -97,6 +98,11 @@ def ask(query: str, project: str | Path | None, pool: str, timeout: float,
 
     `wait` asks the daemon to hold the answer until the pool's vectors are
     complete, up to that many seconds. Only the chat uses it.
+
+    `timeout + wait` bounds the whole call, not each read. A socket timeout
+    restarts on every byte, so a peer trickling its answer held a 0.15 s ask
+    for 12 s (review round 1). The exchange runs in a daemon thread and is
+    abandoned at the deadline; the hook's process exits under it.
     """
 
     if os.environ.get("WIKI_SEARCH") == "off":
@@ -112,13 +118,28 @@ def ask(query: str, project: str | Path | None, pool: str, timeout: float,
     deadline = time.monotonic() + timeout
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
     try:
-        try:
-            conn.connect()
-        except OSError:
-            # Nothing listening: the daemon died and left its file behind.
-            if start:
-                spawn()
-            return None
+        # Here, not in the thread: connect is one bounded operation, and a
+        # spawn left to a thread the join gave up on dies with the hook.
+        conn.connect()
+    except OSError:
+        # Nothing listening: the daemon died and left its file behind.
+        if start:
+            spawn()
+        return None
+    answer: list = []
+    worker = threading.Thread(
+        target=lambda: answer.append(exchange(conn, token, query, project, pool, deadline, k, wait, start)),
+        daemon=True)
+    worker.start()
+    worker.join(max(0.0, deadline - time.monotonic()) + wait)
+    return answer[0] if answer else None
+
+
+def exchange(conn: http.client.HTTPConnection, token: str, query: str, project, pool: str,
+             deadline: float, k: int, wait: float, start: bool) -> list[dict] | None:
+    """One health check and one search on a connected socket. `ask` bounds its time."""
+
+    try:
         nonce = secrets.token_hex(8)
         conn.request("GET", "/health", headers={"X-Wiki-Nonce": nonce})
         health = json.loads(conn.getresponse().read())

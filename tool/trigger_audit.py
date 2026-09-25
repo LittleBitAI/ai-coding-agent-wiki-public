@@ -778,7 +778,7 @@ def suggest_eval(argv: list[str]) -> int:
     import search
     import searchd
     import translate
-    from inject import HANGUL, MAX_RENDERED
+    from inject import HANGUL, MAX_RENDERED, SUGGEST_ASK
 
     rows = trajectory.read(args.labels)
     disputed = [r for r in rows if r.get("disputed")]
@@ -808,7 +808,7 @@ def suggest_eval(argv: list[str]) -> int:
         for t in (t for t in turns if t["repo"] == repo):
             query = t["utterance"] + ("\n" + t["english"] if t.get("english") else "")
             taken = set(t["regex"]) | always
-            t["eligible"] = [h | {"name": label(Path(h["path"]))} for h in pool.search(query, 60)
+            t["eligible"] = [h | {"name": label(Path(h["path"]))} for h in pool.search(query, SUGGEST_ASK)
                              if label(Path(h["path"])) in judged - taken]
 
     print(f"# 유사도 보조 문턱 — 라벨 {len(rows)}턴, disputed {len(disputed)}턴 제외, "
