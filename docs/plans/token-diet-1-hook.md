@@ -15,7 +15,7 @@
 | 리콜 정답 | Haiku 가 만들고 sol(GPT 6.0, medium) 이 `codex exec` 로 검토, Haiku 가 고친다. 이견 0 또는 3회에 멈춘다 |
 | 라벨 표본 | 200턴 층화 표본 |
 | SCHEMA 와의 충돌 | SCHEMA 에 예외 한 줄을 넣는다 |
-| 이미 본 페이지 | 본문에서 빼고, 색인 줄에 "이미 실림" 과 경로를 붙인다 |
+| 이미 본 페이지 | 페이지가 "매번 실릴 부분" 을 가진다 — `Rule.` 문단. 두 번째부터는 그 문단 전문과 경로만 싣는다 (리뷰 1회차 뒤 다시 고름) |
 | 전문 재전송 | compact 때만 |
 | compact 감지 | transcript 에서 두 호스트 공통으로 |
 | compact 후 SessionStart | 표지 + 현재 상태 보고 재주입 (지금 동작 그대로) |
@@ -62,7 +62,7 @@ python tool/trigger_audit.py replay <trajectory.jsonl>... --project <repo> [--un
 | 턴당 주입 크기 | 중앙값·p90. 지금 방식과 새 방식 |
 | 세션 누적 주입량 | 세션별 합, 그 합의 중앙값과 전체 합. 감소율 |
 | 한도 초과 턴 | `sent` 가 호스트 한도를 넘은 턴 수. 과거 행은 `sent` 가 없어 새 방식 재생값으로만 |
-| 리콜 불변식 | 턴마다 정규식이 고른 이름 집합이 새 방식에서 전문 또는 "이미 실림" 색인으로 전부 나오는가. 하나라도 빠지면 종료 코드 1 |
+| 리콜 불변식 | 턴마다 정규식이 고른 페이지 각각의 `Rule.` 문단 전문이 새 방식의 주입에 글자 그대로 들어 있는가. 이름만 보면 강제 조항이 빠져도 녹색이 된다. 하나라도 빠지면 종료 코드 1 |
 | 유휴 뒤 복귀 | 7단계용. [3묶음](token-diet-3-session.md#7단계--측정-먼저)에 셈이 있다 |
 
 새 방식의 compact 리셋은 transcript 를 찾아 쓴다. Claude 는
@@ -137,9 +137,18 @@ PR ① 에 넣는다. 기계 판정이 시작되는 PR 이 그 경계를 적는�
    줬으므로, 그 턴에 실린 전문은 안 본 것으로 친다
 3. 그 턴이 마지막 compact 보다 뒤다
 
-호스트 한도는 호스트별 상수다. Codex 는 설치가 `additionalContextLimit = 12000` 으로 건다.
-Claude 는 1단계 재생에서 `persisted-output` 이 난 턴의 `sent` 로 확정한다 — 그 전까지는 10,000자로
-둔다. 한도가 문자 수인지 바이트 수인지도 같이 확정한다. 한국어가 남은 턴에서는 두 수가 세 배까지 벌어진다. 낮게 잡을수록 전문을 더 자주 보내는 쪽으로 틀린다. 그 방향이 맞다.
+호스트 한도는 호스트별 상수이고, 단위가 호스트마다 다르다.
+
+- 단위. `sent` 는 UTF-8 바이트로 적는다. 바이트 단위 BPE 에서 토큰 수는 바이트 수를 넘지 않으므로,
+  바이트가 한도 이하면 토큰도 한도 이하다. 문자 수로는 이 보장이 없다 — 한글 한 글자가 토큰 여럿일 수 있다
+- Codex. 설치가 `additionalContextLimit = 12000` 을 건다. 이 값은 토큰이다(`tool/apply.py` 의 주석이
+  기본값을 "2,500 tokens" 로 적는다). 문턱은 12,000 바이트로 둔다 — 위 부등식으로 안전한 쪽이다
+- Claude. 공개된 단위가 없다. 이 세션에서 11.6KB 와 12.1KB 의 주입이 `persisted-output` 으로 빠졌다.
+  1단계 `replay` 가 transcript 에서 파일로 빠진 가장 작은 주입과 전문으로 들어간 가장 큰 주입을 찾아
+  그 사이에서 정한다. 그 전까지 문턱은 8,000 바이트
+
+문턱을 실물로 확정하지 못한 호스트는 중복 제거를 켜지 않는다. 낮게 잡을수록 전문을 더 자주 보내는
+쪽으로 틀린다. 그 방향이 맞다.
 
 ### trajectory 행에 더하는 것
 
@@ -159,15 +168,33 @@ Claude 는 1단계 재생에서 `persisted-output` 이 난 턴의 `sent` 로 확
 3. compact 감지. 직전 행의 `tx` 부터 transcript 끝까지만 읽어서 Claude 의 `"compact_boundary"`
    나 Codex 의 `"type":"compacted"` 가 있는지 본다. 매 턴 새로 붙은 부분만 읽으므로 transcript 가
    수십 MB 여도 작다. 있으면 본 집합을 비우고 이 행에 `reset: true`
-4. 이번 턴에 정규식이 고른 규칙 중 본 집합에 있는 것은 본문 `parts` 에서 뺀다. `rule_index` 에는
-   그대로 남고 줄 끝에 표시가 붙는다
+4. 이번 턴에 정규식이 고른 규칙 중 본 집합에 있는 것은 전문 대신 "반복형" 으로 싣는다.
+   `rule_index` 는 그대로 맨 앞이다
+
+반복형은 제목, `Rule.` 문단 전문, 경로다.
 
 ```
-- `operator/english-progress` — Tool descriptions, ... are written in English. (loaded earlier this session — full text: `operator/english-progress.md`)
+<!-- wiki:operator/ask-with-arrow-key-options (contract, repeated) -->
+# A decision the user owns is asked as options, not as prose
+
+Rule. Where the user's judgement is needed, ... **Calling Codex's
+`request_user_input_async` is forbidden outright.** ...
+
+Loaded in full earlier this session: `operator/ask-with-arrow-key-options.md`
 ```
 
-- `Rule.` 문단이 없는 페이지(저장소 지식)는 지금 `rule_index` 에서 빠진다. 이미 본 그런
-  페이지는 제목으로 색인 줄을 하나 만든다. 안 그러면 본문에서도 색인에서도 사라져 리콜 불변식이 깨진다
+- `shrink` 가 지금 잡는 것은 `Rule.` 로 시작하는 한 줄뿐이라 80자에서 문장이 잘린다. 빈 줄까지의
+  문단으로 고친다. 예산 축약(`fit`)도 같은 함수를 쓰니 함께 고쳐진다
+- 리뷰 1회차가 짚은 대로, 색인의 첫 문장만으로는 강제 조항이 빠진다. `ask-with-arrow-key-options` 의
+  비동기 금지는 둘째 문장이고, `agent-delegation` 의 셀 배정은 문단 뒤 불릿과 표다
+- 그래서 페이지 쪽 일이 있다. 매 턴 지켜야 하는 조항이 `Rule.` 문단 밖에 있는 페이지는 PR ② 에서
+  그 조항을 문단 안으로 옮긴다. 대상은 주입 대상 허브 페이지 전부를 한 번 읽어 고르고, 목록을 PR 에
+  적는다. 적어도 `agent-delegation`(불릿 넷과 셀 배정 표)과 `ask-with-arrow-key-options`(불릿의 추천
+  순서·기본값 규칙)다
+- `lint` 가 본다. 주입 대상 페이지에 `Rule.` 문단이 있고, 길이가 1,200자 이하인가. 문단이 길어지는
+  것은 반복형이 커지는 것이라 상한을 둔다
+- `Rule.` 문단이 없는 페이지(저장소 지식)는 반복형이 없으므로 중복 제거에서 빼고 매번 전문을 싣는다
+- 상시 3장의 반복형은 합쳐 약 2KB 로 본다(지금 9KB). 조항을 옮긴 뒤의 실제 크기는 `replay` 로 잰다
 - 결정 기록은 이미 두 줄 요약이라 건드리지 않는다
 - `systemMessage` 에 `· 이미 실림 N장` 을 붙인다
 - 모든 규칙이 이미 실렸으면 "Below is what the wiki loaded" 머리말과 `source_map` 도 뺀다.
@@ -199,12 +226,12 @@ transcript 감지로 대신하므로 필요 없다. 다만 compact 에서 실제
 
 ### 테스트 — `tool/test_inject.py`
 
-- 같은 세션 두 번째 턴: 본문에서 빠지고 색인에 표시가 붙는다
+- 같은 세션 두 번째 턴: 전문 대신 반복형이 나가고, 그 안에 `Rule.` 문단 전문이 있다
 - `sent` 가 한도를 넘은 턴의 전문은 본 것으로 치지 않는다
 - transcript 의 새 부분에 `compact_boundary` 가 있으면 다시 전문이 나간다
 - `--project` 없음, transcript 없음, 깨진 trajectory 줄: 전부 싣는다
-- 리콜 불변식: 고정 표본 trajectory 를 `tool/` 테스트 자료로 두고, 턴마다 정규식 이름 집합이
-  색인에 전부 있는지 본다. 9단계 게이트의 pytest 쪽이다. 표본은 이 저장소의 발화에서 개인 내용
+- 리콜 불변식: 고정 표본 trajectory 를 `tool/` 테스트 자료로 두고, 턴마다 정규식이 고른 페이지의
+  `Rule.` 문단 전문이 주입에 글자 그대로 있는지 본다. 이름이 아니라 내용을 본다. 9단계 게이트의 pytest 쪽이다. 표본은 이 저장소의 발화에서 개인 내용
   없는 것만 골라 만든다
 
 완료 기준. 1단계 `replay` 에서 세션 누적 주입량이 60% 이상 준다. 리콜 불변식 녹색.

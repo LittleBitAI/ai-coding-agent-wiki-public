@@ -134,7 +134,12 @@ python tool/search.py "<질의>" --project <repo> [--k 8]
 
 - `chat_session._spawn` 이 Claude 챗을 띄울 때 `--agents` 로 `scout` 를 정의한다.
   모델 `haiku`, 도구 `Bash,Read,Grep,Glob`, 할 일은 "search.py 로 찾고 근거 경로와 요약만 돌려준다"
+- 정의만으로는 불리지 않는다. `_spawn` 은 `--tools` 와 `--allowedTools` 를 둘 다 `READ_TOOLS`
+  (`Bash,Read,Glob,Grep`)로 넘기므로 `Agent` 도구가 없다. Claude 챗이 `scout` 를 쓸 때만 두 목록에
+  `Agent` 를 더한다. Codex 챗과 `oneshot` 경로는 그대로다
 - 본 모델의 시스템 프롬프트에 "첫 탐색은 `scout` 에 맡긴다" 를 넣는다
+- 확인. 실제 챗 한 번에서 stream-json 에 `scout` 호출이 찍히고 그 하위 호출의 모델이 Haiku 인지 본다.
+  정의가 있는 것과 불린 것은 다르다
 - 충돌 하나. 챗 세션에도 훅이 돌면 `operator/agent-delegation` 이 "요청 없이 서브에이전트 금지" 로
   실린다. 챗 시스템 프롬프트가 "이 챗에서 `scout` 위임은 운영자가 허락한 것" 이라고 명시해 둘이
   부딪치지 않게 한다. 작업 세션의 규칙은 그대로다
