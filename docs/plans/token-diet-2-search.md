@@ -190,6 +190,18 @@ python tool/search.py "<질의>" --project <repo> [--k 8]
   부딪치지 않게 한다. 작업 세션의 규칙은 그대로다
 - Codex 챗(`codex:` 모델)은 `scout` 없이 `search.py` 만
 
+### 구현에서 확인하고 정한 것 — 2026-09-25
+
+| 무엇 | 결과 |
+| --- | --- |
+| `scout` 가 비동기로 뜬다 | 첫 실물 챗에서 `Agent` 호출이 "Async agent launched" 로 돌아오고, 턴이 "돌아오면 알려주겠다" 를 답으로 끝났다. `say` 는 그 `result` 에서 읽기를 멈추므로 `scout` 의 결과는 다음 턴으로 샌다. Claude 챗 프로세스에 `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` 을 주면 전경으로 돈다 — CLI 가 이 값으로 `backgroundTasksDisabled` 를 정한다 |
+| 확인 | 그 뒤 실물 챗 한 번에서 stream-json 에 `Agent`(`subagent_type: scout`) 호출, 하위 호출의 모델 `claude-haiku-4-5-20251001`, 같은 턴 안의 최종 답을 봤다(31초). 본 모델은 `Read` 에 `offset` 을 줘 근거를 확인했다 |
+| 부르는지는 모델이 정한다 | 같은 질문을 다시 돌리자 본 모델이 `search.py` 를 직접 불러 12초에 답했다. 훅이 답이 되는 페이지를 이미 실은 턴은 둘 다 건너뛰었다. 시스템 프롬프트는 "먼저 `scout`" 이지만 강제가 아니다 |
+| `scout` 의 첫 호출 | 처음 정의로는 Haiku 가 `Glob`·`Grep`·`Read` 만 쓰고 `search.py` 를 안 불렀다. 프롬프트를 "첫 호출은 언제나 검색 명령" 으로 고쳤다 |
+| Codex 샌드박스 | `codex sandbox -c sandbox_mode="read-only"` 안에서 `search.py` 가 1.5초에 답했다. 데몬에 닿지 못하면 그 프로세스 안에서 BM25 만으로 찾는다 |
+| 명령의 경로 | 절대 경로, 슬래시. Claude 의 `Bash` 는 Windows 에서 Git Bash 다 |
+| 1-hop 이웃 | 허브 `graph.json` 의 `links` 와 대상 저장소 `.wiki/graph.json` 의 `edges`. 제목과 첫 문단은 허브 노드의 `headline`·`rule`, 저장소는 `corpus.json` 의 `title`·`lead` 다 — 파일을 다시 읽지 않는다 |
+
 ### 평가 — 질문 10개
 
 `raw/chat/wiki.jsonl`·`progress.jsonl`·`diagnose.jsonl` 에서 실제 질문 10개를 골라 PR ⑤ 에서 이
