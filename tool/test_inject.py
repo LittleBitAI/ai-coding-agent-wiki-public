@@ -624,6 +624,18 @@ def test_a_compact_in_one_session_resets_only_that_session():
     assert is_repeated(turn(root, "s1", "t1.jsonl")), "after the reload, s1 has seen it again"
 
 
+def test_a_codex_compact_resets_too():
+    """Review round 1: the transcript tail was read once per marker, so the
+    second marker — Codex's — only ever saw empty bytes. A test that wrote
+    Claude's marker alone could not see it."""
+
+    root = stage()
+    turn(root)
+    with (root / "t1.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write('{"timestamp":"2026-09-25T00:00:00Z","type":"compacted","payload":{}}\n')
+    assert not is_repeated(turn(root)), "Codex compacted and must reload"
+
+
 def test_a_compact_word_inside_a_message_is_not_a_compact():
     root = stage()
     turn(root)

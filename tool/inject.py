@@ -551,7 +551,10 @@ def compacted(previous: dict | None, transcript: Path, txp: str, size: int) -> b
         return True
     with transcript.open("rb") as handle:
         handle.seek(start)
-        return any(marker in handle.read() for marker in COMPACTED)
+        # Read once. Reading inside the loop handed every marker after the
+        # first an exhausted stream, and Codex's compact was never seen.
+        tail = handle.read()
+    return any(marker in tail for marker in COMPACTED)
 
 
 def recall(wiki: Path | None, session: str, transcript, host: str | None) -> tuple[set, dict]:
