@@ -61,9 +61,9 @@
 | 4 | 스킬로 옮기기 | `after-merge-cleanup`→`after-merge`, `codex-review-loop`→`review-loop` | 완료 — 전문 2,591→1,020B, 5,560→1,581B. 두 호스트 스킬 목록에 뜬다 |
 | 5 | 검색 데몬과 훅 보조 | 청크 하이브리드 색인, 정규식 밖 상위 1~2장을 한 줄로 | 완료, 보조는 끔 — 데몬·색인·훅 경로와 문턱 도구. 200턴 라벨(disputed 13)로 잰 정밀도가 최고 7% 라 60% 문턱이 없다. 데몬은 챗용 |
 | 6 | 위키 챗 검색 | `search` 도구, 그래프 1-hop, Haiku 1차 탐색 | 완료 — `search.py` 이웃 출력, 챗 절차. Haiku `scout` 는 입력 토큰 2.4배라 뺐다. 10문항 쪽마다 4번: 입력 토큰 중앙값 합 −20%(7/10 문항), 맞는 인용 29.5→39.5, 비용은 그대로(+2%). 인용 내용은 사람 대조 전 |
-| 7 | keep-alive 자동 핑 | 유휴 55분에 핑, 상한 있음 | 미착수 |
-| 8 | 운영 규칙 페이지 | `/compact`·자동 compact 문턱·keep-alive 를 operator 페이지로 | 미착수 |
-| 9 | 게이트 | `pytest tool/`·`lint --check`·1단계 재생 전후 비교 | 미착수 |
+| 7 | keep-alive 자동 핑 | 유휴 55분에 핑, 상한 있음 | 구체화 완료, 미착수 — `keep_alive = 2` 를 둔 저장소만(나라), Claude·Orca 셀만. 측정 보정이 먼저 |
+| 8 | 운영 규칙 페이지 | `/compact`·자동 compact 문턱·keep-alive 를 operator 페이지로 | 구체화 완료, 미착수 — 문턱을 재서 이 PC 의 Claude·Codex 설정에 넣고, `operator/compact-before-idle` 를 쓴다 |
+| 9 | 게이트 | `pytest tool/`·`lint --check`·1단계 재생 전후 비교 | 1·2묶음은 완료(#22·#23·#24). 3묶음 미착수 |
 
 2·3 은 한 쌍이다. 3 없이 2 를 켜면 compact 뒤로 규칙 전문이 영영 안 실린다 — 2 는 3 과 같은 PR 로 낸다.
 
@@ -75,7 +75,7 @@
 | --- | --- | --- |
 | [1묶음 — 측정과 훅 양](token-diet-1-hook.md) | 1~4 | ① 측정+라벨 ② 중복 제거+compact ③ 스킬 |
 | [2묶음 — 검색 데몬과 위키 챗](token-diet-2-search.md) | 5~6 | ④ 데몬+훅 보조 ⑤ 챗 검색 |
-| [3묶음 — 세션 운영](token-diet-3-session.md) | 7~8 | 7단계 측정 뒤에 정한다 |
+| [3묶음 — 세션 운영](token-diet-3-session.md) | 7~9 | ⑥ keep-alive ⑦ compact 문턱·운영 페이지·게이트 |
 
 ## 2026-09-25 구체화가 이 문서를 고친 것
 
