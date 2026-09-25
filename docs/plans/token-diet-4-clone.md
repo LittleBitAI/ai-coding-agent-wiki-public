@@ -74,7 +74,7 @@ loop 5단계(착수 전)가 계획한 것과의 겹침.
 | 단계 | 원본의 자리 | 사본과 달라지는 것 |
 | --- | --- | --- |
 | 1 측정 | `tool/trigger_audit.py` 에 `replay`·`latency`. `trajectory.record` 에 `sent`·`full`·`tx`·`txp`·`reset` | `label`·`suggest` 는 뺀다 — 5단계 훅 보조가 꺼져 쓸 곳이 없다. 새 명령 `usage`·`ab` 를 더한다(아래 측정) |
-| 2 중복 제거 | 순수 렌더(`repeated`, `compose`, `remembered`, `LIMIT`)는 `tool/wiki/match.py` 에 두고 `__all__` 에 더한다. transcript 를 읽는 `recall`·`compacted` 는 진입점 `inject.py`. `trajectory.record` 는 출력과 `stdout.flush()` 뒤로 옮긴다 | `wiki` 는 번역하지 않는 패키지라는 원본의 경계를 지킨다. 원본은 지금 출력 전에 기록한다(`inject.py:150`, 출력은 `:204`) — 그대로 두면 출력에 실패한 턴의 `full` 이 남아 다음 턴이 보지 못한 전문을 본 것으로 센다(리뷰 1회차) |
+| 2 중복 제거 | 순수 렌더(`repeated`, `compose`, `remembered`, `LIMIT`)는 `tool/wiki/match.py` 에 두고 `__all__` 에 더한다. transcript 를 읽는 `recall`·`compacted` 는 진입점 `inject.py`. `trajectory.record` 는 출력과 `stdout.flush()` 뒤로 옮기되, 모든 발화에서 돈다 — 조기 반환 `if not parts and not english: return 0`(`inject.py:163`)은 출력만 거르는 조건으로 바꾼다(사본 `inject.main` 의 `if body:` 모양). 기록을 건너뛰는 출구는 빈 발화·깨진 입력과, 3단계 뒤의 keep-alive 핑 턴뿐이다 | `wiki` 는 번역하지 않는 패키지라는 원본의 경계를 지킨다. 원본은 지금 출력 전에 기록한다(`inject.py:150`, 출력은 `:204`) — 그대로 두면 출력에 실패한 턴의 `full` 이 남아 다음 턴이 보지 못한 전문을 본 것으로 센다(리뷰 1회차). 기록만 옮기고 조기 반환을 두면 걸린 규칙 없는 턴이 기록에서 사라진다 — 원본은 누락을 찾으려고 그 턴도 기록한다(리뷰 2회차) |
 | 2 페이지 | 원본 페이지마다 규칙 문단을 확인하고 `repeat: rule` 선언. 규칙 문단 1,200자 검사는 원본 `lint` 에 | 사본 선언을 복사하지 않는다 |
 | 3 compact 리셋 | `inject.py` 의 `recall`, `COMPACTED` | 같다 |
 | 4 스킬 | 두 페이지 본문만 줄인다 | 스킬은 이미 있다 |
