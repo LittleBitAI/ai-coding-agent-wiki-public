@@ -199,6 +199,28 @@ def test_a_notice_is_retried_against_a_daemon_that_was_there_but_slow():
         home.close()
 
 
+def test_a_stale_state_file_and_no_daemon_stays_inside_the_hooks_five_seconds():
+    """Review round 2 feared a refused connect costs 2 s on Windows. The socket
+    timeout cuts it; the whole notice is the spawn wait plus two calls."""
+
+    import socket
+
+    home = Home()
+    free = socket.socket()
+    free.bind(("127.0.0.1", 0))
+    port = free.getsockname()[1]
+    free.close()
+    search.state_path().parent.mkdir(parents=True, exist_ok=True)
+    search.state_path().write_text(json.dumps({"port": port, "token": "t"}), encoding="utf-8")
+    search.spawn = lambda: None
+    try:
+        began = time.perf_counter()
+        assert not search.notify("/idle", {"session": "s1", "handle": HANDLE}, retry=keepalive.RETRY)
+        assert time.perf_counter() - began < search.SPAWN_WAIT + 2 * 2 * search.NOTIFY_TIMEOUT + 0.5 < 5
+    finally:
+        home.close()
+
+
 # ---- inject.py ----------------------------------------------------------------
 
 

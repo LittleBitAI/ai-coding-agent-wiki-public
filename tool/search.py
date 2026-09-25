@@ -129,6 +129,12 @@ def notify(path: str, body: dict, spawn_wait: float | None = None, retry: float 
     - A daemon was there and did not answer in time. It may hold a timer this
       notice was meant to clear, so try again for up to `retry` seconds
       (review round 1: a `/busy` lost this way let a ping into a turn).
+
+    The whole notice takes at most the larger wait plus two calls, and a call
+    is at most `NOTIFY_TIMEOUT` to connect and `NOTIFY_TIMEOUT` to answer —
+    the socket timeout cuts a refused connect too, 155 ms measured on Windows
+    (review round 2). With 3 s and 2 s waits that is about 3.6 s, under the
+    plan's 5-second bound for a keep-alive hook.
     """
 
     if os.environ.get("WIKI_SEARCH") == "off":
