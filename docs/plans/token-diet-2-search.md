@@ -98,6 +98,31 @@ Possibly relevant, by similarity rather than a trigger. Open the page if it appl
 
 결과 요약(문턱, k, 정밀도, 리콜, 표본 수, disputed 수)은 이 문서 아래에 적고 커밋한다. 라벨 원본은 `raw/` 에 남는다.
 
+#### 결과 — 2026-09-25, 보조를 켜지 않는다
+
+`trigger_audit.py label` 로 200턴(이 저장소 41, ai-nara-shop 159)을 만들고 `trigger_audit.py suggest` 로 쟀다.
+disputed 13턴을 빼고 187턴, 정답(정규식이 놓친 페이지)은 62턴에 78개다.
+
+| 질의 | 점수 | k | 60% 를 넘는 문턱 | 가장 높은 정밀도 |
+| --- | --- | ---: | --- | --- |
+| 원문 + 영어본 | cos | 1 | 없음 | 6% (제안 47) |
+| 원문 + 영어본 | cos | 2 | 없음 | 7% (제안 61) |
+| 원문 + 영어본 | rrf | 1 | 없음 | 7% (제안 184) |
+| 원문 + 영어본 | rrf | 2 | 없음 | 6% (제안 103) |
+| 원문만 | cos | 1·2 | 없음 | 25% (제안 4, 맞음 1) |
+| 원문만 | rrf | 1·2 | 없음 | 7% |
+
+그래서 `inject.SUGGEST_MIN` 은 `None` 이고 훅은 데몬에 묻지 않는다. 데몬은 챗용으로만 남는다.
+
+왜 안 되는가. 정답의 대부분이 행동 규칙이다 — `craft/do-the-whole-instruction` 이 78개 중 27개,
+`codex-review-loop` 12개, `diagnose-from-what-ran` 9개. "그래 그럼 그렇게 해라" 같은 짧은 발화는 어느
+규칙이 걸리는지를 말에 담지 않는다. 정답 페이지가 적격 후보 중 1위인 경우는 78개 중 8개, 10위 밖이 32개다.
+문턱을 어떻게 잡아도 정밀도가 오르지 않는 까닭이다. 같은 이유로 `bge-m3` 비교는 하지 않았다 — 모델을
+키워도 발화에 없는 신호는 생기지 않는다.
+
+다시 볼 때. 코드와 도구는 남아 있다. 라벨을 다시 만들거나 질의를 바꾸면(예: 직전 응답까지 넣기)
+`trigger_audit.py suggest` 를 다시 돌리고, 60% 를 넘는 문턱이 나오면 `SUGGEST_MIN` 한 줄로 켠다.
+
 ### SCHEMA.md·index.md
 
 - `SCHEMA.md` "What is not done" 의 임베딩 줄. 지금 작업트리에 "Under review" 문장이 들어가 있다.
@@ -127,6 +152,8 @@ Possibly relevant, by similarity rather than a trigger. Open the page if it appl
 | 남의 포트 | `/health` 에 nonce 를 보내 토큰으로 만든 증명을 받은 뒤에만 질의를 보낸다. 설계의 "토큰이 맞지 않으면 보조 없음" 을, 발화를 보내기 전에 판정하도록 한 것이다 |
 | Windows 포트 잠금 | 파이썬 `HTTPServer` 는 `SO_REUSEADDR` 를 켜는데, Windows 에서는 그러면 같은 포트에 둘째가 바인드된다. Windows 에서는 끈다 |
 | 끄는 스위치 | `WIKI_SEARCH=off` 면 훅이 데몬에 묻지 않는다. 테스트(`conftest.py`)와 `latency` 의 데몬 없음이 쓴다 |
+| 완료 기준 — 재생 | 두 저장소 `replay` 가 `main` 과 적재 수·반복률·리콜 불변식까지 같다. 크기만 턴당 97바이트 달랐는데, 비교용 작업트리의 경로가 출처 줄에 그만큼 길게 찍힌 것이다 |
+| 완료 기준 — 지연 | 보조가 꺼져 있어 훅은 `main` 과 같은 경로를 돈다. 번갈아 20회씩 두 번 잰 p95 가 `main` 243~490ms, 이 브랜치 193~360ms — 기계 잡음이 차이보다 크다. 데몬 있음은 훅이 묻지 않으니 잴 것이 없다 |
 
 ## 6단계 — 위키 챗 검색 (PR ⑤)
 

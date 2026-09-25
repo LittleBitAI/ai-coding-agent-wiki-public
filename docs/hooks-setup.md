@@ -22,13 +22,13 @@ hooks need PowerShell.
 
 ### The search daemon — optional
 
-`tool/searchd.py` is a small local daemon on `127.0.0.1:8790`. The hook starts
-it by itself and it stops after three idle hours; nothing needs to be run by
-hand. It adds, below the pages the triggers chose, at most two one-line hints
-for pages they missed, and it is what the wiki chat searches with. The
-triggers stay the authority — the daemon never removes or shortens a page they
-chose, and when it is absent or slow the hook injects exactly what it did
-without it.
+`tool/searchd.py` is a small local daemon on `127.0.0.1:8790` that the wiki
+chat searches with. The search command starts it by itself and it stops after
+three idle hours; nothing needs to be run by hand. The hook does not use it:
+a one-line hint for pages the triggers missed was built and measured, and no
+threshold was precise enough to switch it on
+([plan](plans/token-diet-2-search.md)). The triggers stay the only authority
+over what the hook injects.
 
 For the vector half, install `python -m pip install -r <wiki path>/requirements-search.txt`
 into the same Python. Without it the daemon ranks with BM25 alone. The model

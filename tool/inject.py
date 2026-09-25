@@ -92,6 +92,11 @@ MAX_DECISIONS = 3
 # did not choose; it never removes or shortens one the regex did. `SUGGEST_MIN`
 # is the floor on `SUGGEST_BY`, set from the recall labels (plan bundle 2,
 # step 5); `None` means the supplement is off and the daemon is not asked.
+#
+# Off, measured on 2026-09-25: over 187 labelled turns no floor on either score
+# reached 60% precision — the best was 7%. Most missed pages are behavioural
+# rules (`do-the-whole-instruction` is 27 of 78) that a short utterance says
+# nothing about. Rerun `trigger_audit.py suggest` before switching it on.
 SUGGEST_BY = "cos"
 SUGGEST_MIN: float | None = None
 SUGGEST_K = 2
