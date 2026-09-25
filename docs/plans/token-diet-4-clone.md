@@ -74,11 +74,11 @@ loop 5단계(착수 전)가 계획한 것과의 겹침.
 | 단계 | 원본의 자리 | 사본과 달라지는 것 |
 | --- | --- | --- |
 | 1 측정 | `tool/trigger_audit.py` 에 `replay`·`latency`. `trajectory.record` 에 `sent`·`full`·`tx`·`txp`·`reset` | `label`·`suggest` 는 뺀다 — 5단계 훅 보조가 꺼져 쓸 곳이 없다. 새 명령 `usage`·`ab` 를 더한다(아래 측정) |
-| 2 중복 제거 | 순수 렌더(`repeated`, `compose`, `remembered`, `LIMIT`)는 `tool/wiki/match.py` 에 두고 `__all__` 에 더한다. transcript 를 읽는 `recall`·`compacted` 는 진입점 `inject.py` | `wiki` 는 번역하지 않는 패키지라는 원본의 경계를 지킨다 |
+| 2 중복 제거 | 순수 렌더(`repeated`, `compose`, `remembered`, `LIMIT`)는 `tool/wiki/match.py` 에 두고 `__all__` 에 더한다. transcript 를 읽는 `recall`·`compacted` 는 진입점 `inject.py`. `trajectory.record` 는 출력과 `stdout.flush()` 뒤로 옮긴다 | `wiki` 는 번역하지 않는 패키지라는 원본의 경계를 지킨다. 원본은 지금 출력 전에 기록한다(`inject.py:150`, 출력은 `:204`) — 그대로 두면 출력에 실패한 턴의 `full` 이 남아 다음 턴이 보지 못한 전문을 본 것으로 센다(리뷰 1회차) |
 | 2 페이지 | 원본 페이지마다 규칙 문단을 확인하고 `repeat: rule` 선언. 규칙 문단 1,200자 검사는 원본 `lint` 에 | 사본 선언을 복사하지 않는다 |
 | 3 compact 리셋 | `inject.py` 의 `recall`, `COMPACTED` | 같다 |
 | 4 스킬 | 두 페이지 본문만 줄인다 | 스킬은 이미 있다 |
-| 5 데몬 | `tool/search/` 패키지 — `__init__.py`(`ask`·`notify`·`spawn`·`PING`)와 `daemon.py`(색인·`Keeper`) | 훅 보조(`suggest`)는 복제하지 않는다. 데몬은 keep-alive 와 챗 검색에만 쓴다. 버전 해시는 패키지 파일 전부. 포트와 상태 파일은 사본(8790, `~/.cache/ai-coding-agent-wiki/searchd.json`)과 다르게 둔다 — 같으면 한 기계의 두 데몬이 서로를 버전 불일치로 끈다 |
+| 5 데몬 | `tool/search/` 패키지 — `__init__.py`(`ask`·`notify`·`spawn`·`PING`)와 `daemon.py`(색인·`Keeper`) | 훅 보조(`suggest`)는 복제하지 않는다. 데몬은 keep-alive 와 챗 검색에만 쓴다. 버전 해시는 패키지 파일 전부. 포트와 캐시 루트 전체를 사본(8790, `~/.cache/ai-coding-agent-wiki/`)과 다르게 둔다. 상태 파일이 같으면 한 기계의 두 데몬이 서로를 버전 불일치로 끄고, 모델 내려받기(`models/e5/*.part`)와 `vectors.sqlite3` 가 같으면 동시 첫 시작에서 한쪽의 교체가 다른 쪽 임베딩을 꺼뜨린다(리뷰 1회차) |
 | 6 챗 검색 | `tool/main/query.py` 에 검색 호출 | 원본의 챗은 서버 경로라 사본의 `chat_session` 과 다르다. loop 계획과 겹치므로 착수 전에 묻는다 |
 | 7 keep-alive | 진입점 `tool/keepalive.py`, `hook.py` 의 `--host`·`--checkout`, `apply.py` 배선 | 같다. 리뷰 1~3회차에서 고친 두 경로(`/busy` 재시도, 잠금 안의 확인과 보내기)를 처음부터 넣는다 |
 | 8 compact | `operator/compact-before-idle`, `setup_agents.py --compact-window` | 설정 값은 이미 이 PC 에 들어가 있다. 도구와 페이지만 |
@@ -98,6 +98,12 @@ loop 5단계(착수 전)가 계획한 것과의 겹침.
 - 흘리기. 대상 저장소의 임시 사본에서 `claude -p --output-format json`, 둘째 발화부터 `--resume`.
   `--permission-mode plan` 으로 파일을 바꾸지 않는다
 - 팔. A 는 원본 `main` 의 훅, B 는 복제 브랜치의 훅. 모델·발화·사본이 같다. 팔마다 두 번 돌려 범위를 적는다
+- 팔의 격리. 그냥 `claude -p` 를 부르면 두 팔 모두 사용자 설정의 `wiki-agent/tool/hook.py` 를 부른다(리뷰
+  1회차). 팔마다 그 팔의 원본 작업트리(A 는 `main`, B 는 복제 브랜치)에서 `apply.configure(…, project=None)`
+  로 만든 훅 배선만 담은 설정 파일을 쓰고, `--setting-sources ""` 로 사용자·프로젝트 설정을 끄고
+  `--settings <그 파일>` 로 준다. 두 팔이 같은 설정을 끄므로 공정하다
+- 경로 확인. 팔마다 첫 세션 뒤, 임시 저장소의 `.wiki/trajectory.jsonl` 에 행이 생겼는지와 그 행의 모양을
+  본다 — B 행에는 `sent`·`full` 이 있고 A 행에는 없다. 어긋나면 그 팔을 멈춘다
 - 잴 것. 세션 합계 환산 토큰(입력·캐시 읽기·캐시 쓰기·출력)과 그 감소율, 턴당 주입 바이트(`sent`)
 - 보이지 않는 것. keep-alive 와 compact 문턱은 한 시간 유휴와 400K 문맥이 있어야 드러난다 — B 에서 본다
 - 비용. 약 6세션 × 8발화 × 2팔 × 2회 = 192턴. 모델은 착수 전에 묻는다
