@@ -1,6 +1,7 @@
 ---
 scope: craft
 severity: landmine
+repeat: rule
 triggers: ["원인", "왜 (깨|실패|안 되|안 돌)", "진단", "디버깅|디버그", "회귀|regression", "갑자기", "되던 게", "이상하다"]
 slots: []
 sources: []
@@ -13,7 +14,12 @@ links: [hooks-fail-open, run-inside-this-session, ask-with-arrow-key-options, ve
 Rule. When something breaks, query what actually executed before guessing at
 the cause. Which image came up, which setting was read, which process
 answered. Without that query, do not form a hypothesis. Having formed one, do
-not state it as a conclusion or act on it until it is confirmed.
+not state it as a conclusion or act on it until it is confirmed. Timing that
+lines up is not grounds, and an observation that agrees with a risk warned
+about in advance is the least trustworthy of all. An error name such as
+`X_missing` is not an execution record either. Print the value the process
+read, not the file; ask a port for its command line, not its name; keep the
+whole output, not a summary.
 
 What goes wrong. **The hypothesis drives an action, and the action does damage.**
 
