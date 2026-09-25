@@ -154,7 +154,7 @@ PR ① 에 넣는다. 기계 판정이 시작되는 PR 이 그 경계를 적는�
 
 | 키 | 뜻 |
 | --- | --- |
-| `full` | 이번 턴에 전문으로 나간 페이지 이름 |
+| `full` | 이번 턴에 전문으로 나간 페이지의 `[이름, 본문 해시]`. 해시는 슬롯을 채우고 번역한 뒤, 실제로 나간 본문의 sha256 앞 12자 |
 | `tx` | 이번 턴 시점의 transcript 파일 크기(바이트) |
 | `reset` | 이번 턴에서 compact 를 감지했으면 `true` |
 
@@ -164,7 +164,10 @@ PR ① 에 넣는다. 기계 판정이 시작되는 PR 이 그 경계를 적는�
 
 1. trajectory 를 한 줄씩 읽되, `session` 값이 문자열로 들어 있지 않은 줄은 `json.loads` 없이
    건너뛴다. 1,000행에서 몇 ms 다. 파일이 수만 행으로 커지면 그때 꼬리만 읽는다
-2. 같은 세션의 마지막 `reset` 행 이후에서, "봤다" 조건을 만족한 행의 `full` 을 모은다
+2. 같은 세션의 마지막 `reset` 행 이후에서, "봤다" 조건을 만족한 행의 `full` 을 모은다. 본 집합의
+   키는 이름과 해시의 짝이다. 세션 도중 페이지가 고쳐지면 이번 턴 본문의 해시가 달라 안 본 것이 되고,
+   고친 전문이 다시 한 번 나간다(리뷰 2회차). 저장소 `.wiki` 페이지의 번역이 턴마다 조금씩 달라도
+   같은 결과다 — 전문을 더 보내는 쪽으로만 틀린다
 3. compact 감지. 직전 행의 `tx` 부터 transcript 끝까지만 읽어서 Claude 의 `"compact_boundary"`
    나 Codex 의 `"type":"compacted"` 가 있는지 본다. 매 턴 새로 붙은 부분만 읽으므로 transcript 가
    수십 MB 여도 작다. 있으면 본 집합을 비우고 이 행에 `reset: true`
@@ -185,6 +188,11 @@ Loaded in full earlier this session: `operator/ask-with-arrow-key-options.md`
 
 - `shrink` 가 지금 잡는 것은 `Rule.` 로 시작하는 한 줄뿐이라 80자에서 문장이 잘린다. 빈 줄까지의
   문단으로 고친다. 예산 축약(`fit`)도 같은 함수를 쓰니 함께 고쳐진다
+- 반복형이 바닥이다. `fit` 은 예산이 남으면 둘째 바퀴에서 `shrink(hard=True)` — 제목과 경로만 — 로
+  내려가는데(`tool/inject.py` 의 `fit`), 그러면 `Rule.` 문단이 빠진다. 둘째 바퀴는 `Rule.` 문단이 없는
+  페이지에만 적용하고, 문단이 있는 페이지는 반복형 아래로 줄이지 않는다. 예산을 넘길 수 있지만,
+  예산은 이미 "축약 목표" 이고 넘을 수 있다고 `trigger_audit` 이 적는다. 지금 `rule_budget` 을 거는
+  어댑터는 없다
 - 리뷰 1회차가 짚은 대로, 색인의 첫 문장만으로는 강제 조항이 빠진다. `ask-with-arrow-key-options` 의
   비동기 금지는 둘째 문장이고, `agent-delegation` 의 셀 배정은 문단 뒤 불릿과 표다
 - 그래서 페이지 쪽 일이 있다. 매 턴 지켜야 하는 조항이 `Rule.` 문단 밖에 있는 페이지는 PR ② 에서
@@ -197,8 +205,8 @@ Loaded in full earlier this session: `operator/ask-with-arrow-key-options.md`
 - 상시 3장의 반복형은 합쳐 약 2KB 로 본다(지금 9KB). 조항을 옮긴 뒤의 실제 크기는 `replay` 로 잰다
 - 결정 기록은 이미 두 줄 요약이라 건드리지 않는다
 - `systemMessage` 에 `· 이미 실림 N장` 을 붙인다
-- 모든 규칙이 이미 실렸으면 "Below is what the wiki loaded" 머리말과 `source_map` 도 뺀다.
-  색인과 영어본만 나간다
+- 모든 규칙이 이미 실린 턴에도 반복형은 전부 나간다. 머리말과 `source_map` 도 그대로 둔다 —
+  합쳐 수백 자이고, 빼는 분기를 따로 두면 그 분기가 반복형까지 빼는 실수가 생긴다(리뷰 2회차)
 
 두 호스트의 기록 형식은 2026-09-25 에 실물로 확인했다. Claude transcript 에
 `"subtype":"compact_boundary"`, Codex rollout 에 `"type":"compacted"` 가 있다.
@@ -228,6 +236,9 @@ transcript 감지로 대신하므로 필요 없다. 다만 compact 에서 실제
 
 - 같은 세션 두 번째 턴: 전문 대신 반복형이 나가고, 그 안에 `Rule.` 문단 전문이 있다
 - `sent` 가 한도를 넘은 턴의 전문은 본 것으로 치지 않는다
+- 모든 규칙이 이미 실린 턴에도 각 페이지의 `Rule.` 문단 전문이 나간다
+- `rule_budget` 을 아주 작게 건 어댑터에서도 `Rule.` 문단이 있는 페이지는 반복형 아래로 안 줄어든다
+- 첫 턴 뒤 페이지 본문을 고치면 다음 턴에 전문이 다시 나간다
 - transcript 의 새 부분에 `compact_boundary` 가 있으면 다시 전문이 나간다
 - `--project` 없음, transcript 없음, 깨진 trajectory 줄: 전부 싣는다
 - 리콜 불변식: 고정 표본 trajectory 를 `tool/` 테스트 자료로 두고, 턴마다 정규식이 고른 페이지의
