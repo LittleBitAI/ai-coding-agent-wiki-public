@@ -31,6 +31,7 @@ import sys
 import tempfile
 import time
 
+from sessions import INJECTED
 import trajectory
 from inject import (
     COMPACTED, LIMIT, REPO_BUDGET, RULE_BUDGET, budget, compose, first_sentence,
@@ -215,10 +216,14 @@ def scan(path: Path) -> dict:
     `kept` and `filed` are the character counts of `UserPromptSubmit`
     injections that went in whole and that the host put in a file — the
     evidence `inject.LIMIT` stands on. `usage` is each Claude response's time
-    and token usage, for the idle-return count.
+    and token usage, for the idle-return count. `context` is each response's
+    `(time, context tokens)` once: one response writes a row per content
+    block and repeats its `usage` on each, so they are joined by `message.id`
+    — in one transcript here 2,799 rows were 2,139 responses. A subagent's
+    rows (`isSidechain`) are its own context, not the session's.
     """
 
-    out = {"compacts": [], "kept": [], "filed": [], "usage": []}
+    out = {"compacts": [], "kept": [], "filed": [], "usage": [], "context": {}}
     with path.open("rb") as handle:
         for line in handle:
             compact = any(marker in line for marker in COMPACTED)
@@ -233,7 +238,13 @@ def scan(path: Path) -> dict:
             if compact and row.get("timestamp"):
                 out["compacts"].append(when(row["timestamp"]))
             if used and row.get("timestamp"):
-                out["usage"].append((when(row["timestamp"]), (row.get("message") or {}).get("usage") or {}))
+                message = row.get("message") or {}
+                usage = message.get("usage") or {}
+                out["usage"].append((when(row["timestamp"]), usage))
+                if message.get("id") and not row.get("isSidechain"):
+                    out["context"].setdefault(message["id"], (when(row["timestamp"]), sum(
+                        usage.get(k) or 0 for k in
+                        ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))))
             attachment = row.get("attachment") or {}
             if hooked and attachment.get("type") == "hook_additional_context" \
                     and attachment.get("hookEvent") == "UserPromptSubmit":
@@ -245,7 +256,52 @@ def scan(path: Path) -> dict:
                         out["filed"].append(len(Path(filed.group(1)).read_text(encoding="utf-8", errors="replace")))
                     elif not filed:
                         out["kept"].append(len(item))
+    out["context"] = sorted(out["context"].values())
     return out
+
+
+# The automatic compact thresholds the plan's step 8a compares. `None` is
+# today's: Claude's own, near the 1M window.
+WINDOWS = (200_000, 300_000, 400_000, 600_000, None)
+
+
+def summary_size(traced: list[dict]) -> int:
+    """The median context of the first response after a real compact."""
+
+    after = [next((c for t, c in s["context"] if t > at), None) for s in traced for at in s["compacts"]]
+    after = [c for c in after if c]
+    return pct(after, .5) if after else 11_000
+
+
+def threshold(traced: list[dict], window: int | None, summary: int) -> tuple:
+    """`(sessions that compacted, compacts added, saving, cost)` at an automatic compact at `window`.
+
+    Replayed response by response. The simulated context is the real one
+    less an offset; past `window` a compact is taken to happen there, leaving
+    `summary`, and the offset becomes what that dropped. A real compact
+    bringing the context under the offset puts it back to 0. The saving is
+    the cache read (0.1) on what the offset kept out of every later response;
+    the cost of each added compact is one read of the window to summarise it
+    and one write (2) of the summary. What a summary loses cannot be counted,
+    which is why the added compacts are shown beside it.
+    """
+
+    if window is None:
+        return sum(bool(s["compacts"]) for s in traced), 0, 0.0, 0.0
+    hit = added = 0
+    saving = 0.0
+    for s in traced:
+        offset = mine = 0
+        for _t, c in s["context"]:
+            if c < offset:
+                offset = 0
+            if c - offset > window:
+                offset = c - summary
+                mine += 1
+            saving += 0.1 * offset
+        hit += bool(mine)
+        added += mine
+    return hit, added, saving, added * (0.1 * window + 2 * summary)
 
 
 def render(matched: list, limits: tuple, project, seen=frozenset(), repeat=frozenset(),
@@ -262,6 +318,30 @@ def render(matched: list, limits: tuple, project, seen=frozenset(), repeat=froze
 # per 55. The arithmetic is in the plan's bundle 3, step 7.
 def pings(gap: float) -> int:
     return 0 if gap < 60 else math.ceil((gap - 60) / 55)
+
+
+def idle_tables(gaps: list) -> tuple[list, list]:
+    """`([(bucket, returns, measured, C sum)], [net saving for k = 1..4])`."""
+
+    buckets = ["60분 미만", "60~115분", "115~170분", "170~225분", "225~280분", "그 이상"]
+    rows = []
+    for i, name in enumerate(buckets):
+        hit = [c for g, c in gaps if g is not None and min(pings(g), 5) == i]
+        measured = [c for c in hit if c is not None]
+        rows.append((name, len(hit), len(measured), sum(measured)))
+    ends = [c for g, c in gaps if g is None]
+    rows.append(("복귀 없음 (세션 끝)", len(ends), sum(c is not None for c in ends),
+                 sum(c or 0 for c in ends)))
+    nets = []
+    for k in range(1, 5):
+        net = 0.0
+        for g, c in gaps:
+            if c is None or (g is not None and pings(g) == 0):
+                continue
+            j = pings(g) if g is not None else None
+            net += (2 * c - 0.1 * c * (j + 1)) if j is not None and j <= k else -0.1 * c * k
+        nets.append(net)
+    return rows, nets
 
 
 def replay(argv: list[str]) -> int:
@@ -304,17 +384,22 @@ def replay(argv: list[str]) -> int:
     misses = []
     loaded_pages = Counter()
     gaps = []  # (gap minutes or None for no return, context tokens or None)
+    idle = []  # the same, corrected: harness rows left out, the gap from the last activity
+    untimed = 0  # corrected returns in sessions without a transcript, still row to row
+    claude: set[str] = set()  # the Claude transcripts, for the compact threshold
     for key, rows in sessions.items():
         rows.sort(key=lambda r: r["_at"])
         host, tx = found.get(key, (None, None)) if isinstance(key, str) else (None, None)
         if tx is None:
             missing_tx += 1
         traced = scans.setdefault(str(tx), scan(tx)) if tx else {"compacts": [], "usage": []}
+        if host == "claude":
+            claude.add(str(tx))
         limit = LIMIT.get(host or "", min(LIMIT.values()))
         sim: list[dict] = []
         before: dict[str, set] = {"기록": set(), "지금 방식": set(), "새 방식": set()}
         session_old = session_new = 0
-        previous = None
+        previous = human = None
         for row in rows:
             matched = match_pages(str(row.get("utterance") or ""), available)
             old_body, _full, names, _s = render(matched, limits, project)
@@ -345,15 +430,25 @@ def replay(argv: list[str]) -> int:
             if isinstance(row.get("sent"), int):
                 over_recorded[host or "?"] += row["sent"] > limit
 
+            after = [u for t, u in traced["usage"] if t > row["_at"]]
+            written = after[0].get("cache_creation_input_tokens") if after else None
             if previous is not None:
-                gap = (row["_at"] - previous).total_seconds() / 60
-                after = [u for t, u in traced["usage"] if t > row["_at"]]
-                gaps.append((gap, after[0].get("cache_creation_input_tokens") if after else None))
+                gaps.append(((row["_at"] - previous).total_seconds() / 60, written))
             previous = row["_at"]
+            if str(row.get("utterance") or "").lstrip().startswith(INJECTED):
+                continue  # the harness, not a person coming back
+            if human is not None:
+                # The agent working after the last utterance kept the cache
+                # warm, so the idle time starts at its last response.
+                start = max([human] + [t for t, _u in traced["usage"] if t < row["_at"]])
+                idle.append(((row["_at"] - start).total_seconds() / 60, written))
+                untimed += tx is None
+            human = row["_at"]
         last = [u for t, u in traced["usage"] if t <= previous] if previous else []
         context = sum(last[-1].get(k) or 0 for k in (
             "input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")) if last else None
         gaps.append((None, context))
+        idle.append((None, context))
         old_sum.append(session_old)
         new_sum.append(session_new)
 
@@ -416,27 +511,37 @@ def replay(argv: list[str]) -> int:
               f"{f'{again:,}' if again else '—'} | {loaded_pages[name]:,} |")
 
     print("\n## 유휴 뒤 복귀 — 7단계\n")
-    print("간격은 같은 세션의 이어진 두 행 사이. C 는 복귀 직후 첫 응답의 "
-          "`cache_creation_input_tokens` (Claude transcript 에서만), 복귀가 없으면 마지막 문맥 크기다.\n")
-    print("| 간격 | 복귀 | C 측정 | C 합 |\n| --- | ---: | ---: | ---: |")
-    buckets = ["60분 미만", "60~115분", "115~170분", "170~225분", "225~280분", "그 이상"]
-    for i, name in enumerate(buckets):
-        hit = [c for g, c in gaps if g is not None and min(pings(g), 5) == i]
-        measured = [c for c in hit if c is not None]
-        print(f"| {name} | {len(hit):,} | {len(measured):,} | {sum(measured):,} |")
-    ends = [c for g, c in gaps if g is None]
-    print(f"| 복귀 없음 (세션 끝) | {len(ends):,} | {sum(c is not None for c in ends):,} | "
-          f"{sum(c or 0 for c in ends):,} |")
-    print("\n| 상한 k | 순절감 추정 (토큰 환산, API 요율 대리값) |\n| ---: | ---: |")
-    for k in range(1, 5):
-        net = 0.0
-        for g, c in gaps:
-            if c is None or (g is not None and pings(g) == 0):
-                continue
-            j = pings(g) if g is not None else None
-            net += (2 * c - 0.1 * c * (j + 1)) if j is not None and j <= k else -0.1 * c * k
-        print(f"| {k} | {net:,.0f} |")
-    print("\n복귀 없음은 핑 k번을 다 쓴 것으로 셌다 — 아직 열려 있는 세션에는 손해가 과대 추정이다.")
+    print("C 는 복귀 직후 첫 응답의 `cache_creation_input_tokens` (Claude transcript 에서만), "
+          "복귀가 없으면 마지막 문맥 크기다.\n")
+    print("- 보정 전: 같은 세션의 이어진 두 행 사이. 하네스 주입 발화도 복귀로 센다")
+    print("- 보정 뒤: `sessions.INJECTED` 로 시작하는 행은 빼고, 간격은 직전 사람 행 뒤 "
+          "transcript 의 마지막 응답부터")
+    if untimed:
+        print(f"- 보정 뒤에서 transcript 를 못 찾은 세션의 복귀 {untimed:,}개는 행 사이 간격 그대로다")
+    (rows0, nets0), (rows1, nets1) = idle_tables(gaps), idle_tables(idle)
+    print("\n| 간격 | 보정 전 복귀 | 보정 전 C 합 | 보정 뒤 복귀 | 보정 뒤 C 측정 | 보정 뒤 C 합 |")
+    print("| --- | ---: | ---: | ---: | ---: | ---: |")
+    for (name, n0, _m0, c0), (_n, n1, m1, c1) in zip(rows0, rows1):
+        print(f"| {name} | {n0:,} | {c0:,} | {n1:,} | {m1:,} | {c1:,} |")
+    print("\n| 상한 k | 보정 전 순절감 | 보정 뒤 순절감 |\n| ---: | ---: | ---: |")
+    for k, net0, net1 in zip(range(1, 5), nets0, nets1):
+        print(f"| {k} | {net0:,.0f} | {net1:,.0f} |")
+    print("\n토큰 환산, API 요율 대리값. 복귀 없음은 핑 k번을 다 쓴 것으로 셌다 — "
+          "아직 열려 있는 세션에는 손해가 과대 추정이다.")
+
+    traced = [scans[tx] for tx in sorted(claude)]
+    summary = summary_size(traced)
+    print("\n## compact 문턱 — 8단계\n")
+    print(f"Claude transcript {len(traced)}개, 응답 {sum(len(s['context']) for s in traced):,}개, "
+          f"실제 compact {sum(len(s['compacts']) for s in traced)}번. 요약 크기 S = {summary:,} "
+          "(실제 compact 직후 첫 문맥의 중앙값). 토큰 환산, 읽기 0.1·쓰기 2 의 API 요율 대리값.\n")
+    print("| W | compact 가 난 세션 | 늘어난 compact | 절감 | 비용 | 순 |\n| ---: | ---: | ---: | ---: | ---: | ---: |")
+    for window in WINDOWS:
+        hit, added, saving, cost = threshold(traced, window, summary)
+        name = f"{window // 1000}K" if window else "지금 (자동, 약 1M)"
+        print(f"| {name} | {hit} | {added} | {saving:,.0f} | {cost:,.0f} | {saving - cost:,.0f} |")
+    print("\n지금 행의 세션 수는 실제 compact 가 난 세션이다. 늘어난 compact 는 모의에서 난 수 — "
+          "실제 compact 가 모의에서는 안 났을 수 있는 것은 빼지 않았다.")
 
     print("\n## 리콜 불변식\n")
     if misses:
@@ -463,6 +568,9 @@ def latency(argv: list[str]) -> int:
     parser.add_argument("--host", default="claude")
     parser.add_argument("--search", action="store_true",
                         help="검색 데몬을 켜고 잰다. 없으면 훅이 데몬에 묻지 않는다 (PR ① 과 같은 경로)")
+    parser.add_argument("--keepalive", action="store_true",
+                        help="keep-alive 알림을 켜고 잰다 — 데몬을 띄우고 Orca 셀 handle 을 준다. "
+                             "--project 에 keep_alive 가 있어야 한다. 핑 문구 발화를 더한다")
     args = parser.parse_args(argv)
     project = args.project.expanduser().resolve()
     here = Path(__file__).resolve().parent
@@ -494,6 +602,21 @@ def latency(argv: list[str]) -> int:
                 if search.ask("warm", target, "hook", 5.0, wait=120) is not None:
                     break
                 time.sleep(1)
+        elif args.keepalive:
+            import keepalive
+            import search
+
+            if not keepalive.limit(target):
+                print(f"{project} 의 .wiki/adapter.toml 에 keep_alive 가 없다 — 훅이 알리지 않는다")
+                return 1
+            env.pop("WIKI_SEARCH", None)
+            # A handle no cell has: the daemon only writes it down, and a
+            # timer it sets would find no such cell and send nothing.
+            env["ORCA_TERMINAL_HANDLE"] = "term_latency"
+            # Up before the clock runs, so the hook pays a notice, not a start.
+            if not search.notify("/own", {"session": "latency", "handle": "term_latency"}, spawn_wait=10):
+                print("검색 데몬에 닿지 않는다")
+                return 1
         else:
             env["WIKI_SEARCH"] = "off"
         if not args.with_translation:
@@ -502,12 +625,19 @@ def latency(argv: list[str]) -> int:
             env |= {"GEMINI_API_KEY": "", "TRANSLATE_ENV": str(root / "absent.env"),
                     "TRANSLATE_CACHE": str(root / "cache.sqlite3")}
         print(f"# 훅 지연 — {args.runs}회, 번역 {'켬' if args.with_translation else '끔'}, "
-              f"호스트 {args.host}, 검색 데몬 {'있음' if args.search else '없음'}\n")
+              f"호스트 {args.host}, 검색 데몬 {'있음' if args.search else '없음'}, "
+              f"keep-alive {'켬' if args.keepalive else '끔'}\n")
         print("| 발화 | p50 (ms) | p95 (ms) |\n| --- | ---: | ---: |")
-        for name, text in UTTERANCES.items():
+        utterances = dict(UTTERANCES)
+        if args.keepalive:
+            from search import PING
+
+            utterances["핑 문구"] = PING
+        for name, text in utterances.items():
             times = []
             for i in range(args.runs):
-                prompt = f"{text} ({i})" if text and args.with_translation else text
+                # The ping is matched whole, so it gets no tail.
+                prompt = f"{text} ({i})" if text and args.with_translation and name != "핑 문구" else text
                 started = time.perf_counter()
                 subprocess.run(
                     [sys.executable, str(here / "inject.py"), "--project", str(target),

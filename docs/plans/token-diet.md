@@ -61,9 +61,9 @@
 | 4 | 스킬로 옮기기 | `after-merge-cleanup`→`after-merge`, `codex-review-loop`→`review-loop` | 완료 — 전문 2,591→1,020B, 5,560→1,581B. 두 호스트 스킬 목록에 뜬다 |
 | 5 | 검색 데몬과 훅 보조 | 청크 하이브리드 색인, 정규식 밖 상위 1~2장을 한 줄로 | 완료, 보조는 끔 — 데몬·색인·훅 경로와 문턱 도구. 200턴 라벨(disputed 13)로 잰 정밀도가 최고 7% 라 60% 문턱이 없다. 데몬은 챗용 |
 | 6 | 위키 챗 검색 | `search` 도구, 그래프 1-hop, Haiku 1차 탐색 | 완료 — `search.py` 이웃 출력, 챗 절차. Haiku `scout` 는 입력 토큰 2.4배라 뺐다. 10문항 쪽마다 4번: 입력 토큰 중앙값 합 −20%(7/10 문항), 맞는 인용 29.5→39.5, 비용은 그대로(+2%). 인용 내용은 사람 대조 전 |
-| 7 | keep-alive 자동 핑 | 유휴 55분에 핑, 상한 있음 | 구체화 완료, 미착수 — `keep_alive = 2` 를 둔 저장소만(나라), Claude·Orca 셀만. 측정 보정이 먼저 |
-| 8 | 운영 규칙 페이지 | `/compact`·자동 compact 문턱·keep-alive 를 operator 페이지로 | 구체화 완료, 미착수 — 문턱을 재서 이 PC 의 Claude·Codex 설정에 넣고, `operator/compact-before-idle` 를 쓴다 |
-| 9 | 게이트 | `pytest tool/`·`lint --check`·1단계 재생 전후 비교 | 1·2묶음은 완료(#22·#23·#24). 3묶음 미착수 |
+| 7 | keep-alive 자동 핑 | 유휴 55분에 핑, 상한 있음 | 구현, 실물 남음 — 보정 뒤 나라 상한 2 순절감 8,901,757(이 저장소 −792,131). `keepalive.py`·`searchd.Keeper`, `keep_alive = 2` 를 둔 저장소의 Claude·Orca 셀만. 사용자 수준 훅이 `wiki-agent` 를 부르는 동안은 실물 불가 |
+| 8 | 운영 규칙 페이지 | `/compact`·자동 compact 문턱·keep-alive 를 operator 페이지로 | 완료, 실물 남음 — 400K 로 골라(나라 순 130.7M, 늘어난 compact 27) 이 PC 의 Claude·Codex 세 파일에 넣었다. `operator/compact-before-idle`, 트리거는 사람 발화만(이 저장소 3·나라 2) |
+| 9 | 게이트 | `pytest tool/`·`lint --check`·1단계 재생 전후 비교 | 3묶음 게이트 1~4·6 통과 — pytest 336, 리콜 녹색, latency 잡음 안. `lint --check` 는 이 PC 의 배선 드리프트만. 5(실물)는 남음 |
 
 2·3 은 한 쌍이다. 3 없이 2 를 켜면 compact 뒤로 규칙 전문이 영영 안 실린다 — 2 는 3 과 같은 PR 로 낸다.
 

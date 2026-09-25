@@ -1,4 +1,5 @@
 """search — ask the search daemon. The hook calls `ask`; the wiki chat runs this.
+The keep-alive hooks tell it what their cell is doing with `notify`.
 
     python tool/search.py "<query>" --project <repo> [--k 8]
 
@@ -43,10 +44,16 @@ def state_path() -> Path:
 
 
 def version() -> str:
-    """The daemon's version is its file's hash. After a `git pull` the hook's
-    copy differs from what the running daemon reports, and it is replaced."""
+    """The daemon's version is its files' hash. After a `git pull` the hook's
+    copy differs from what the running daemon reports, and it is replaced.
 
-    return hashlib.sha256((HERE / "searchd.py").read_bytes()).hexdigest()[:12]
+    This file too: it holds `PING`. A daemon typing an old ping at a hook that
+    knows a new one would have every ping taken for a person, and a person
+    resets the cap.
+    """
+
+    return hashlib.sha256((HERE / "searchd.py").read_bytes()
+                          + (HERE / "search.py").read_bytes()).hexdigest()[:12]
 
 
 def proof(token: str, nonce: str) -> str:
@@ -91,13 +98,66 @@ def ask(query: str, project: str | Path | None, pool: str, timeout: float,
     """The daemon's answer, or `None`.
 
     `None` for anything short of a proper answer. When no daemon is there it
-    is started and this turn goes without. No state file means no connection
-    attempt at all: a refused connection to localhost takes two seconds on
-    Windows, and the hook has 150 ms. A stale state file costs one timed-out
-    connect, once.
+    is started and this turn goes without.
 
     `wait` asks the daemon to hold the answer until the pool's vectors are
     complete, up to that many seconds. Only the chat uses it.
+    """
+
+    answer, _started = call("/search", {"query": query, "project": str(project) if project else None,
+                                        "pool": pool, "k": k, "wait": wait}, timeout, wait, start)
+    results = (answer or {}).get("results")
+    return results if isinstance(results, list) else None
+
+
+# The keep-alive notices (plan bundle 3, step 7). The hook that sends one
+# waits this long for a daemon it had to start, then drops the notice.
+PING = 'keep-alive — reply "ok" and nothing else.'
+NOTIFY_TIMEOUT = 0.15
+SPAWN_WAIT = 3.0
+
+
+def notify(path: str, body: dict, spawn_wait: float | None = None, retry: float = 0.0) -> bool:
+    """Tell the daemon what a cell is doing. `True` once it took the notice.
+
+    Unlike a search, a notice left undelivered is not free: the timer it would
+    have set or cleared stays as it was. Two ways to miss, two waits:
+
+    - No daemon was there, so this started one. Nothing was armed in a daemon
+      that was not running; wait up to `spawn_wait` for the new one and send
+      again, or drop it — the daemon then errs towards pinging less.
+    - A daemon was there and did not answer in time. It may hold a timer this
+      notice was meant to clear, so try again for up to `retry` seconds
+      (review round 1: a `/busy` lost this way let a ping into a turn).
+
+    The whole notice takes at most the larger wait plus two calls, and a call
+    is at most `NOTIFY_TIMEOUT` to connect and `NOTIFY_TIMEOUT` to answer —
+    the socket timeout cuts a refused connect too, 155 ms measured on Windows
+    (review round 2). With 3 s and 2 s waits that is about 3.6 s, under the
+    plan's 5-second bound for a keep-alive hook.
+    """
+
+    if os.environ.get("WIKI_SEARCH") == "off":
+        return False
+    answer, started = call(path, body, NOTIFY_TIMEOUT)
+    if answer is not None:
+        return True
+    wait = (SPAWN_WAIT if spawn_wait is None else spawn_wait) if started else retry
+    until = time.monotonic() + wait
+    while time.monotonic() < until:
+        time.sleep(0.1)
+        if call(path, body, NOTIFY_TIMEOUT, start=False)[0] is not None:
+            return True
+    return False
+
+
+def call(path: str, body: dict, timeout: float, wait: float = 0.0,
+         start: bool = True) -> tuple[dict | None, bool]:
+    """`(the daemon's JSON answer or None, whether this started a daemon)`.
+
+    No state file means no connection attempt at all: a refused connection to
+    localhost takes two seconds on Windows, and the hook has 150 ms. A stale
+    state file costs one timed-out connect, once.
 
     `timeout + wait` bounds the whole call, not each read. A socket timeout
     restarts on every byte, so a peer trickling its answer held a 0.15 s ask
@@ -106,14 +166,14 @@ def ask(query: str, project: str | Path | None, pool: str, timeout: float,
     """
 
     if os.environ.get("WIKI_SEARCH") == "off":
-        return None
+        return None, False
     try:
         state = json.loads(state_path().read_text(encoding="utf-8"))
         port, token = int(state["port"]), str(state["token"])
     except Exception:  # noqa: BLE001
         if start:
             spawn()
-        return None
+        return None, start
 
     deadline = time.monotonic() + timeout
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
@@ -125,19 +185,19 @@ def ask(query: str, project: str | Path | None, pool: str, timeout: float,
         # Nothing listening: the daemon died and left its file behind.
         if start:
             spawn()
-        return None
+        return None, start
     answer: list = []
     worker = threading.Thread(
-        target=lambda: answer.append(exchange(conn, token, query, project, pool, deadline, k, wait, start)),
+        target=lambda: answer.append(exchange(conn, token, path, body, deadline, wait, start)),
         daemon=True)
     worker.start()
     worker.join(max(0.0, deadline - time.monotonic()) + wait)
-    return answer[0] if answer else None
+    return answer[0] if answer else (None, False)
 
 
-def exchange(conn: http.client.HTTPConnection, token: str, query: str, project, pool: str,
-             deadline: float, k: int, wait: float, start: bool) -> list[dict] | None:
-    """One health check and one search on a connected socket. `ask` bounds its time."""
+def exchange(conn: http.client.HTTPConnection, token: str, path: str, body: dict,
+             deadline: float, wait: float, start: bool) -> tuple[dict | None, bool]:
+    """One health check and one request on a connected socket. `call` bounds its time."""
 
     try:
         nonce = secrets.token_hex(8)
@@ -146,23 +206,21 @@ def exchange(conn: http.client.HTTPConnection, token: str, query: str, project, 
         if health.get("proof") != proof(token, nonce):
             # Somebody else holds the port. Starting another daemon would not
             # get it back, and the utterance is not sent to a stranger.
-            return None
+            return None, False
         if health.get("version") != version():
             conn.request("POST", "/quit", body=b"{}", headers={"X-Wiki-Token": token})
             conn.getresponse().read()
             if start:
                 spawn()
-            return None
-        body = json.dumps({"query": query, "project": str(project) if project else None,
-                           "pool": pool, "k": k, "wait": wait}, ensure_ascii=False)
+            return None, start
         conn.sock.settimeout(max(0.001, deadline - time.monotonic()) + wait)
-        conn.request("POST", "/search", body=body.encode("utf-8"),
+        conn.request("POST", path, body=json.dumps(body, ensure_ascii=False).encode("utf-8"),
                      headers={"X-Wiki-Token": token, "Content-Type": "application/json"})
-        answer = json.loads(conn.getresponse().read())
-        results = answer.get("results")
-        return results if isinstance(results, list) else None
+        response = conn.getresponse()
+        answer = json.loads(response.read())
+        return (answer if response.status == 200 and isinstance(answer, dict) else None), False
     except Exception:  # noqa: BLE001
-        return None
+        return None, False
     finally:
         conn.close()
 
