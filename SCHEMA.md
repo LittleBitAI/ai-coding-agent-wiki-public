@@ -208,12 +208,16 @@ goes to, are held by [`MAINTENANCE.md`](MAINTENANCE.md).
 
 ## What is not done
 
-- No embeddings and no vector database. The reader is already a good model,
-  and standing another retrieval model in front of it is not elegant; it adds
-  four more failure sites — a key, a network, a quota, and vectors that go
-  stale. A listing is enough. Under review: a local model that answers each of
-  the four, as a supplement the regex triggers keep authority over —
-  [token-diet plan](docs/plans/token-diet.md).
+- No retrieval model in front of the reader. A local one serves the wiki
+  chat's search and may only ever supplement the regex triggers, which keep
+  authority: at most a line per page they missed, never a page they chose
+  removed or shortened. That supplement is off — measured against recall
+  labels, no threshold was precise enough. The four failure sites an
+  embedding used to add are closed — no key (a local ONNX model), no network
+  (localhost only), no quota, and no stale vectors (each chunk is keyed by its
+  text's hash and recomputed when it changes). The one site it brings, a
+  daemon process, fails to the regex alone —
+  [token-diet plan](docs/plans/token-diet-2-search.md).
 - A target repository's knowledge is not brought here. The `project` scope
   lives over there.
 - Nothing that needs judgement is mechanised. False positives stop the work.
