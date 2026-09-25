@@ -750,6 +750,18 @@ def test_the_invariant_goes_red_when_a_clause_is_missing():
 
 # ---- The similarity supplement ---------------------------------------------
 
+
+def test_the_threshold_sweep_tries_the_score_the_hook_would_suggest_at():
+    """Floors taken from the daemon's order missed the page the hook ranks
+    first by score (review round 2)."""
+
+    from trigger_audit import sweep
+
+    turn = {"eligible": [{"name": "low", "cos": 0.3}, {"name": "high", "cos": 0.9}],
+            "extra": ["high"]}
+    rows = {floor: (suggested, correct) for floor, suggested, correct, _t in sweep([turn], "cos", 1)}
+    assert rows.get(0.9) == (1, 1), rows
+
 OTHER = """---
 scope: craft
 severity: contract

@@ -96,37 +96,86 @@ def test_an_edited_page_is_cut_again():
         searchd.WIKI = was
 
 
-def test_a_batch_that_fails_to_embed_does_not_stall_the_pool():
-    """Its keys stayed pending, were never queued again, and the pool never
-    completed — every chat request waited out its minute (review round 1)."""
+def embedded(fails, db=None):
+    """A hook pool over the test wiki, embedded by a fake model one chunk per
+    batch. A passage `fails` picks raises; every other one points away from
+    the query, so its cosine is negative."""
 
     import sqlite3
 
     import numpy
 
+    embedder = searchd.Embedder(Path(tempfile.mkdtemp()))
+    embedder.np, embedder.state = numpy, "ready"
+
+    def encode(texts, prefix):
+        if prefix == "passage: " and any(fails(t) for t in texts):
+            raise RuntimeError("no memory")
+        side = 1.0 if prefix == "query: " else -1.0
+        return numpy.array([[side, 0.0]] * len(texts), dtype=numpy.float32)
+
+    embedder.encode = encode
+    pool = searchd.Pool(None, "hook", embedder)
+    pool.refresh()
+    if db is None:
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE TABLE v (k TEXT PRIMARY KEY, v BLOB)")
+    while not embedder.jobs.empty():
+        embedder.store([embedder.jobs.get()], db)
+    return pool, embedder, db
+
+
+def test_a_chunk_that_fails_to_embed_does_not_stall_the_pool():
+    """Left pending it was never queued again and the pool never completed —
+    every chat request waited out its minute (review round 1)."""
+
     root = wiki(Path(tempfile.mkdtemp()))
     was = searchd.WIKI
     searchd.WIKI = root
     try:
-        embedder = searchd.Embedder(Path(tempfile.mkdtemp()))
-        embedder.np, embedder.state = numpy, "ready"
-
-        def broken(texts, prefix):
-            if prefix == "passage: ":
-                raise RuntimeError("no memory")
-            return numpy.ones((len(texts), searchd.DIM), dtype=numpy.float32)
-
-        embedder.encode = broken
-        pool = searchd.Pool(None, "hook", embedder)
-        pool.refresh()
-        db = sqlite3.connect(":memory:")
-        db.execute("CREATE TABLE v (k TEXT PRIMARY KEY, v BLOB)")
-        while not embedder.jobs.empty():
-            embedder.store([embedder.jobs.get()], db)
+        pool, embedder, db = embedded(lambda text: True)
         assert not embedder.pending
         assert pool.complete()
-        assert pool.search("merged branch", 1)[0]["cos"] == 0.0
-        assert db.execute("SELECT COUNT(*) FROM v").fetchone()[0] == 0, "zeros were cached"
+        lexical = searchd.Pool(None, "hook", searchd.Embedder(None))
+        lexical.refresh()
+        assert pool.search("merged branch", 5) == lexical.search("merged branch", 5), (
+            "a pool where nothing embedded must rank with BM25 alone"
+        )
+        assert db.execute("SELECT COUNT(*) FROM v").fetchone()[0] == 0
+    finally:
+        searchd.WIKI = was
+
+
+def test_a_chunk_that_failed_is_not_in_the_vector_ranking():
+    """Given a zero vector, it outranked every negative cosine (review round 2)."""
+
+    root = wiki(Path(tempfile.mkdtemp()))
+    was = searchd.WIKI
+    searchd.WIKI = root
+    try:
+        pool, _embedder, _db = embedded(lambda text: text.startswith("Type scale"))
+        hits = {Path(h["path"]).stem: h for h in pool.search("nothing matches zzqq", 5)}
+        assert "fonts" not in hits, "a failed chunk took a vector rank"
+        assert hits["merge"]["cos"] < 0
+    finally:
+        searchd.WIKI = was
+
+
+def test_a_cache_that_cannot_be_written_keeps_the_worker_going():
+    """A write failure killed the worker and left every later chunk pending
+    (review round 2)."""
+
+    import sqlite3
+
+    root = wiki(Path(tempfile.mkdtemp()))
+    was = searchd.WIKI
+    searchd.WIKI = root
+    try:
+        closed = sqlite3.connect(":memory:")
+        closed.close()
+        pool, embedder, _db = embedded(lambda text: False, db=closed)
+        assert not embedder.pending and pool.complete()
+        assert pool.search("merged branch", 1)[0]["cos"] is not None
     finally:
         searchd.WIKI = was
 

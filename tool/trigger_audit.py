@@ -751,14 +751,17 @@ def sweep(turns: list[dict], key: str, k: int) -> list[tuple[float, int, int, in
     """
 
     truth = sum(len(t["extra"]) for t in turns)
-    scores = sorted({h[key] for t in turns for h in t["eligible"][:k] if h[key] is not None})
+    # The floors come from the same top `k` that is evaluated — sorted by the
+    # score, not by the daemon's order. Taken from the daemon's order, a page
+    # the hook would suggest could never be a floor (review round 2).
+    ranked = [sorted((h for h in t["eligible"] if h[key] is not None), key=lambda h: -h[key])[:k]
+              for t in turns]
+    scores = sorted({h[key] for top in ranked for h in top})
     out = []
     for floor in scores:
         suggested = correct = 0
-        for t in turns:
-            ranked = sorted((h for h in t["eligible"] if h[key] is not None),
-                            key=lambda h: -h[key])[:k]
-            picked = [h["name"] for h in ranked if h[key] >= floor]
+        for t, top in zip(turns, ranked):
+            picked = [h["name"] for h in top if h[key] >= floor]
             suggested += len(picked)
             correct += len(set(picked) & set(t["extra"]))
         out.append((floor, suggested, correct, truth))

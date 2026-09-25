@@ -58,7 +58,6 @@ MODEL = "intfloat/multilingual-e5-small"
 FILES = {"model.onnx": "onnx/model_qint8_avx512_vnni.onnx", "tokenizer.json": "onnx/tokenizer.json"}
 # In every vector's cache key, so another model or file never reads these.
 MODEL_ID = f"{MODEL}/{FILES['model.onnx']}"
-DIM = 384  # the width of multilingual-e5-small's vectors
 
 HEADING = re.compile(r"^(#{1,3})\s+(.+?)\s*#*\s*$")
 WORD = re.compile(r"[a-z0-9_]+|[가-힣]+")
@@ -161,6 +160,8 @@ class Embedder:
         self.state = "off" if root is None else "loading"
         self.vectors: dict[str, object] = {}
         self.pending: set[str] = set()
+        # Chunks the model could not embed this run. Not retried until restart.
+        self.failed: set[str] = set()
         self.jobs: queue.Queue = queue.Queue()
 
     def start(self) -> None:
@@ -205,28 +206,36 @@ class Embedder:
             self.store(batch, db)
 
     def store(self, batch: list[tuple[str, str]], db) -> None:
-        """Embed one batch and keep it. Every key leaves `pending` either way.
+        """Embed one batch and keep it. Never raises; every key leaves `pending`.
 
-        A batch that fails gets zero vectors in memory only — cosine 0, last
-        in the ranking, and not written to the cache, so the next start tries
-        again. Left in `pending`, as round 1 of the review found, those keys
-        were never queued again, the pool never completed, and every chat
-        request waited its full minute for vectors that could not come.
+        A chunk that fails to embed has no vector. It goes to `failed`, stays
+        out of the vector ranking and keeps its BM25 rank; the next start tries
+        it again. Left in `pending`, as round 1 found, it was never queued
+        again and the pool never completed. Given a zero vector instead, as
+        round 2 found, it outranked every negative cosine.
+
+        A cache that cannot be written — a full disk — keeps the vectors in
+        memory. The worker must not die on it: with no worker every later
+        chunk stays pending too (round 2).
         """
 
+        keys = [key for key, _text in batch]
         try:
             done = self.encode([text for _key, text in batch], "passage: ")
+            for key, vector in zip(keys, done):
+                self.vectors[key] = vector
         except Exception as error:  # noqa: BLE001
             print(f"embedding skipped: {type(error).__name__}", file=sys.stderr)
-            for key, _text in batch:
-                self.vectors[key] = self.np.zeros(DIM, dtype=self.np.float32)
-                self.pending.discard(key)
+            self.failed.update(keys)
             return
-        for (key, _text), vector in zip(batch, done):
-            self.vectors[key] = vector
-            db.execute("INSERT OR REPLACE INTO v VALUES (?, ?)", (key, vector.tobytes()))
-            self.pending.discard(key)
-        db.commit()
+        finally:
+            self.pending.difference_update(keys)
+        try:
+            db.executemany("INSERT OR REPLACE INTO v VALUES (?, ?)",
+                           [(key, self.vectors[key].tobytes()) for key in keys])
+            db.commit()
+        except Exception as error:  # noqa: BLE001
+            print(f"vector cache not written: {type(error).__name__}", file=sys.stderr)
 
     def encode(self, texts: list[str], prefix: str):
         """e5's convention: `passage: ` and `query: `, mean pooling, unit length."""
@@ -245,7 +254,7 @@ class Embedder:
         if self.state == "off":
             return
         for key, text in items:
-            if key not in self.vectors and key not in self.pending:
+            if key not in self.vectors and key not in self.pending and key not in self.failed:
                 self.pending.add(key)
                 self.jobs.put((key, text))
 
@@ -303,8 +312,10 @@ class Pool:
         self.embedder.want([(c["key"], c["indexed"]) for c in self.chunks])
 
     def complete(self) -> bool:
-        return self.embedder.state == "ready" and all(
-            c["key"] in self.embedder.vectors for c in self.chunks)
+        """Every chunk has been tried: it has a vector, or it failed."""
+
+        done = self.embedder.vectors.keys() | self.embedder.failed
+        return self.embedder.state == "ready" and all(c["key"] in done for c in self.chunks)
 
     def bm25(self, query: str) -> dict[int, float]:
         k1, b, total = 1.5, 0.75, len(self.chunks)
@@ -325,21 +336,29 @@ class Pool:
         `rrf` merges the two rankings; `cos` is the best chunk's cosine, or
         `None` while the vectors are incomplete — then the ranking is BM25
         alone, since a vector ranking over part of the pool would favour
-        whatever happened to be embedded first.
+        whatever happened to be embedded first. Once complete, the vector
+        ranking covers the chunks that have a vector; one that failed to
+        embed keeps only its BM25 rank, and a page with no vector at all has
+        `cos` `None`.
         """
 
         lexical = self.bm25(query)
         fused: dict[int, float] = defaultdict(float)
         for rank, i in enumerate(sorted(lexical, key=lexical.get, reverse=True)):
             fused[i] += 1 / (RRF_K + rank + 1)
-        cosine = None
+        cosine: dict[int, float] = {}
         if self.chunks and self.complete():
             np = self.embedder.np
             if self.matrix is None:
-                self.matrix = np.stack([self.embedder.vectors[c["key"]] for c in self.chunks])
-            cosine = self.matrix @ self.embedder.encode([query], "query: ")[0]
-            for rank, i in enumerate(np.argsort(-cosine)):
-                fused[int(i)] += 1 / (RRF_K + rank + 1)
+                rows = [i for i, c in enumerate(self.chunks) if c["key"] in self.embedder.vectors]
+                self.matrix = (rows, np.stack([self.embedder.vectors[self.chunks[i]["key"]] for i in rows])
+                               if rows else None)
+            rows, matrix = self.matrix
+            if rows:
+                scores = matrix @ self.embedder.encode([query], "query: ")[0]
+                cosine = {i: float(s) for i, s in zip(rows, scores)}
+                for rank, i in enumerate(sorted(cosine, key=cosine.get, reverse=True)):
+                    fused[i] += 1 / (RRF_K + rank + 1)
         best: dict[str, tuple[float, int]] = {}
         for i, score in fused.items():
             path = self.chunks[i]["path"]
@@ -348,9 +367,8 @@ class Pool:
         pages = []
         for path, (score, i) in sorted(best.items(), key=lambda x: -x[1][0])[:k]:
             chunk = self.chunks[i]
-            top = None
-            if cosine is not None:
-                top = max(float(cosine[j]) for j, c in enumerate(self.chunks) if c["path"] == path)
+            mine = [s for j, s in cosine.items() if self.chunks[j]["path"] == path]
+            top = max(mine) if mine else None
             pages.append({"path": path, "line": chunk["line"], "heading": chunk["heading"],
                           "text": chunk["text"], "rrf": round(score, 5),
                           "cos": None if top is None else round(top, 4),
